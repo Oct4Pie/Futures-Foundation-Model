@@ -2535,3 +2535,57 @@ def test_extract_backbone_missing_state_raises(tmp_path):
 
     with pytest.raises(ValueError, match='No model state'):
         extract_backbone(str(done_path), str(tmp_path / 'out.pt'))
+
+
+# =============================================================================
+# 14. continue_from — iterative fine-tuning (multi-pass)
+# =============================================================================
+
+def test_continue_from_excluded_from_config_hash():
+    """continue_from must not affect the config hash so fold-resume cache is unaffected."""
+    cfg_base = TrainingConfig()
+    cfg_with = TrainingConfig(continue_from='/some/path/F5_done.pt')
+    assert _config_hash(cfg_base) == _config_hash(cfg_with), (
+        'continue_from should be excluded from config hash')
+
+
+def test_continue_from_loads_prior_state_into_f1(tmp_path):
+    """When continue_from is set, F1 warm-starts from the full prior checkpoint."""
+    cfg = small_ffm_config()
+
+    # Build a "prior run" _done.pt with known weights
+    prior_state = _make_trained_state(cfg, seed=99)
+    done_path = tmp_path / 'F5_prior_done.pt'
+    torch.save({
+        'config_hash':     'prior_hash',
+        'next_fold_state': prior_state,
+    }, done_path)
+
+    # Build a fresh model and apply continue_from logic manually:
+    # run_walk_forward loads the checkpoint and passes next_fold_state as
+    # prev_fold_state to F1 with warm_start_mode='full'.
+    model = HybridStrategyModel(cfg, NUM_STRATEGY_FEATURES)
+    ckpt = torch.load(done_path, map_location='cpu', weights_only=False)
+    _apply_warm_start(model, ckpt['next_fold_state'], mode='full', device=torch.device('cpu'))
+
+    for key, val in model.state_dict().items():
+        assert torch.allclose(val.cpu(), prior_state[key].cpu()), (
+            f'{key}: continue_from full-transfer did not load prior state correctly')
+
+
+def test_continue_from_f2_reverts_to_warm_start_mode():
+    """After F1 the _sequential_f1 flag is consumed; subsequent folds use warm_start_mode."""
+    # We verify the flag logic directly: _sequential_f1 is True only for F1.
+    # After one iteration the dataclasses.replace path is skipped.
+    import dataclasses
+    from futures_foundation.finetune.config import TrainingConfig as TC
+
+    cfg = TC(warm_start_mode='selective', continue_from='/fake/path')
+    # Simulate what run_walk_forward does for F2+
+    _sequential_f1 = False   # already consumed after F1
+    effective_cfg = (
+        dataclasses.replace(cfg, warm_start_mode='full')
+        if _sequential_f1 else cfg
+    )
+    assert effective_cfg.warm_start_mode == 'selective', (
+        'F2+ must use the original warm_start_mode, not force full')

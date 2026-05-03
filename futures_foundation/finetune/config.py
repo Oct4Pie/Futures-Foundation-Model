@@ -32,6 +32,14 @@ class TrainingConfig:
     # Set to 1.0 to disable layerwise LR.
     backbone_lr_multiplier: float = 0.1
 
+    # ── Iterative fine-tuning (multi-pass) ──
+    # Path to a _done.pt from a previous run. When set, F1 warm-starts from that
+    # checkpoint (full transfer) instead of cold-starting. F2-F5 then continue
+    # fold-to-fold using warm_start_mode as normal.
+    # Use this to run successive refinement passes (v17 from v15 F5, etc.).
+    # Excluded from config hash — changing the path won't bust fold-resume cache.
+    continue_from: str = None
+
     # ── Loss ──
     risk_weight: float = 0.1      # risk-head loss coefficient
     miss_penalty: float = 1.0     # class weight for signal class

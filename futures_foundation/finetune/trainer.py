@@ -7,6 +7,7 @@ Entry points:
     print_eval_summary()  — Cell 5: print threshold/fold/baseline tables
 """
 
+import dataclasses
 import gc
 import hashlib
 import json
@@ -532,7 +533,7 @@ def _make_optimizer(
 # ── Fold helpers ─────────────────────────────────────────────────────────────
 
 def _config_hash(training_cfg: TrainingConfig) -> str:
-    _hash_exclude = {'baseline_wr', 'f1_ok_ceiling'}
+    _hash_exclude = {'baseline_wr', 'f1_ok_ceiling', 'continue_from'}
     d = {k: v for k, v in training_cfg.__dict__.items() if k not in _hash_exclude}
     return hashlib.md5(json.dumps(d, sort_keys=True).encode()).hexdigest()[:8]
 
@@ -1028,11 +1029,27 @@ def run_walk_forward(
     last_model      = None
     prev_fold_state = None
 
+    _sequential_f1 = False
+    if training_cfg.continue_from:
+        ckpt = torch.load(training_cfg.continue_from, map_location='cpu', weights_only=False)
+        prev_fold_state = ckpt['next_fold_state']
+        _sequential_f1 = True
+        print(f'  Continuing from prior run: {training_cfg.continue_from}')
+        print(f'  F1 will full-transfer from that checkpoint; F2-F5 use warm_start_mode={training_cfg.warm_start_mode!r}')
+
     for fold in folds:
+        # F1 of a sequential pass always uses full transfer so both backbone and
+        # strategy heads carry over; subsequent folds revert to warm_start_mode.
+        effective_cfg = (
+            dataclasses.replace(training_cfg, warm_start_mode='full')
+            if _sequential_f1 else training_cfg
+        )
+        _sequential_f1 = False
+
         result = _train_fold(
             fold=fold,
             ffm_config=ffm_config,
-            training_cfg=training_cfg,
+            training_cfg=effective_cfg,
             num_strategy_features=num_strategy_features,
             strategy_feature_cols=strategy_feature_cols,
             tickers=tickers,
