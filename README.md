@@ -145,11 +145,17 @@ rr_done_paths = run_risk_head_calibration(
 | `run_labeling()` | CSV I/O, timezone normalization, parquet caching per ticker |
 | `run_walk_forward()` | N-fold walk-forward, selective warm start, tiered checkpoint selection, disconnect recovery |
 | `run_risk_head_calibration()` | Phase 2: freeze signal head, fine-tune risk_head with Huber loss on signal-only subsets |
-| `print_eval_summary()` | Confidence threshold table, per-fold breakdown, vs-baseline comparison |
+| `print_eval_summary()` | Confidence threshold table with AvgMaxRR column, per-fold breakdown, vs-baseline comparison |
 | `print_rr_calibration()` | Phase 2 calibration table: predicted R:R vs actual max_rr at each threshold |
 | `export_onnx()` | Production ONNX export of the final fold model |
 | `extract_backbone()` | Extract backbone weights from a completed fold for use as the starting point of the next training run |
 | `continue_from` (TrainingConfig) | Path to a prior run's `_done.pt` — F1 warm-starts (full) from that checkpoint for iterative multi-pass refinement |
+
+After each fold evaluation, the framework automatically prints two diagnostic blocks:
+
+**Per-threshold table** — precision, EV@2R, recall, signal rate, and **AvgMaxRR** (average max R:R of winning trades at each confidence threshold). AvgMaxRR confirms the edge has real follow-through — a high-precision threshold where winners average only 0.5R is a different risk profile than one averaging 2.5R.
+
+**Confidence calibration block** — win rate by confidence band (50–60%, 60–70%, 70–80%, 80–90%, 90%+), filtered to predicted positives only. Includes a monotonicity check: win rate must rise with confidence or a ⚠️ flag is printed. A non-monotonic calibration (model more accurate at 70% than 80%) is a deployment blocker — it means the model is guessing at high confidence rather than genuinely discriminating.
 
 ### Model architecture
 
@@ -409,7 +415,7 @@ Futures-Foundation-Model/
 │       ├── dataset.py          # HybridStrategyDataset
 │       ├── losses.py           # FocalLoss
 │       └── trainer.py          # run_labeling, run_walk_forward, print_eval_summary
-├── tests/                      # Unit tests (385+ total)
+├── tests/                      # Unit tests (387+ total)
 │   ├── test_model.py           # Backbone + heads
 │   ├── test_finetune.py        # Fine-tuning framework (incl. FFM field coverage)
 │   ├── test_features_crt.py    # CRT sweep features
@@ -429,6 +435,7 @@ Futures-Foundation-Model/
 
 | Version | Description |
 |---------|-------------|
+| **v0.7** | `AvgMaxRR` column in per-threshold table (average max R:R of winning trades — confirms edge has real follow-through); confidence calibration block auto-printed after every fold (win rate by confidence band with monotonicity check; non-monotonic = deployment blocker); full warm start gracefully skips shape-mismatched keys with a warning instead of crashing (enables `continue_from` across runs with minor architectural differences) |
 | **v0.6** | 9-instrument library support (added CL, ZB, ZN); `continue_from` in `TrainingConfig` for iterative multi-pass fine-tuning (F1 warm-starts full from prior run's `_done.pt`, F2-F5 use `warm_start_mode`); `continue_from` excluded from config hash to preserve fold-resume cache |
 | **v0.5** | Tiered checkpoint selection (`_p80s` stable N≥50 > `_p80` peak N≥15 > `_f1` > `_loss`); selective warm start (backbone transfers fold-to-fold, signal head cold-starts); layerwise LR (backbone at lower LR to preserve pretrained knowledge); `epoch_callback` full metrics dict; `extract_backbone()` utility for backbone reuse across runs; stale checkpoint guard on resume; `verbose` param |
 | **v0.4** | Backbone v2 (68 features, 6 instruments, 2.3M bars); structure label redesigned to predict forward 1H structure; `HybridStrategyModel` context heads — 4 frozen pretrained heads expose 15-dim regime/vol/structure/range context at fine-tuning; `pretrained_path` API in `run_walk_forward`; CISD+OTE v9 |
@@ -484,6 +491,9 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 - [x] **CL (Crude Oil) instrument support** — energy/macro regime context
 - [x] **ZB/ZN (Treasury Bond/Note) instrument support** — rate regime context for v8 backbone
 - [x] **`continue_from` in `TrainingConfig`** — iterative multi-pass fine-tuning; full checkpoint transfer from prior run into F1
+- [x] **`AvgMaxRR` column in threshold table** — average max R:R of winning trades per confidence threshold; confirms edge has follow-through beyond precision alone
+- [x] **Confidence calibration block** — auto-printed after every fold; win rate by band (50–90%+) with monotonicity check; flags non-monotonic calibration before deployment
+- [x] **Full warm start graceful key skip** — shape-mismatched keys are skipped with a warning instead of crashing; enables `continue_from` across runs with minor architectural differences
 - [ ] Additional strategy implementations (ORB, ICT breaker blocks)
 - [ ] Multi-timeframe input support
 - [ ] v8 backbone pretraining (9 instruments: ES, NQ, RTY, YM, GC, SI, CL, ZB, ZN)
