@@ -38,7 +38,8 @@ except ImportError:
 
 INSTRUMENT_MAP = {
     "ES": 0, "NQ": 1, "RTY": 2, "YM": 3,
-    "GC": 4, "SI": 5, "CL": 6, "NKD": 7,
+    "GC": 4, "SI": 5, "CL": 6,
+    "ZB": 7, "ZN": 8,
 }
 
 SESSION_MAP = {"pre_market": 0, "london": 1, "ny_am": 2, "ny_pm": 3}

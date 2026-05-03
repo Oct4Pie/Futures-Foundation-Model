@@ -48,7 +48,7 @@ class FFMConfig(PretrainedConfig):
         attention_probs_dropout_prob: float = 0.1,
         max_sequence_length: int = 128,
         # --- Categorical embeddings ---
-        num_instruments: int = 8,         # ES, NQ, RTY, YM + room for expansion
+        num_instruments: int = 9,         # ES, NQ, RTY, YM, GC, SI, CL, ZB, ZN
         num_sessions: int = 4,            # Pre-market, London, NY AM, NY PM
         num_candle_types: int = 6,        # doji, bull/bear strong, bull/bear pin, neutral
         # --- Pretraining task heads ---
