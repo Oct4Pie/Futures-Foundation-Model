@@ -544,9 +544,27 @@ def _make_optimizer(
 # ── Fold helpers ─────────────────────────────────────────────────────────────
 
 def _config_hash(training_cfg: TrainingConfig) -> str:
-    _hash_exclude = {'baseline_wr', 'f1_ok_ceiling', 'continue_from'}
+    _hash_exclude = {'baseline_wr', 'f1_ok_ceiling', 'continue_from', 'backbone_swap_path'}
     d = {k: v for k, v in training_cfg.__dict__.items() if k not in _hash_exclude}
     return hashlib.md5(json.dumps(d, sort_keys=True).encode()).hexdigest()[:8]
+
+
+def _swap_backbone_in_state(state: dict, backbone_path: str) -> None:
+    """Replace backbone.* keys in a full model state dict with weights from backbone_path.
+
+    Used with continue_from to upgrade the backbone (e.g. v6→v9) while keeping
+    strategy heads intact. Modifies state in-place.
+    """
+    sd = torch.load(backbone_path, map_location='cpu', weights_only=False)
+    if 'model_state' in sd:
+        sd = sd['model_state']
+    replaced = 0
+    for bare_key, v in sd.items():
+        full_key = f'backbone.{bare_key}'
+        if full_key in state:
+            state[full_key] = v
+            replaced += 1
+    print(f'  🔄 Backbone swap — {replaced} tensors replaced from {backbone_path}')
 
 
 def _print_model_diagnostic(model, feature_names: list = None) -> None:
@@ -1102,6 +1120,9 @@ def run_walk_forward(
         _sequential_f1 = True
         print(f'  Continuing from prior run: {training_cfg.continue_from}')
         print(f'  F1 will full-transfer from that checkpoint; F2-F5 use warm_start_mode={training_cfg.warm_start_mode!r}')
+        if training_cfg.backbone_swap_path:
+            _swap_backbone_in_state(prev_fold_state, training_cfg.backbone_swap_path)
+            print(f'  Strategy heads carried from prior run; backbone upgraded to {training_cfg.backbone_swap_path}')
 
     for fold in folds:
         # F1 of a sequential pass always uses full transfer so both backbone and

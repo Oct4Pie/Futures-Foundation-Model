@@ -2509,6 +2509,75 @@ def test_extract_backbone_roundtrip(tmp_path):
     assert extracted_keys == backbone_keys, 'Extracted keys must match backbone.* keys'
 
 
+# =============================================================================
+# _swap_backbone_in_state
+# =============================================================================
+
+from futures_foundation.finetune.trainer import _swap_backbone_in_state
+
+
+def test_swap_backbone_replaces_backbone_keys(tmp_path):
+    """backbone_swap_path weights must overwrite backbone.* keys in state dict."""
+    cfg = small_ffm_config()
+
+    model_old = HybridStrategyModel(cfg, NUM_STRATEGY_FEATURES)
+    model_new = HybridStrategyModel(cfg, NUM_STRATEGY_FEATURES)
+
+    # Give new backbone a known sentinel value so we can detect the swap.
+    with torch.no_grad():
+        for p in model_new.backbone.parameters():
+            p.fill_(99.0)
+
+    # Save new backbone as best_backbone.pt (flat backbone state dict).
+    backbone_sd = {k[len('backbone.'):]: v for k, v in model_new.state_dict().items()
+                   if k.startswith('backbone.')}
+    backbone_path = tmp_path / 'best_backbone.pt'
+    torch.save(backbone_sd, backbone_path)
+
+    # State dict representing an old model checkpoint.
+    state = {k: v.clone() for k, v in model_old.state_dict().items()}
+    original_signal_weight = state[[k for k in state if 'signal_head' in k][0]].clone()
+
+    _swap_backbone_in_state(state, str(backbone_path))
+
+    # Backbone keys must now equal 99.0 (from model_new).
+    for k, v in state.items():
+        if k.startswith('backbone.'):
+            assert torch.all(v == 99.0), f'Backbone key {k} was not swapped'
+
+    # Non-backbone keys must be unchanged.
+    for k in state:
+        if not k.startswith('backbone.'):
+            original = model_old.state_dict()[k]
+            assert torch.equal(state[k], original), f'Non-backbone key {k} was modified'
+
+
+def test_swap_backbone_preserves_signal_head(tmp_path):
+    """Signal head weights must survive backbone swap unchanged."""
+    cfg = small_ffm_config()
+
+    model_v17 = HybridStrategyModel(cfg, NUM_STRATEGY_FEATURES)
+    model_v9  = HybridStrategyModel(cfg, NUM_STRATEGY_FEATURES)
+
+    with torch.no_grad():
+        for p in model_v17.signal_head.parameters():
+            p.fill_(7.0)
+        for p in model_v9.backbone.parameters():
+            p.fill_(9.0)
+
+    backbone_sd = {k[len('backbone.'):]: v for k, v in model_v9.state_dict().items()
+                   if k.startswith('backbone.')}
+    backbone_path = tmp_path / 'best_backbone.pt'
+    torch.save(backbone_sd, backbone_path)
+
+    state = {k: v.clone() for k, v in model_v17.state_dict().items()}
+    _swap_backbone_in_state(state, str(backbone_path))
+
+    for k, v in state.items():
+        if 'signal_head' in k:
+            assert torch.all(v == 7.0), f'Signal head key {k} must not be swapped'
+
+
 def test_extract_backbone_no_signal_head_keys(tmp_path):
     """Extracted backbone must not contain signal_head or risk_head weights."""
     cfg   = small_ffm_config()

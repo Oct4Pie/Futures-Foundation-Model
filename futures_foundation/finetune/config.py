@@ -40,6 +40,15 @@ class TrainingConfig:
     # Excluded from config hash — changing the path won't bust fold-resume cache.
     continue_from: str = None
 
+    # ── Backbone swap (used with continue_from) ──
+    # Path to a best_backbone.pt. When set alongside continue_from, the backbone
+    # weights in the continue_from checkpoint are replaced with this backbone
+    # before F1 trains. The strategy heads (signal, risk, projection) and context
+    # heads carry over from continue_from unchanged.
+    # Use case: upgrade the backbone (e.g. v6→v9) without re-learning the strategy.
+    # Excluded from config hash — changing the path won't bust fold-resume cache.
+    backbone_swap_path: str = None
+
     # ── Loss ──
     risk_weight: float = 0.1      # risk-head loss coefficient
     miss_penalty: float = 1.0     # class weight for signal class
