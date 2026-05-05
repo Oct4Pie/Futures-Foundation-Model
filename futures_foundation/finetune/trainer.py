@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 import time
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -1439,9 +1440,29 @@ def export_onnx(
     seq_len: int,
     num_ffm_features: int,
     num_strategy_features: int,
+    risk_head_donor_path: Optional[str] = None,
 ) -> None:
-    """Export the fine-tuned model to ONNX for production inference."""
+    """Export the fine-tuned model to ONNX for production inference.
+
+    Args:
+        risk_head_donor_path: Path to a _done.pt checkpoint whose risk_head weights
+            replace the model's risk_head before export. Use when the target fold's
+            risk head is degraded (e.g. F5 predicts ~0) but an earlier fold's is
+            calibrated (e.g. F3). Backbone and signal_head are always taken from model.
+    """
     import torch.onnx
+
+    if risk_head_donor_path is not None:
+        donor_ckpt  = torch.load(risk_head_donor_path, map_location='cpu', weights_only=False)
+        donor_state = donor_ckpt.get('next_fold_state') or donor_ckpt.get('model_state')
+        if donor_state is None:
+            raise ValueError(f'No model state in risk_head_donor_path: {risk_head_donor_path}')
+        current_state = model.state_dict()
+        swapped = [k for k in donor_state if k.startswith('risk_head.') and k in current_state]
+        for k in swapped:
+            current_state[k] = donor_state[k]
+        model.load_state_dict(current_state)
+        print(f'  ↳ risk_head swapped from {os.path.basename(risk_head_donor_path)} ({len(swapped)} tensors)')
 
     model.eval().cpu()
     dummy = {

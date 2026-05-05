@@ -545,6 +545,38 @@ def test_export_onnx_creates_file(tmp_path):
         pytest.skip(f'ONNX export not supported on this torch version: {e}')
 
 
+def test_export_onnx_risk_head_donor_swaps_weights(tmp_path):
+    import torch
+    cfg = small_ffm_config()
+
+    base_model  = HybridStrategyModel(cfg, NUM_STRATEGY_FEATURES)
+    donor_model = HybridStrategyModel(cfg, NUM_STRATEGY_FEATURES)
+
+    with torch.no_grad():
+        for p in donor_model.risk_head.parameters():
+            p.fill_(9.0)
+
+    donor_ckpt_path = str(tmp_path / 'donor_done.pt')
+    torch.save({'next_fold_state': donor_model.state_dict()}, donor_ckpt_path)
+
+    # swap is applied in-place before the ONNX export attempt; catch ONNX errors
+    try:
+        export_onnx(
+            base_model,
+            str(tmp_path / 'model.onnx'),
+            seq_len=SEQ_LEN,
+            num_ffm_features=len(get_model_feature_columns()),
+            num_strategy_features=NUM_STRATEGY_FEATURES,
+            risk_head_donor_path=donor_ckpt_path,
+        )
+    except Exception:
+        pass
+
+    for p in base_model.risk_head.parameters():
+        assert torch.all(p == 9.0), f'risk_head weight not swapped: {p}'
+
+
+
 # =============================================================================
 # print_eval_summary (smoke test — just verify it doesn't crash)
 # =============================================================================
