@@ -753,6 +753,7 @@ def _train_fold(
                 {k: v.to(device) for k, v in saved['next_fold_state'].items()})
             _print_test_threshold_table(saved.get('test_metrics'), fold_name)
             _print_confidence_calibration(saved.get('test_metrics'))
+            _print_model_diagnostic(model, feature_names=strategy_feature_cols)
             return model, saved.get('test_metrics'), saved['next_fold_state']
 
     # ── Datasets ──
