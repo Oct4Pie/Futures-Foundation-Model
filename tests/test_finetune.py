@@ -13,6 +13,7 @@ from futures_foundation.finetune import (
     StrategyLabeler, TrainingConfig,
     HybridStrategyModel, HybridStrategyDataset, FocalLoss,
     run_labeling, run_walk_forward, export_onnx, print_eval_summary,
+    summarize_fold_precision,
 )
 from futures_foundation.finetune import validate_setup
 from futures_foundation.finetune.trainer import (
@@ -3220,3 +3221,56 @@ def test_n_triggered_acceleration_does_not_fire_after_decay_already_started():
     assert _decay_start == 2
     # After epoch 2, _n_collapse_ctr is reset and no further advancement happens
     assert _n_collapse_ctr == 0
+
+
+# ── summarize_fold_precision ───────────────────────────────────────────────────
+
+def _make_fold_results(conf_vals, label_vals):
+    """Helper: build a minimal fold_results dict from flat arrays."""
+    return {
+        'fold_1': {'all_conf': list(conf_vals), 'all_labels': list(label_vals)},
+        '_model': None,
+    }
+
+
+def test_summarize_fold_precision_signal_count():
+    confs  = [0.50, 0.75, 0.85, 0.55, 0.90]
+    labels = [1,    1,    0,    0,    1   ]
+    result = summarize_fold_precision(_make_fold_results(confs, labels))
+    assert result['fold_1']['signals'] == 3  # labels > 0
+
+
+def test_summarize_fold_precision_at_threshold():
+    # conf >= 0.80: indices 2 (label=0) and 4 (label=1) → prec = 0.5
+    confs  = [0.50, 0.75, 0.85, 0.55, 0.90]
+    labels = [1,    1,    0,    0,    1   ]
+    result = summarize_fold_precision(_make_fold_results(confs, labels))
+    assert result['fold_1']['prec_at_80'] == pytest.approx(0.5, abs=0.001)
+
+
+def test_summarize_fold_precision_none_when_no_trades():
+    # No confs reach 0.90
+    confs  = [0.50, 0.60, 0.70]
+    labels = [1,    0,    1   ]
+    result = summarize_fold_precision(_make_fold_results(confs, labels))
+    assert result['fold_1']['prec_at_90'] is None
+
+
+def test_summarize_fold_precision_skips_model_key():
+    fold_results = {
+        '_model': {'weights': 'whatever'},
+        'fold_1': {'all_conf': [0.85], 'all_labels': [1]},
+    }
+    result = summarize_fold_precision(fold_results)
+    assert '_model' not in result
+    assert 'fold_1' in result
+
+
+def test_summarize_fold_precision_skips_none_fold():
+    fold_results = {
+        'fold_1': {'all_conf': [0.85], 'all_labels': [1]},
+        'fold_2': None,
+    }
+    result = summarize_fold_precision(fold_results)
+    assert 'fold_1' in result
+    assert 'fold_2' not in result

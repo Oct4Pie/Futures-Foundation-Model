@@ -1687,3 +1687,33 @@ def print_eval_summary(
         onnx_path = os.path.join(output_dir, 'cisd_ote_hybrid.onnx')
         print(f'\n  ONNX model: {onnx_path}')
         print(f'  Checkpoints: {output_dir}')
+
+
+def summarize_fold_precision(fold_results: dict) -> dict:
+    """
+    Return per-fold precision at standard confidence thresholds.
+
+    Parameters
+    ----------
+    fold_results : dict
+        Output of run_walk_forward — keys are fold names, values contain
+        'all_conf' and 'all_labels' arrays.
+
+    Returns
+    -------
+    dict
+        {fold_name: {'signals': int, 'prec_at_70': float|None,
+                     'prec_at_80': float|None, 'prec_at_90': float|None}}
+    """
+    summary = {}
+    for fname, metrics in fold_results.items():
+        if fname == '_model' or metrics is None:
+            continue
+        confs  = np.array(metrics['all_conf'])
+        labels = np.array(metrics['all_labels'])
+        entry: dict = {'signals': int((labels > 0).sum())}
+        for key, thr in [('prec_at_70', 0.70), ('prec_at_80', 0.80), ('prec_at_90', 0.90)]:
+            mask = confs >= thr
+            entry[key] = round(float((labels[mask] > 0).mean()), 3) if mask.sum() > 0 else None
+        summary[fname] = entry
+    return summary
