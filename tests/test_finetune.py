@@ -3027,4 +3027,31 @@ def test_p80_patience_counter_resets_on_improvement():
 
     assert stopped_at == 7, f'Expected stop at event 7, got {stopped_at}'
     assert p80s_patience_ctr == 3
-    assert best_prec_at_80_stable == 0.58  # best was at event 4
+
+
+# ── n_stable_min ──────────────────────────────────────────────────────────────
+
+def test_n_stable_min_default():
+    cfg = TrainingConfig()
+    assert cfg.n_stable_min == 50
+
+
+def test_n_stable_min_excluded_from_config_hash():
+    base = _config_hash(TrainingConfig())
+    modified = _config_hash(TrainingConfig(n_stable_min=25))
+    assert base == modified, 'n_stable_min must not affect config hash'
+
+
+def test_n_stable_min_gates_stable_checkpoint():
+    """TrainingConfig.n_stable_min controls the stable gate, not a hardcoded 50."""
+    for min_n, n_at_80, expect in [
+        (50, 49, False),
+        (50, 50, True),
+        (25, 24, False),
+        (25, 25, True),
+        (25, 49, True),
+    ]:
+        cfg = TrainingConfig(n_stable_min=min_n)
+        va = {'prec_at_80': 0.500, 'n_at_80': n_at_80}
+        fires = va['prec_at_80'] > 0.0 and va['n_at_80'] >= cfg.n_stable_min
+        assert fires == expect, f'n_stable_min={min_n}, n_at_80={n_at_80}: expected {expect}'

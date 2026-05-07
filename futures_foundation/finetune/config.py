@@ -58,9 +58,16 @@ class TrainingConfig:
 
     # ── Early stopping ──
     patience: int = 15            # epochs without val_loss improvement
-    p80_patience: int = 10        # epochs without P@80 stable (N≥50) improvement
+    p80_patience: int = 10        # epochs without P@80 stable improvement
     max_ratio: float = 2.5        # val_loss / train_loss ceiling
     ratio_patience: int = 8       # consecutive epochs above max_ratio
+
+    # ── Stable checkpoint gate ──
+    # Min predictions above 0.80 threshold required for a P@80 stable checkpoint.
+    # Default 50 suits 5-min data. Lower to 25 for 3-min strategies where
+    # absolute signal counts per val window are similar but window count is 3x larger.
+    # Excluded from config hash — tuning this won't bust in-progress fold-resume caches.
+    n_stable_min: int = 50
 
     # ── Output ──
     num_labels: int = 2           # 2 = noise/signal; 3 = sell/hold/buy

@@ -545,7 +545,7 @@ def _make_optimizer(
 # ── Fold helpers ─────────────────────────────────────────────────────────────
 
 def _config_hash(training_cfg: TrainingConfig) -> str:
-    _hash_exclude = {'baseline_wr', 'f1_ok_ceiling', 'continue_from', 'backbone_swap_path', 'p80_patience'}
+    _hash_exclude = {'baseline_wr', 'f1_ok_ceiling', 'continue_from', 'backbone_swap_path', 'p80_patience', 'n_stable_min'}
     d = {k: v for k, v in training_cfg.__dict__.items() if k not in _hash_exclude}
     return hashlib.md5(json.dumps(d, sort_keys=True).encode()).hexdigest()[:8]
 
@@ -889,8 +889,8 @@ def _train_fold(
         f1_better = va['f1'] > best_signal_f1 and ratio <= training_cfg.f1_ok_ceiling
         # P@0.80 peak: require ≥15 predictions at conf≥0.80 — blocks 1-in-4 lucky shots
         p80_better  = (va['prec_at_80'] > best_prec_at_80 and va['n_at_80'] >= 15)
-        # P@0.80 stable: require ≥50 predictions — statistically robust, preferred at test time
-        p80s_better = (va['prec_at_80'] > best_prec_at_80_stable and va['n_at_80'] >= 50)
+        # P@0.80 stable: require ≥n_stable_min predictions — statistically robust, preferred at test time
+        p80s_better = (va['prec_at_80'] > best_prec_at_80_stable and va['n_at_80'] >= training_cfg.n_stable_min)
         save_str  = ''
 
         if improved:
@@ -1010,7 +1010,7 @@ def _train_fold(
     print(f'    val_loss        : epoch={best_val_epoch+1} score={best_val_loss:.4f}')
     print(f'    signal_f1       : epoch={best_f1_epoch+1} score={best_signal_f1:.4f}')
     print(f'    prec_at_80 peak : {p80_str}')
-    print(f'    prec_at_80 stable (N≥50): {p80s_str}')
+    print(f'    prec_at_80 stable (N≥{training_cfg.n_stable_min}): {p80s_str}')
     print(f'  Priority: stable > peak > f1 > loss')
 
     if best_p80s_state is not None:
