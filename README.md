@@ -117,6 +117,31 @@ fold_results = run_walk_forward(..., training_cfg=training_cfg)
 
 `continue_from` is excluded from the config hash so changing the path does not bust fold-resume cache.
 
+**Backbone swap** — upgrade the backbone mid-chain without re-learning strategy heads. Set `backbone_swap_path` alongside `continue_from` to splice a newer backbone into the prior run's checkpoint before F1 trains. Strategy heads, signal projection, and context heads all carry over from `continue_from`; only backbone weights are replaced:
+
+```python
+training_cfg = TrainingConfig(
+    continue_from='runs/v18/F5_done.pt',              # strategy heads from v18
+    backbone_swap_path='backbones/backbone_v19.pt',   # newer backbone weights
+    warm_start_mode='full',
+    lr=2e-5,
+)
+# Result: v19 backbone knowledge + v18 strategy head calibration → no cold start
+fold_results = run_walk_forward(..., training_cfg=training_cfg)
+```
+
+**Per-fold epoch override** — set an `epochs` key in any fold dict to override the global `TrainingConfig.epochs` for that fold only. Useful when later folds have less training data (fewer bars before the val cutoff) and don't need as many epochs:
+
+```python
+FOLDS = [
+    {'name': 'F1', 'train_end': '2022-04-01', 'val_end': '2022-10-01', 'test_end': '2023-04-01'},
+    {'name': 'F4', 'train_end': '2025-04-01', 'val_end': '2025-08-01', 'test_end': '2026-01-01', 'epochs': 20},
+    # F4 uses 20 epochs; all others use TrainingConfig.epochs
+]
+```
+
+The config hash is computed from `TrainingConfig` only — fold-level overrides do not affect it.
+
 **Phase 2: risk head calibration** (separate script, run after Phase 1 completes)
 
 ```python
@@ -131,7 +156,23 @@ rr_done_paths = run_risk_head_calibration(
     strategy_feature_cols=labeler.feature_cols, ffm_config=ffm_config,
     rr_lr=1e-5, rr_epochs=20, rr_patience=5,
 )
-# rr_done_paths['F4'] → path to the F4 _rr_done.pt used for ONNX export
+# rr_done_paths['F5'] → path to the F5 _rr_done.pt used for ONNX export
+```
+
+**Risk head donor** — if the final fold's risk head degrades (e.g. F5 val MAE is noticeably worse than F3), pass `risk_head_donor_path` to `export_onnx()` to splice a better fold's calibrated risk head into the export while keeping F5's backbone and signal head:
+
+```python
+from futures_foundation.finetune import export_onnx
+
+export_onnx(
+    model,                          # loaded from F5 checkpoint
+    'strategy_hybrid.onnx',
+    seq_len=96,
+    num_ffm_features=68,
+    num_strategy_features=len(feature_cols),
+    risk_head_donor_path='F3_hash_rr_done.pt',  # F3 risk head replaces F5's
+)
+# Backbone and signal_head always come from model (F5); risk_head comes from donor
 ```
 
 ### What the framework provides
@@ -147,9 +188,12 @@ rr_done_paths = run_risk_head_calibration(
 | `run_risk_head_calibration()` | Phase 2: freeze signal head, fine-tune risk_head with Huber loss on signal-only subsets |
 | `print_eval_summary()` | Confidence threshold table with AvgMaxRR column, per-fold breakdown, vs-baseline comparison |
 | `print_rr_calibration()` | Phase 2 calibration table: predicted R:R vs actual max_rr at each threshold |
-| `export_onnx()` | Production ONNX export of the final fold model |
+| `export_onnx()` | Production ONNX export; `risk_head_donor_path` splices a better fold's calibrated risk head when the final fold's degrades |
 | `extract_backbone()` | Extract backbone weights from a completed fold for use as the starting point of the next training run |
 | `continue_from` (TrainingConfig) | Path to a prior run's `_done.pt` — F1 warm-starts (full) from that checkpoint for iterative multi-pass refinement |
+| `backbone_swap_path` (TrainingConfig) | Replaces backbone weights inside the `continue_from` checkpoint before training — upgrades backbone without re-learning strategy heads |
+| `p80_patience` (TrainingConfig) | Dual patience: fires early stop when P@80 stable (N≥50) hasn't improved for N epochs, independent of val_loss patience |
+| Fold `epochs` key | Per-fold epoch override — set `{'epochs': 20}` in any fold dict to override the global `TrainingConfig.epochs` for that fold only |
 
 After each fold evaluation, the framework automatically prints two diagnostic blocks:
 
@@ -435,6 +479,7 @@ Futures-Foundation-Model/
 
 | Version | Description |
 |---------|-------------|
+| **v0.8** | Dual patience (`p80_patience`) — P@80 stable (N≥50) tracked independently of val_loss patience; fires early stop when P@80 plateaus even while val_loss is still declining, saving ~30–40% of epochs in typical runs; `backbone_swap_path` in `TrainingConfig` — splices a newer backbone into a `continue_from` checkpoint before training (upgrade backbone, keep strategy heads, no cold start); `risk_head_donor_path` in `export_onnx()` — replaces the final fold's risk head with a better-calibrated earlier fold's risk head at export time; per-fold `epochs` key — overrides global epoch count for a specific fold without touching the config hash |
 | **v0.7** | `AvgMaxRR` column in per-threshold table (average max R:R of winning trades — confirms edge has real follow-through); confidence calibration block auto-printed after every fold (win rate by confidence band with monotonicity check; non-monotonic = deployment blocker); full warm start gracefully skips shape-mismatched keys with a warning instead of crashing (enables `continue_from` across runs with minor architectural differences) |
 | **v0.6** | 9-instrument library support (added CL, ZB, ZN); `continue_from` in `TrainingConfig` for iterative multi-pass fine-tuning (F1 warm-starts full from prior run's `_done.pt`, F2-F5 use `warm_start_mode`); `continue_from` excluded from config hash to preserve fold-resume cache |
 | **v0.5** | Tiered checkpoint selection (`_p80s` stable N≥50 > `_p80` peak N≥15 > `_f1` > `_loss`); selective warm start (backbone transfers fold-to-fold, signal head cold-starts); layerwise LR (backbone at lower LR to preserve pretrained knowledge); `epoch_callback` full metrics dict; `extract_backbone()` utility for backbone reuse across runs; stale checkpoint guard on resume; `verbose` param |
@@ -494,9 +539,12 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 - [x] **`AvgMaxRR` column in threshold table** — average max R:R of winning trades per confidence threshold; confirms edge has follow-through beyond precision alone
 - [x] **Confidence calibration block** — auto-printed after every fold; win rate by band (50–90%+) with monotonicity check; flags non-monotonic calibration before deployment
 - [x] **Full warm start graceful key skip** — shape-mismatched keys are skipped with a warning instead of crashing; enables `continue_from` across runs with minor architectural differences
+- [x] **`backbone_swap_path` in `TrainingConfig`** — upgrade backbone mid-chain without re-learning strategy heads; splices new backbone into `continue_from` checkpoint before F1 trains
+- [x] **`risk_head_donor_path` in `export_onnx()`** — replace final fold's degraded risk head with a better-calibrated earlier fold's risk head at export time
+- [x] **Per-fold epoch override** — `epochs` key in fold dict overrides global `TrainingConfig.epochs` for that fold only; config hash unaffected
+- [x] **Dual patience (`p80_patience`)** — P@80 stable (N≥50) patience tracked independently of val_loss; fires early stop when P@80 plateaus even while val_loss is still declining; saves ~30–40% of epoch budget in typical runs
 - [ ] Additional strategy implementations (ORB, ICT breaker blocks)
 - [ ] Multi-timeframe input support
-- [ ] v8 backbone pretraining (9 instruments: ES, NQ, RTY, YM, GC, SI, CL, ZB, ZN)
 
 ---
 
