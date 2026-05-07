@@ -27,6 +27,18 @@ class StrategyLabeler(ABC):
         """Ordered column names of the strategy-specific feature array."""
         ...
 
+    def config_dict(self) -> dict:
+        """
+        Return a JSON-serialisable dict of all parameters that affect labeling
+        output.  The framework hashes this (plus tickers + feature_cols) to
+        decide whether the cached parquet files are still valid.
+
+        Override this in every concrete labeler.  Include the labeling version,
+        all thresholds, and any other constants that, if changed, would produce
+        different labels.  Do NOT include paths — only logical parameters.
+        """
+        return {}
+
     @abstractmethod
     def run(
         self,

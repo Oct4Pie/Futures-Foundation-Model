@@ -144,6 +144,18 @@ def _validate_labeler_output(
             '\n'.join(f'  • {p}' for p in problems))
 
 
+def _labeling_cache_hash(labeler: StrategyLabeler, tickers: list, timeframe: str) -> str:
+    """Stable MD5 of all parameters that affect labeling output."""
+    payload = {
+        **labeler.config_dict(),
+        'name':         labeler.name,
+        'feature_cols': list(labeler.feature_cols),
+        'tickers':      sorted(tickers),
+        'timeframe':    timeframe,
+    }
+    return hashlib.md5(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:12]
+
+
 def run_labeling(
     labeler: StrategyLabeler,
     tickers: list,
@@ -153,15 +165,45 @@ def run_labeling(
     micro_to_full: dict = None,
     force: bool = False,
     timeframe: str = '5min',
+    use_cache: bool = False,
 ) -> None:
     """
     For each ticker: load raw CSV + FFM parquet, call labeler.run(),
     save strategy_features and labels to cache_dir.
 
-    Skips a ticker if cached files already exist (unless force=True).
+    When use_cache=True the function hashes labeler.config_dict() + tickers +
+    feature_cols and writes the hash to {cache_dir}/labeling_hash.txt.  A
+    subsequent call with identical parameters and existing parquet files is
+    skipped entirely (cache hit).  Any parameter change invalidates the cache
+    and triggers a full re-label after wiping cache_dir.
+
+    When use_cache=False (default) the function skips individual tickers whose
+    parquet files already exist, matching the original per-ticker behaviour.
+
     Raw data is expected at {raw_dir}/{data_ticker}_{timeframe}.csv.
     FFM features at {ffm_dir}/{data_ticker}_features.parquet.
     """
+    if use_cache:
+        os.makedirs(cache_dir, exist_ok=True)
+        current_hash   = _labeling_cache_hash(labeler, tickers, timeframe)
+        hash_file      = os.path.join(cache_dir, 'labeling_hash.txt')
+        parquet_files  = [
+            os.path.join(cache_dir, f'{t}_strategy_labels.parquet') for t in tickers
+        ]
+        cache_valid = (
+            not force
+            and os.path.exists(hash_file)
+            and open(hash_file).read().strip() == current_hash
+            and all(os.path.exists(f) for f in parquet_files)
+        )
+        if cache_valid:
+            print(f'⚡ Labeling cache hit (hash={current_hash}) — skipping re-label')
+            return
+        if os.path.exists(hash_file):
+            print(f'♻️  Labeling config changed — re-labeling (hash={current_hash})')
+        import shutil
+        shutil.rmtree(cache_dir, ignore_errors=True)
+
     os.makedirs(cache_dir, exist_ok=True)
     micro_to_full = micro_to_full or {}
     total_signals = total_bars = 0
@@ -230,6 +272,9 @@ def run_labeling(
     print(f'  ✅ LABELING COMPLETE — {total_bars:,} bars | {total_signals} signals')
     print(f'  {"✅ density OK" if total_signals >= 500 else "⚠️  density LOW (<500)"}')
     print(f"{'='*60}")
+
+    if use_cache:
+        open(hash_file, 'w').write(current_hash)
 
 
 # ── DataLoader ────────────────────────────────────────────────────────────────

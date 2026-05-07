@@ -525,6 +525,129 @@ def test_run_labeling_skips_missing_data(tmp_path):
     assert not (cache_dir / 'MISSING_strategy_features.parquet').exists()
 
 
+# ── use_cache / config_dict ───────────────────────────────────────────────────
+
+from futures_foundation.finetune.base import StrategyLabeler as _StrategyLabeler
+from futures_foundation.finetune.trainer import _labeling_cache_hash
+
+
+class _VersionedLabeler(TrivialLabeler):
+    """TrivialLabeler with a config_dict for cache tests."""
+    def __init__(self, version=1):
+        self._version = version
+
+    def config_dict(self):
+        return {'version': self._version}
+
+
+def _write_minimal_cache(cache_dir, tickers):
+    """Write fake parquet files and a valid hash file for a given labeler."""
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    lb = _VersionedLabeler(version=1)
+    h  = _labeling_cache_hash(lb, tickers, '5min')
+    (cache_dir / 'labeling_hash.txt').write_text(h)
+    for t in tickers:
+        pd.DataFrame({'signal_label': [0], 'max_rr': [0.0]}).to_parquet(
+            cache_dir / f'{t}_strategy_labels.parquet'
+        )
+        pd.DataFrame({'feat_a': [1.0]}).to_parquet(
+            cache_dir / f'{t}_strategy_features.parquet'
+        )
+
+
+def test_config_dict_default_returns_empty():
+    assert TrivialLabeler().config_dict() == {}
+
+
+def test_labeling_cache_hash_changes_with_config_dict():
+    h1 = _labeling_cache_hash(_VersionedLabeler(version=1), ['ES'], '5min')
+    h2 = _labeling_cache_hash(_VersionedLabeler(version=2), ['ES'], '5min')
+    assert h1 != h2
+
+
+def test_labeling_cache_hash_changes_with_tickers():
+    lb = _VersionedLabeler()
+    h1 = _labeling_cache_hash(lb, ['ES'], '5min')
+    h2 = _labeling_cache_hash(lb, ['ES', 'NQ'], '5min')
+    assert h1 != h2
+
+
+def test_labeling_cache_hash_changes_with_timeframe():
+    lb = _VersionedLabeler()
+    assert _labeling_cache_hash(lb, ['ES'], '5min') != _labeling_cache_hash(lb, ['ES'], '3min')
+
+
+@pytest.mark.skipif(_skip_no_parquet(), reason='pyarrow not installed')
+def test_run_labeling_use_cache_hit_skips(tmp_path, capsys):
+    tickers   = ['HIT']
+    cache_dir = tmp_path / 'cache'
+    _write_minimal_cache(cache_dir, tickers)
+
+    lb = _VersionedLabeler(version=1)
+    run_labeling(lb, tickers, str(tmp_path / 'raw'), str(tmp_path / 'ffm'),
+                 str(cache_dir), use_cache=True)
+
+    out = capsys.readouterr().out
+    assert 'cache hit' in out
+
+
+@pytest.mark.skipif(_skip_no_parquet(), reason='pyarrow not installed')
+def test_run_labeling_use_cache_miss_wipes_and_relabels(tmp_path):
+    tickers   = ['ES']
+    cache_dir = tmp_path / 'cache'
+    _write_minimal_cache(cache_dir, tickers)
+
+    # Stale file that should be wiped on cache miss
+    stale = cache_dir / 'stale.txt'
+    stale.write_text('should be gone')
+
+    # Different version → hash mismatch → cache invalid
+    lb = _VersionedLabeler(version=99)
+    raw_dir = tmp_path / 'raw'; raw_dir.mkdir()
+    ffm_dir = tmp_path / 'ffm'; ffm_dir.mkdir()
+    n = 300
+    ffm_df = make_ffm_df(n)
+    ffm_df.to_parquet(ffm_dir / 'ES_features.parquet', index=True)
+    raw_data = pd.DataFrame({
+        'datetime': pd.date_range('2023-01-01', periods=n, freq='5min'),
+        'open': np.random.randn(n) + 5000, 'high': np.random.randn(n) + 5001,
+        'low':  np.random.randn(n) + 4999, 'close': np.random.randn(n) + 5000,
+        'volume': np.random.randint(100, 1000, n).astype(float),
+    })
+    raw_data.to_csv(raw_dir / 'ES_5min.csv', index=False)
+
+    run_labeling(lb, tickers, str(raw_dir), str(ffm_dir), str(cache_dir), use_cache=True)
+
+    assert not stale.exists(), 'cache dir should have been wiped on hash mismatch'
+    assert (cache_dir / 'labeling_hash.txt').exists()
+
+
+@pytest.mark.skipif(_skip_no_parquet(), reason='pyarrow not installed')
+def test_run_labeling_use_cache_writes_hash_file(tmp_path):
+    ticker  = 'WR'
+    raw_dir = tmp_path / 'raw'; raw_dir.mkdir()
+    ffm_dir = tmp_path / 'ffm'; ffm_dir.mkdir()
+    cache_dir = tmp_path / 'cache'
+    n = 300
+    ffm_df = make_ffm_df(n)
+    ffm_df.to_parquet(ffm_dir / f'{ticker}_features.parquet', index=True)
+    raw_data = pd.DataFrame({
+        'datetime': pd.date_range('2023-01-01', periods=n, freq='5min'),
+        'open': np.random.randn(n) + 5000, 'high': np.random.randn(n) + 5001,
+        'low':  np.random.randn(n) + 4999, 'close': np.random.randn(n) + 5000,
+        'volume': np.random.randint(100, 1000, n).astype(float),
+    })
+    raw_data.to_csv(raw_dir / f'{ticker}_5min.csv', index=False)
+
+    lb = _VersionedLabeler(version=7)
+    run_labeling(lb, [ticker], str(raw_dir), str(ffm_dir), str(cache_dir), use_cache=True)
+
+    hash_file = cache_dir / 'labeling_hash.txt'
+    assert hash_file.exists()
+    expected = _labeling_cache_hash(lb, [ticker], '5min')
+    assert hash_file.read_text().strip() == expected
+
+
 # =============================================================================
 # export_onnx
 # =============================================================================
