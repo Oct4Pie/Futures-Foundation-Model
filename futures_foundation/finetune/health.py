@@ -144,19 +144,27 @@ class FoldHealthMonitor:
 
         # ── 1. Early best epoch ──────────────────────────────────────────
         best_epoch = metrics.get('best_epoch')
-        if best_epoch is not None and best_epoch <= self.early_epoch_threshold:
+        epochs_trained = metrics.get('epochs_trained')
+        # Only fire if the model barely continued past best_epoch — if it ran
+        # 10+ more epochs (e.g. full p80_patience), early peaking is a natural
+        # result of the warm start / gamma dynamics, not an anchor pathology.
+        _early_epoch_stalled = (
+            epochs_trained is None
+            or (epochs_trained - best_epoch) < 10
+        )
+        if best_epoch is not None and best_epoch <= self.early_epoch_threshold and _early_epoch_stalled:
             w = HealthWarning(
                 fold       = fold_name,
                 code       = 'EARLY_EPOCH',
                 severity   = 'warning',
                 message    = (
                     f'{fold_name}: best_epoch={best_epoch} '
-                    f'(≤ {self.early_epoch_threshold}) — '
+                    f'(≤ {self.early_epoch_threshold}) and training stalled early — '
                     'model solved before meaningful training; '
                     'likely anchored to continue_from initialization'
                 ),
                 suggestion = (
-                    'Increase LR by 3× (e.g. 5e-5 → 1.5e-4), '
+                    'Increase LR by 3×, '
                     'or reduce FREEZE_RATIO so more backbone layers update'
                 ),
             )

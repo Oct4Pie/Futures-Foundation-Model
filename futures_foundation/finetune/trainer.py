@@ -1144,6 +1144,7 @@ def _train_fold(
     # ── Attach health-monitor fields to test_metrics ──
     if test_metrics is not None:
         test_metrics['best_epoch'] = _selected_epoch
+        test_metrics['epochs_trained'] = epoch + 1
         # val_p80 at the selected checkpoint — used by VAL_TEST_GAP check
         if best_p80s_state is not None:
             test_metrics['val_p80'] = best_prec_at_80_stable
@@ -1939,9 +1940,13 @@ def print_fold_progression(
         if m is None:
             print(f'  {fn:<6}  {"—":>6}')
             continue
-        conf = np.array(m['all_conf'])
-        lab  = np.array(m['all_labels'])
-        mask = conf >= 0.80
+        conf  = np.array(m['all_conf'])
+        lab   = np.array(m['all_labels'])
+        preds = np.array(m.get('all_preds', []))
+        if len(preds) == len(conf):
+            mask = (conf >= 0.80) & (preds > 0)
+        else:
+            mask = conf >= 0.80
         n    = int(mask.sum())
         p80  = float((lab[mask] > 0).mean()) if n > 0 else 0.0
 
@@ -1993,9 +1998,13 @@ def summarize_fold_precision(fold_results: dict) -> dict:
             continue
         confs  = np.array(metrics['all_conf'])
         labels = np.array(metrics['all_labels'])
+        preds  = np.array(metrics.get('all_preds', []))
         entry: dict = {'signals': int((labels > 0).sum())}
         for key, thr in [('prec_at_70', 0.70), ('prec_at_80', 0.80), ('prec_at_90', 0.90)]:
-            mask = confs >= thr
+            if len(preds) == len(confs):
+                mask = (confs >= thr) & (preds > 0)
+            else:
+                mask = confs >= thr
             entry[key] = round(float((labels[mask] > 0).mean()), 3) if mask.sum() > 0 else None
         summary[fname] = entry
     return summary

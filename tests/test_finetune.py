@@ -4272,3 +4272,75 @@ def test_health_monitor_weight_lock_without_fold_config_still_suggests_train_sta
     warnings = monitor.check('F2', m2)  # no fold_config
     wl = next(w for w in warnings if w.code == 'WEIGHT_LOCK')
     assert 'train_start' in wl.suggestion
+
+
+def test_early_epoch_suppressed_when_training_continued():
+    """EARLY_EPOCH must NOT fire when training ran 10+ epochs past best_epoch.
+
+    In phase 2 with p80_patience=20, best_epoch=3 and epochs_trained=23 is
+    normal: the model trained actively but P@80 peaked early due to gamma
+    dynamics. This is not an anchor pathology.
+    """
+    monitor = FoldHealthMonitor(early_epoch_threshold=5)
+    m = _good_metrics(best_epoch=3)
+    m['epochs_trained'] = 23  # ran 20 epochs past best — not stalled
+    warnings = monitor.check('F1', m)
+    assert not any(w.code == 'EARLY_EPOCH' for w in warnings), (
+        'EARLY_EPOCH must not fire when training ran well past best_epoch'
+    )
+
+
+def test_early_epoch_fires_when_training_stalled():
+    """EARLY_EPOCH fires when best_epoch=3 and training barely continued (stalled)."""
+    monitor = FoldHealthMonitor(early_epoch_threshold=5)
+    m = _good_metrics(best_epoch=3)
+    m['epochs_trained'] = 8  # only 5 epochs past best — truly stalled
+    warnings = monitor.check('F1', m)
+    assert any(w.code == 'EARLY_EPOCH' for w in warnings)
+
+
+def test_summarize_fold_precision_filters_noise_predictions():
+    """summarize_fold_precision must count only signal predictions (pred>0) above threshold.
+
+    Without the all_preds filter, high-confidence noise predictions (pred=0 with
+    conf=0.95) inflate N and dilute the reported precision — same bug as the health
+    monitor false alarm fixed in VAL_TEST_GAP.
+    """
+    # 10 noise bars predicted as noise with conf=0.95 (should NOT count at 0.80)
+    # 5 signal bars predicted as signal with conf=0.85 (should count)
+    # 2 signal bars predicted as noise with conf=0.90 (should NOT count)
+    confs  = [0.95] * 10 + [0.85] * 5 + [0.90] * 2
+    labels = [0]    * 10 + [1]    * 5 + [1]    * 2
+    preds  = [0]    * 10 + [1]    * 5 + [0]    * 2  # first 10 and last 2 = no signal pred
+    fold_results = {
+        'F1': {'all_conf': confs, 'all_labels': labels, 'all_preds': preds},
+    }
+    result = summarize_fold_precision(fold_results)
+    # Only the 5 signal-predicted bars count; all 5 are correct → prec_at_80 = 1.0
+    assert result['F1']['prec_at_80'] == pytest.approx(1.0, abs=0.001), (
+        'summarize_fold_precision must exclude noise predictions (pred=0) from P@80'
+    )
+
+
+def test_print_fold_progression_filters_noise_predictions(capsys):
+    """print_fold_progression P@80 must exclude high-conf noise predictions.
+
+    Without the pred>0 filter, N@80 is nearly all test bars (conf of noise class
+    is very high for most bars), making P@80 ≈ signal_rate ≈ 0.1%.
+    """
+    # 100 noise bars at conf=0.90 predicted as noise
+    # 10 signal bars at conf=0.85 predicted as signal (prec should be 1.0)
+    confs  = [0.90] * 100 + [0.85] * 10
+    labels = [0]    * 100 + [1]    * 10
+    preds  = [0]    * 100 + [1]    * 10
+    fold_results = {
+        'F1': {'all_conf': confs, 'all_labels': labels, 'all_preds': preds},
+        'F2': {'all_conf': confs, 'all_labels': labels, 'all_preds': preds},
+        'F3': {'all_conf': confs, 'all_labels': labels, 'all_preds': preds},
+    }
+    print_fold_progression(fold_results)
+    out = capsys.readouterr().out
+    # P@80 should be 100% (10/10), not ~9% (10/110)
+    assert '100.0%' in out, (
+        'print_fold_progression must exclude pred=0 bars from P@80 calculation'
+    )
