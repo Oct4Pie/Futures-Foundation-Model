@@ -3948,3 +3948,126 @@ def test_health_monitor_summary_no_crash(capsys):
     monitor.summary()
     out = capsys.readouterr().out
     assert 'FOLD HEALTH SUMMARY' in out
+
+
+# ── VAL_TEST_GAP ─────────────────────────────────────────────────────────────
+
+def test_health_monitor_val_test_gap_detected():
+    """VAL_TEST_GAP fires when val P@80 exceeds test P@80 by more than threshold."""
+    monitor = FoldHealthMonitor(val_test_gap_threshold=0.10)
+    # Build test metrics with test P@80 ≈ 0.55 (50 TP + 41 FP at high conf)
+    n_tp, n_fp = 50, 41
+    conf = np.array([0.85] * n_tp + [0.85] * n_fp + [0.40] * (500 - n_tp - n_fp))
+    labels = np.array([1] * n_tp + [0] * n_fp + [0] * (500 - n_tp - n_fp))
+    m = _make_metrics(conf, labels, best_epoch=10)
+    m['val_p80'] = 0.75  # gap = 0.75 - (50/91) ≈ 0.75 - 0.55 = 0.20 > 0.10
+    warnings = monitor.check('F1', m)
+    assert any(w.code == 'VAL_TEST_GAP' for w in warnings)
+
+
+def test_health_monitor_no_val_test_gap_within_threshold():
+    """No VAL_TEST_GAP when val and test P@80 are within the threshold."""
+    monitor = FoldHealthMonitor(val_test_gap_threshold=0.10)
+    # test P@80 = 50/70 ≈ 0.71
+    n_tp, n_fp = 50, 20
+    conf = np.array([0.85] * n_tp + [0.85] * n_fp + [0.40] * (500 - n_tp - n_fp))
+    labels = np.array([1] * n_tp + [0] * n_fp + [0] * (500 - n_tp - n_fp))
+    m = _make_metrics(conf, labels, best_epoch=10)
+    m['val_p80'] = 0.75  # gap ≈ 0.75 - 0.71 = 0.04 < 0.10
+    warnings = monitor.check('F1', m)
+    assert not any(w.code == 'VAL_TEST_GAP' for w in warnings)
+
+
+def test_health_monitor_val_test_gap_absent_when_no_val_p80():
+    """No VAL_TEST_GAP check when val_p80 is missing (e.g. f1/loss checkpoint)."""
+    monitor = FoldHealthMonitor(val_test_gap_threshold=0.10)
+    m = _good_metrics(best_epoch=10)  # no val_p80 key
+    warnings = monitor.check('F1', m)
+    assert not any(w.code == 'VAL_TEST_GAP' for w in warnings)
+
+
+# ── N_COLLAPSE ────────────────────────────────────────────────────────────────
+
+def test_health_monitor_n_collapse_detected():
+    """N_COLLAPSE fires when N above threshold drops more than ratio vs prev fold."""
+    monitor = FoldHealthMonitor(n_collapse_ratio=0.50, min_signal_n=5)
+    # F1: 60 predictions above 0.80
+    conf1   = np.array([0.85] * 60 + [0.40] * 440)
+    labels1 = np.array([1]    * 60 + [0]    * 440)
+    # F2: 20 predictions — 67% drop
+    conf2   = np.array([0.85] * 20 + [0.40] * 480)
+    labels2 = np.array([1]    * 20 + [0]    * 480)
+    monitor.check('F1', _make_metrics(conf1, labels1, best_epoch=10))
+    warnings = monitor.check('F2', _make_metrics(conf2, labels2, best_epoch=10))
+    assert any(w.code == 'N_COLLAPSE' for w in warnings)
+
+
+def test_health_monitor_no_n_collapse_within_ratio():
+    """No N_COLLAPSE when N drop is within the allowed ratio."""
+    monitor = FoldHealthMonitor(n_collapse_ratio=0.50, min_signal_n=5)
+    conf1   = np.array([0.85] * 60 + [0.40] * 440)
+    labels1 = np.array([1]    * 60 + [0]    * 440)
+    conf2   = np.array([0.85] * 40 + [0.40] * 460)  # 33% drop — within 50%
+    labels2 = np.array([1]    * 40 + [0]    * 460)
+    monitor.check('F1', _make_metrics(conf1, labels1, best_epoch=10))
+    warnings = monitor.check('F2', _make_metrics(conf2, labels2, best_epoch=10))
+    assert not any(w.code == 'N_COLLAPSE' for w in warnings)
+
+
+def test_health_monitor_n_collapse_skips_when_prev_zero_signal():
+    """N_COLLAPSE does not fire when the previous fold was already below min_signal_n."""
+    monitor = FoldHealthMonitor(n_collapse_ratio=0.50, min_signal_n=20)
+    # F1: only 10 signals (below min) — not a valid comparison baseline
+    conf1   = np.array([0.85] * 10 + [0.40] * 490)
+    labels1 = np.array([1]    * 10 + [0]    * 490)
+    # F2: 5 signals — even lower, but prev wasn't a viable baseline
+    conf2   = np.array([0.85] * 5 + [0.40] * 495)
+    labels2 = np.array([1]    * 5 + [0]    * 495)
+    monitor.check('F1', _make_metrics(conf1, labels1, best_epoch=10))
+    warnings = monitor.check('F2', _make_metrics(conf2, labels2, best_epoch=10))
+    assert not any(w.code == 'N_COLLAPSE' for w in warnings)
+
+
+# ── CONFIDENCE_FLAT ───────────────────────────────────────────────────────────
+
+def test_health_monitor_confidence_flat_detected():
+    """CONFIDENCE_FLAT fires when confidence std is below threshold."""
+    monitor = FoldHealthMonitor(conf_flat_threshold=0.05)
+    rng = np.random.default_rng(0)
+    conf   = np.full(500, 0.50) + rng.uniform(-0.01, 0.01, 500)  # std ≈ 0.006
+    labels = (np.arange(500) < 75).astype(int)
+    m = _make_metrics(conf, labels, best_epoch=10)
+    warnings = monitor.check('F1', m)
+    assert any(w.code == 'CONFIDENCE_FLAT' for w in warnings)
+
+
+def test_health_monitor_no_confidence_flat_with_spread():
+    """No CONFIDENCE_FLAT when model shows good confidence spread."""
+    monitor = FoldHealthMonitor(conf_flat_threshold=0.05)
+    m = _good_metrics(best_epoch=10)  # positives in [0.75,0.95], negatives in [0.3,0.65]
+    warnings = monitor.check('F1', m)
+    assert not any(w.code == 'CONFIDENCE_FLAT' for w in warnings)
+
+
+# ── ZERO_SIGNAL_FOLD ──────────────────────────────────────────────────────────
+
+def test_health_monitor_zero_signal_fold_detected():
+    """ZERO_SIGNAL_FOLD fires (critical) when N above threshold is below minimum."""
+    monitor = FoldHealthMonitor(min_signal_n=20)
+    conf   = np.array([0.85] * 5 + [0.40] * 495)
+    labels = np.array([1]    * 5 + [0]    * 495)
+    m = _make_metrics(conf, labels, best_epoch=10)
+    warnings = monitor.check('F1', m)
+    zero_warns = [w for w in warnings if w.code == 'ZERO_SIGNAL_FOLD']
+    assert len(zero_warns) > 0
+    assert zero_warns[0].severity == 'critical'
+
+
+def test_health_monitor_no_zero_signal_above_minimum():
+    """No ZERO_SIGNAL_FOLD when N above threshold meets the minimum."""
+    monitor = FoldHealthMonitor(min_signal_n=20)
+    conf   = np.array([0.85] * 25 + [0.40] * 475)
+    labels = np.array([1]    * 25 + [0]    * 475)
+    m = _make_metrics(conf, labels, best_epoch=10)
+    warnings = monitor.check('F1', m)
+    assert not any(w.code == 'ZERO_SIGNAL_FOLD' for w in warnings)

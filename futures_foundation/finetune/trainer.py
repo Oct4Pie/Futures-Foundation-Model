@@ -1122,6 +1122,11 @@ def _train_fold(
     # ── Attach health-monitor fields to test_metrics ──
     if test_metrics is not None:
         test_metrics['best_epoch'] = _selected_epoch
+        # val_p80 at the selected checkpoint — used by VAL_TEST_GAP check
+        if best_p80s_state is not None:
+            test_metrics['val_p80'] = best_prec_at_80_stable
+        elif best_p80_state is not None:
+            test_metrics['val_p80'] = best_prec_at_80
         try:
             strat_w = model.strategy_projection[0].weight.detach().cpu().numpy()
             test_metrics['feature_importance'] = np.abs(strat_w).mean(axis=0)
