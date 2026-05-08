@@ -73,6 +73,7 @@ class MyStrategyLabeler(StrategyLabeler):
 ```python
 # Single call — labeling, walk-forward training, evaluation, and fold progression all in one
 labeler = MyStrategyLabeler()
+monitor = FoldHealthMonitor()   # optional — auto-detects training pathologies
 fold_results = run_finetune(
     labeler=labeler,
     config=TrainingConfig(),
@@ -85,9 +86,11 @@ fold_results = run_finetune(
     ffm_dir=PREPARED_DIR,
     strategy_dir=CACHE_DIR,
     baseline_wr=BASELINE_WR,
+    health_monitor=monitor,
     on_epoch_end=lambda m: print(f"  {m['fold']} E{m['epoch']} P@80:{m['prec_at_80']:.3f}(N={m['n_at_80']})"),
     on_fold_complete=lambda fold, metrics: print(f"  {fold} done — P@80:{metrics.get('prec_at_80', 0):.3f}"),
 )
+monitor.summary()   # consolidated report across all folds
 ```
 
 `run_finetune` executes the full pipeline in order: (1) label all tickers with cache, (2) walk-forward training across all folds, (3) `print_eval_summary` confidence threshold table, (4) `print_fold_progression` fold-to-fold P@80 table with Gate 2 check. The lower-level `run_labeling`, `run_walk_forward`, and `print_eval_summary` remain available for scripts that need intermediate access between steps.
@@ -144,6 +147,20 @@ FOLDS = [
 
 The config hash is computed from `TrainingConfig` only — fold-level overrides do not affect it.
 
+**Sliding window training (`train_start`)** — set a `train_start` key in any fold dict to limit training to a recent window. Critical for `continue_from` runs: without it, later folds train on the full historical range while the model's initialization is anchored to the prior run's weights — the tiny gradient (small LR + high freeze ratio) cannot overcome the anchor, so feature weights are identical across all folds (WEIGHT_LOCK). With an 18-month window, each fold's training data is local to its regime, forcing genuine re-adaptation:
+
+```python
+FOLDS = [
+    {'name': 'F1', 'train_start': '2020-10-01', 'train_end': '2022-04-01', 'val_end': '2022-10-01', 'test_end': '2023-04-01'},
+    {'name': 'F2', 'train_start': '2021-10-01', 'train_end': '2023-04-01', 'val_end': '2023-10-01', 'test_end': '2024-04-01'},
+    {'name': 'F3', 'train_start': '2022-10-01', 'train_end': '2024-04-01', 'val_end': '2024-10-01', 'test_end': '2025-04-01'},
+    {'name': 'F4', 'train_start': '2023-10-01', 'train_end': '2025-04-01', 'val_end': '2025-08-01', 'test_end': '2026-01-01'},
+]
+# Folds without train_start default to full history (backward-compatible)
+```
+
+The `train_start` window is a *training data* constraint only — val and test windows are unchanged. The `FoldHealthMonitor` detects if the fix is needed (WEIGHT_LOCK) and confirms it is working (prints `cos_sim` between folds even when healthy).
+
 **Phase 2: risk head calibration** (separate script, run after Phase 1 completes)
 
 ```python
@@ -185,7 +202,8 @@ export_onnx(
 | `TrainingConfig` | Dataclass holding all training hyperparameters |
 | `HybridStrategyModel` | FFM backbone + strategy feature projection + signal/risk/confidence heads |
 | `HybridStrategyDataset` | Sliding-window dataset parameterised by your strategy feature columns |
-| `run_finetune()` | **Single-call full pipeline** — labeling → walk-forward → eval summary → fold progression; `on_epoch_end` and `on_fold_complete` callbacks for custom monitoring |
+| `FoldHealthMonitor` | **Stateful post-fold health checker** — pass to `run_finetune(health_monitor=...)` to auto-detect 7 training pathologies; call `monitor.summary()` for a consolidated report after all folds |
+| `run_finetune()` | **Single-call full pipeline** — labeling → walk-forward → eval summary → fold progression; `on_epoch_end` and `on_fold_complete` callbacks for custom monitoring; `health_monitor` for automatic pathology detection |
 | `run_labeling()` | Lower-level: CSV I/O, timezone normalization, parquet caching per ticker |
 | `run_walk_forward()` | Lower-level: N-fold walk-forward, selective warm start, tiered checkpoint selection, disconnect recovery |
 | `run_risk_head_calibration()` | Phase 2: freeze signal head, fine-tune risk_head with Huber loss on signal-only subsets |
@@ -197,6 +215,7 @@ export_onnx(
 | `backbone_swap_path` (TrainingConfig) | Replaces backbone weights inside the `continue_from` checkpoint before training — upgrades backbone without re-learning strategy heads |
 | `p80_patience` (TrainingConfig) | Dual patience: fires early stop when P@80 stable (N≥50) hasn't improved for N epochs, independent of val_loss patience |
 | Fold `epochs` key | Per-fold epoch override — set `{'epochs': 20}` in any fold dict to override the global `TrainingConfig.epochs` for that fold only |
+| Fold `train_start` key | Sliding window training — limits training data to a recent window (e.g. 18 months) so each fold re-adapts to its local regime; required for `continue_from` runs to prevent WEIGHT_LOCK |
 | Auto-scaled `n_stable_min` | `n_stable_min` in `TrainingConfig` is a cap, not a fixed threshold. Per fold, the trainer computes `effective_n_stable = min(cfg.n_stable_min, max(10, int(val_pos_count × 0.08)))` from actual val signal count. Later walk-forward folds have shorter val windows and fewer signals — a fixed threshold blocks stable checkpoints from forming in F4/F5. The scaled floor ensures the bar is proportional to signal density, not absolute count. Val print line shows the computed value vs the cfg cap. |
 
 After each fold evaluation, the framework automatically prints two diagnostic blocks:
@@ -204,6 +223,28 @@ After each fold evaluation, the framework automatically prints two diagnostic bl
 **Per-threshold table** — precision, EV@2R, recall, signal rate, and **AvgMaxRR** (average max R:R of winning trades at each confidence threshold). AvgMaxRR confirms the edge has real follow-through — a high-precision threshold where winners average only 0.5R is a different risk profile than one averaging 2.5R.
 
 **Confidence calibration block** — win rate by confidence band (50–60%, 60–70%, 70–80%, 80–90%, 90%+), filtered to predicted positives only. Includes a monotonicity check: win rate must rise with confidence or a ⚠️ flag is printed. A non-monotonic calibration (model more accurate at 70% than 80%) is a deployment blocker — it means the model is guessing at high confidence rather than genuinely discriminating.
+
+**`FoldHealthMonitor` — automatic pathology detection.** Pass a `FoldHealthMonitor` instance to `run_finetune` and it runs 7 checks after every fold, printing immediately when something is wrong and a consolidated summary at the end. No manual log inspection needed:
+
+```python
+from futures_foundation.finetune import FoldHealthMonitor
+
+monitor = FoldHealthMonitor()
+fold_results = run_finetune(..., health_monitor=monitor)
+monitor.summary()
+```
+
+| Signal | Severity | Triggers when | Suggested fix |
+|---|---|---|---|
+| `EARLY_EPOCH` | warning | best_epoch ≤ 5 | Increase LR 3×, or reduce freeze ratio |
+| `WEIGHT_LOCK` | warning | feature importance cos_sim ≥ 0.99 vs prev fold | Add `train_start` sliding window to folds |
+| `P80_DECLINE` | critical | P@80 declined for 2+ consecutive folds | Add `train_start` sliding window |
+| `VAL_TEST_GAP` | warning | val P@80 − test P@80 > 10 ppts | Reduce epochs or increase focal_gamma |
+| `N_COLLAPSE` | warning | N above threshold dropped > 50% vs prev fold | Check label distribution shift; lower threshold |
+| `CONFIDENCE_FLAT` | critical | std of output confidences < 0.05 | Check feature scaling; lower LR |
+| `ZERO_SIGNAL_FOLD` | critical | N above threshold < 20 | Widen fold date range; lower threshold |
+
+Between consecutive folds, the monitor also prints the feature importance cosine similarity even when healthy — `✅ Feature weights diverged vs F1: cos_sim=0.847` — so you can confirm the model is genuinely re-adapting each fold rather than silently inheriting the prior fold's solution.
 
 ### Model architecture
 
@@ -510,14 +551,15 @@ Futures-Foundation-Model/
 │       ├── __init__.py
 │       ├── base.py             # StrategyLabeler ABC
 │       ├── config.py           # TrainingConfig dataclass
+│       ├── health.py           # FoldHealthMonitor — 7-signal post-fold pathology detection
 │       ├── model.py            # HybridStrategyModel
 │       ├── dataset.py          # HybridStrategyDataset
 │       ├── losses.py           # FocalLoss
 │       └── trainer.py          # run_finetune, run_labeling, run_walk_forward, print_eval_summary
-├── tests/                      # Unit tests (452+ total)
+├── tests/                      # Unit tests (492+ total)
 │   ├── test_model.py           # Backbone + heads
 │   ├── test_pretrain.py        # Pretraining pipeline
-│   ├── test_finetune.py        # Fine-tuning framework (incl. FFM field coverage)
+│   ├── test_finetune.py        # Fine-tuning framework (incl. FFM field coverage, FoldHealthMonitor)
 │   ├── test_features_crt.py    # CRT sweep features
 │   ├── test_features_core.py   # Core feature groups
 │   ├── test_labels.py          # Label generation
@@ -535,6 +577,7 @@ Futures-Foundation-Model/
 
 | Version | Description |
 |---------|-------------|
+| **v1.1** | `FoldHealthMonitor` — stateful post-fold pathology detector; 7 signals (EARLY_EPOCH, WEIGHT_LOCK, P80_DECLINE, VAL_TEST_GAP, N_COLLAPSE, CONFIDENCE_FLAT, ZERO_SIGNAL_FOLD); prints immediately on detection + consolidated `summary()` after all folds; always prints feature importance `cos_sim` between folds even when healthy so the WEIGHT_LOCK fix is visually confirmed; `train_start` fold key — 18-month sliding window training prevents weight lock in `continue_from` runs by forcing each fold to re-adapt to its local regime; `val_p80` stored in test_metrics from the selected checkpoint to power VAL_TEST_GAP; 10 new health monitor tests (492 total) |
 | **v1.0** | `futures_foundation.pretrain` — full backbone pretraining pipeline in the library; `prepare_data()` derives 68 features + 4 labels from raw OHLCV CSVs (idempotent, skips cached); `run_pretrain()` full training loop with AMP (bfloat16/float16), per-task overfit guards, collapse detection, backbone val loss checkpointing (structure excluded — overfits early while other heads improve); `verify_backbone()` confirms checkpoint health and instrument embedding diversity; `PretrainConfig` dataclass with v8/v9 defaults baked in; Colab script reduced from ~990 → ~90 lines; stale `scripts/pretrain.py` and `scripts/prepare_data.py` (42-feature era) deleted; 21 new unit tests (452 total) |
 | **v0.9** | `run_finetune()` — single-call full pipeline replacing the prior 3-step sequence (labeling + walk-forward + eval); accepts `on_epoch_end` and `on_fold_complete` callbacks; auto-scaled `n_stable_min` — trainer computes `effective_n_stable = min(cfg, max(10, int(val_pos_count × 0.08)))` per fold from actual val signal count so later walk-forward folds with shorter val windows no longer fail to produce stable checkpoints |
 | **v0.8** | Dual patience (`p80_patience`) — P@80 stable (N≥50) tracked independently of val_loss patience; fires early stop when P@80 plateaus even while val_loss is still declining, saving ~30–40% of epochs in typical runs; `backbone_swap_path` in `TrainingConfig` — splices a newer backbone into a `continue_from` checkpoint before training (upgrade backbone, keep strategy heads, no cold start); `risk_head_donor_path` in `export_onnx()` — replaces the final fold's risk head with a better-calibrated earlier fold's risk head at export time; per-fold `epochs` key — overrides global epoch count for a specific fold without touching the config hash |
@@ -604,6 +647,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 - [x] **`run_finetune()` single-call pipeline** — replaces the prior 3-step sequence (run_labeling + run_walk_forward + print_eval_summary); adds `on_epoch_end` and `on_fold_complete` callbacks; lower-level functions remain available for scripts needing intermediate access
 - [x] **Auto-scaled `n_stable_min`** — trainer computes effective threshold from actual val signal count per fold; `n_stable_min` in `TrainingConfig` is a cap; later walk-forward folds with shorter val windows scale down proportionally (floor=10), floored to prevent noise-driven checkpoints; fixes F4/F5 stable checkpoint collapse in sparse-signal strategies
 - [x] **`futures_foundation.pretrain` — single-call pretraining pipeline** — `prepare_data`, `run_pretrain`, `verify_backbone`; per-task overfit guards, AMP, backbone val loss checkpointing, instrument similarity verification; captures all v8/v9 fixes in the library; Colab reduced to ~90 lines
+- [x] **`FoldHealthMonitor` — automatic training pathology detection** — 7 signals (EARLY_EPOCH, WEIGHT_LOCK, P80_DECLINE, VAL_TEST_GAP, N_COLLAPSE, CONFIDENCE_FLAT, ZERO_SIGNAL_FOLD); fires immediately per fold + consolidated summary; always prints feature weight cos_sim between folds to confirm WEIGHT_LOCK fix is working
+- [x] **`train_start` fold key** — sliding window training (e.g. 18 months) prevents weight lock in `continue_from` runs; each fold re-adapts to its local regime rather than being anchored to the prior run's initialization; backward-compatible (folds without `train_start` use full history)
 - [ ] Additional strategy implementations (ORB, ICT breaker blocks)
 - [ ] Multi-timeframe input support
 
