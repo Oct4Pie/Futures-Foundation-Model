@@ -194,6 +194,7 @@ export_onnx(
 | `backbone_swap_path` (TrainingConfig) | Replaces backbone weights inside the `continue_from` checkpoint before training — upgrades backbone without re-learning strategy heads |
 | `p80_patience` (TrainingConfig) | Dual patience: fires early stop when P@80 stable (N≥50) hasn't improved for N epochs, independent of val_loss patience |
 | Fold `epochs` key | Per-fold epoch override — set `{'epochs': 20}` in any fold dict to override the global `TrainingConfig.epochs` for that fold only |
+| Auto-scaled `n_stable_min` | `n_stable_min` in `TrainingConfig` is a cap, not a fixed threshold. Per fold, the trainer computes `effective_n_stable = min(cfg.n_stable_min, max(10, int(val_pos_count × 0.08)))` from actual val signal count. Later walk-forward folds have shorter val windows and fewer signals — a fixed threshold blocks stable checkpoints from forming in F4/F5. The scaled floor ensures the bar is proportional to signal density, not absolute count. Val print line shows the computed value vs the cfg cap. |
 
 After each fold evaluation, the framework automatically prints two diagnostic blocks:
 
@@ -459,7 +460,7 @@ Futures-Foundation-Model/
 │       ├── dataset.py          # HybridStrategyDataset
 │       ├── losses.py           # FocalLoss
 │       └── trainer.py          # run_labeling, run_walk_forward, print_eval_summary
-├── tests/                      # Unit tests (387+ total)
+├── tests/                      # Unit tests (431+ total)
 │   ├── test_model.py           # Backbone + heads
 │   ├── test_finetune.py        # Fine-tuning framework (incl. FFM field coverage)
 │   ├── test_features_crt.py    # CRT sweep features
@@ -479,6 +480,7 @@ Futures-Foundation-Model/
 
 | Version | Description |
 |---------|-------------|
+| **v0.9** | Auto-scaled `n_stable_min` — trainer computes `effective_n_stable = min(cfg, max(10, int(val_pos_count × 0.08)))` per fold from actual val signal count; `n_stable_min` in `TrainingConfig` becomes a cap, not a fixed bar; later walk-forward folds (shorter val windows, fewer signals) no longer fail to produce stable checkpoints; val print line shows computed value vs cfg for visibility |
 | **v0.8** | Dual patience (`p80_patience`) — P@80 stable (N≥50) tracked independently of val_loss patience; fires early stop when P@80 plateaus even while val_loss is still declining, saving ~30–40% of epochs in typical runs; `backbone_swap_path` in `TrainingConfig` — splices a newer backbone into a `continue_from` checkpoint before training (upgrade backbone, keep strategy heads, no cold start); `risk_head_donor_path` in `export_onnx()` — replaces the final fold's risk head with a better-calibrated earlier fold's risk head at export time; per-fold `epochs` key — overrides global epoch count for a specific fold without touching the config hash |
 | **v0.7** | `AvgMaxRR` column in per-threshold table (average max R:R of winning trades — confirms edge has real follow-through); confidence calibration block auto-printed after every fold (win rate by confidence band with monotonicity check; non-monotonic = deployment blocker); full warm start gracefully skips shape-mismatched keys with a warning instead of crashing (enables `continue_from` across runs with minor architectural differences) |
 | **v0.6** | 9-instrument library support (added CL, ZB, ZN); `continue_from` in `TrainingConfig` for iterative multi-pass fine-tuning (F1 warm-starts full from prior run's `_done.pt`, F2-F5 use `warm_start_mode`); `continue_from` excluded from config hash to preserve fold-resume cache |
@@ -543,6 +545,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 - [x] **`risk_head_donor_path` in `export_onnx()`** — replace final fold's degraded risk head with a better-calibrated earlier fold's risk head at export time
 - [x] **Per-fold epoch override** — `epochs` key in fold dict overrides global `TrainingConfig.epochs` for that fold only; config hash unaffected
 - [x] **Dual patience (`p80_patience`)** — P@80 stable (N≥50) patience tracked independently of val_loss; fires early stop when P@80 plateaus even while val_loss is still declining; saves ~30–40% of epoch budget in typical runs
+- [x] **Auto-scaled `n_stable_min`** — trainer computes effective threshold from actual val signal count per fold; `n_stable_min` in `TrainingConfig` is a cap; later walk-forward folds with shorter val windows scale down proportionally (floor=10), floored to prevent noise-driven checkpoints; fixes F4/F5 stable checkpoint collapse in sparse-signal strategies
 - [ ] Additional strategy implementations (ORB, ICT breaker blocks)
 - [ ] Multi-timeframe input support
 
