@@ -29,6 +29,7 @@ Usage — implement one class, get everything else for free:
 
 from .base import StrategyLabeler
 from .config import TrainingConfig
+from .health import FoldHealthMonitor
 from .dataset import HybridStrategyDataset
 from .losses import FocalLoss
 from .model import HybridStrategyModel
@@ -49,6 +50,7 @@ from .trainer import (
 __all__ = [
     'StrategyLabeler',
     'TrainingConfig',
+    'FoldHealthMonitor',
     'HybridStrategyDataset',
     'FocalLoss',
     'HybridStrategyModel',

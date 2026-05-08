@@ -13,7 +13,7 @@ from futures_foundation.finetune import (
     StrategyLabeler, TrainingConfig,
     HybridStrategyModel, HybridStrategyDataset, FocalLoss,
     run_finetune, run_labeling, run_walk_forward, export_onnx, print_eval_summary,
-    print_fold_progression, summarize_fold_precision,
+    print_fold_progression, summarize_fold_precision, FoldHealthMonitor,
 )
 from futures_foundation.finetune import validate_setup
 from futures_foundation.finetune.trainer import (
@@ -3766,3 +3766,185 @@ def test_run_finetune_on_fold_complete_fires(tmp_path):
         on_fold_complete=lambda name, m: fired.append(name),
     )
     assert 'F1' in fired and 'F2' in fired
+
+
+# =============================================================================
+# FoldHealthMonitor
+# =============================================================================
+
+def _make_metrics(all_conf, all_labels, best_epoch=None, feature_importance=None):
+    """Build a minimal test_metrics dict for health monitor tests."""
+    n = len(all_conf)
+    m = {
+        'all_conf':   list(all_conf),
+        'all_labels': list(all_labels),
+        'all_preds':  [1 if c >= 0.5 else 0 for c in all_conf],
+        'tp': int(sum(l > 0 and c >= 0.5 for c, l in zip(all_conf, all_labels))),
+        'fn': int(sum(l > 0 and c < 0.5  for c, l in zip(all_conf, all_labels))),
+        'fp': int(sum(l == 0 and c >= 0.5 for c, l in zip(all_conf, all_labels))),
+        'tn': int(sum(l == 0 and c < 0.5  for c, l in zip(all_conf, all_labels))),
+        'loss': 0.5,
+    }
+    if best_epoch is not None:
+        m['best_epoch'] = best_epoch
+    if feature_importance is not None:
+        m['feature_importance'] = np.array(feature_importance, dtype=np.float32)
+    return m
+
+
+def _good_metrics(best_epoch=10):
+    """Metrics with high P@80 and no problems."""
+    rng = np.random.default_rng(42)
+    n = 500
+    labels = (rng.random(n) < 0.15).astype(int)
+    conf   = np.where(labels, rng.uniform(0.75, 0.95, n), rng.uniform(0.3, 0.65, n))
+    return _make_metrics(conf, labels, best_epoch=best_epoch,
+                         feature_importance=rng.uniform(0.1, 0.5, 8))
+
+
+def test_health_monitor_no_warnings_on_healthy_run():
+    """No warnings emitted when all signals are healthy."""
+    monitor = FoldHealthMonitor()
+    # Each fold gets a distinct seed so importance vectors differ (no WEIGHT_LOCK)
+    for i, fold in enumerate(['F1', 'F2', 'F3']):
+        rng = np.random.default_rng(100 + i)
+        n = 500
+        labels = (rng.random(n) < 0.15).astype(int)
+        conf   = np.where(labels, rng.uniform(0.75, 0.95, n), rng.uniform(0.3, 0.65, n))
+        importance = rng.uniform(0.1, 0.5, 8)
+        monitor.check(fold, _make_metrics(conf, labels, best_epoch=10,
+                                          feature_importance=importance))
+    assert len(monitor.warnings) == 0
+
+
+def test_health_monitor_early_epoch_detected():
+    """EARLY_EPOCH fires when best_epoch <= threshold."""
+    monitor = FoldHealthMonitor(early_epoch_threshold=5)
+    metrics = _good_metrics(best_epoch=3)
+    warnings = monitor.check('F1', metrics)
+    assert any(w.code == 'EARLY_EPOCH' for w in warnings)
+
+
+def test_health_monitor_no_early_epoch_above_threshold():
+    """No EARLY_EPOCH when best_epoch is above threshold."""
+    monitor = FoldHealthMonitor(early_epoch_threshold=5)
+    metrics = _good_metrics(best_epoch=6)
+    warnings = monitor.check('F1', metrics)
+    assert not any(w.code == 'EARLY_EPOCH' for w in warnings)
+
+
+def test_health_monitor_weight_lock_detected():
+    """WEIGHT_LOCK fires when feature importance vectors are nearly identical."""
+    monitor = FoldHealthMonitor(weight_lock_threshold=0.99)
+    importance = np.array([0.3, 0.2, 0.25, 0.15, 0.1], dtype=np.float32)
+    m1 = _make_metrics([0.9, 0.6, 0.4], [1, 1, 0], best_epoch=10,
+                       feature_importance=importance)
+    m2 = _make_metrics([0.85, 0.65, 0.35], [1, 1, 0], best_epoch=9,
+                       feature_importance=importance * 1.0001)  # nearly identical
+    monitor.check('F1', m1)
+    warnings = monitor.check('F2', m2)
+    assert any(w.code == 'WEIGHT_LOCK' for w in warnings)
+
+
+def test_health_monitor_no_weight_lock_when_diverged():
+    """No WEIGHT_LOCK when feature importance vectors differ substantially."""
+    monitor = FoldHealthMonitor(weight_lock_threshold=0.99)
+    imp1 = np.array([0.5, 0.1, 0.1, 0.1, 0.2], dtype=np.float32)
+    imp2 = np.array([0.1, 0.5, 0.1, 0.2, 0.1], dtype=np.float32)
+    m1 = _make_metrics([0.9, 0.6], [1, 0], best_epoch=10, feature_importance=imp1)
+    m2 = _make_metrics([0.85, 0.55], [1, 0], best_epoch=9, feature_importance=imp2)
+    monitor.check('F1', m1)
+    warnings = monitor.check('F2', m2)
+    assert not any(w.code == 'WEIGHT_LOCK' for w in warnings)
+
+
+def test_health_monitor_p80_decline_detected_after_window():
+    """P80_DECLINE fires after p80_decline_window consecutive declines."""
+    monitor = FoldHealthMonitor(p80_decline_window=2)
+
+    def metrics_with_p80(target_p80, seed):
+        # Build metrics where P@80 ≈ target_p80 by mixing TPs and FPs at high conf.
+        # P@80 = n_tp / (n_tp + n_fp)  →  n_fp = n_tp * (1 - target) / target
+        rng = np.random.default_rng(seed)
+        n = 300
+        labels = (rng.random(n) < 0.20).astype(int)
+        sig_idx  = np.where(labels == 1)[0]
+        noise_idx = np.where(labels == 0)[0]
+        conf = np.full(n, 0.3, dtype=float)
+        n_tp = max(1, len(sig_idx))
+        conf[sig_idx] = 0.85  # all positives at high conf
+        if target_p80 < 1.0 and target_p80 > 0:
+            n_fp = int(n_tp * (1 - target_p80) / target_p80)
+            n_fp = min(n_fp, len(noise_idx))
+            conf[noise_idx[:n_fp]] = 0.85  # inject false positives to dilute P@80
+        return _make_metrics(conf, labels, best_epoch=10)
+
+    monitor.check('F1', metrics_with_p80(0.70, seed=10))
+    monitor.check('F2', metrics_with_p80(0.55, seed=11))
+    warnings = monitor.check('F3', metrics_with_p80(0.40, seed=12))
+    assert any(w.code == 'P80_DECLINE' for w in warnings)
+
+
+def test_health_monitor_no_p80_decline_after_one_dip():
+    """No P80_DECLINE on a single fold decline — needs window=2 consecutive."""
+    monitor = FoldHealthMonitor(p80_decline_window=2)
+    rng = np.random.default_rng(1)
+
+    def quick_metrics(conf_level, best_epoch=10):
+        n = 200
+        labels = (rng.random(n) < 0.20).astype(int)
+        conf = np.where(labels == 1, conf_level, 0.35)
+        return _make_metrics(conf, labels, best_epoch=best_epoch)
+
+    monitor.check('F1', quick_metrics(0.85))
+    monitor.check('F2', quick_metrics(0.75))  # one decline
+    warnings = monitor.check('F3', quick_metrics(0.80))  # recovery
+    assert not any(w.code == 'P80_DECLINE' for w in warnings)
+
+
+def test_health_monitor_none_metrics_skipped():
+    """None metrics must not crash the monitor."""
+    monitor = FoldHealthMonitor()
+    warnings = monitor.check('F1', None)
+    assert warnings == []
+
+
+def test_health_monitor_missing_best_epoch_skips_early_epoch_check():
+    """No EARLY_EPOCH if best_epoch key is absent from metrics."""
+    monitor = FoldHealthMonitor(early_epoch_threshold=5)
+    metrics = _make_metrics([0.9, 0.4], [1, 0])  # no best_epoch key
+    warnings = monitor.check('F1', metrics)
+    assert not any(w.code == 'EARLY_EPOCH' for w in warnings)
+
+
+def test_health_monitor_has_critical_reflects_severity():
+    """has_critical() returns True when at least one critical warning exists."""
+    monitor = FoldHealthMonitor(p80_decline_window=2)
+
+    def m(target_p80, seed):
+        rng = np.random.default_rng(seed)
+        n = 300
+        labels = (rng.random(n) < 0.20).astype(int)
+        sig_idx   = np.where(labels == 1)[0]
+        noise_idx = np.where(labels == 0)[0]
+        conf = np.full(n, 0.3, dtype=float)
+        n_tp = max(1, len(sig_idx))
+        conf[sig_idx] = 0.85
+        if 0 < target_p80 < 1.0:
+            n_fp = int(n_tp * (1 - target_p80) / target_p80)
+            n_fp = min(n_fp, len(noise_idx))
+            conf[noise_idx[:n_fp]] = 0.85
+        return _make_metrics(conf, labels, best_epoch=10)
+
+    monitor.check('F1', m(0.70, seed=20))
+    monitor.check('F2', m(0.55, seed=21))
+    monitor.check('F3', m(0.38, seed=22))
+    assert monitor.has_critical()
+
+
+def test_health_monitor_summary_no_crash(capsys):
+    """summary() must not crash even with no folds checked."""
+    monitor = FoldHealthMonitor()
+    monitor.summary()
+    out = capsys.readouterr().out
+    assert 'FOLD HEALTH SUMMARY' in out

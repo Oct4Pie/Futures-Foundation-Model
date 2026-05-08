@@ -1090,16 +1090,22 @@ def _train_fold(
     if best_p80s_state is not None:
         print(f'  ✅ Loading P@0.80 stable (epoch {best_p80s_epoch+1}) for test')
         model.load_state_dict({k: v.to(device) for k, v in best_p80s_state.items()})
+        _selected_epoch = best_p80s_epoch + 1
     elif best_p80_state is not None:
         print(f'  ✅ Loading P@0.80 peak (epoch {best_p80_epoch+1}) for test')
         model.load_state_dict({k: v.to(device) for k, v in best_p80_state.items()})
+        _selected_epoch = best_p80_epoch + 1
     elif best_f1_state is not None:
         print(f'  ⚠ No P@0.80 checkpoint — loading best signal_f1 (epoch {best_f1_epoch+1})')
         model.load_state_dict({k: v.to(device) for k, v in best_f1_state.items()})
+        _selected_epoch = best_f1_epoch + 1
     elif os.path.exists(ckpt_path):
         print(f'  ⚠ No F1 checkpoint — loading val_loss checkpoint')
         model.load_state_dict(
             torch.load(ckpt_path, map_location=device, weights_only=False)['model_state'])
+        _selected_epoch = best_val_epoch + 1
+    else:
+        _selected_epoch = None
 
     next_fold_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
 
@@ -1112,6 +1118,15 @@ def _train_fold(
     _print_test_threshold_table(test_metrics, fold_name)
     _print_confidence_calibration(test_metrics)
     _print_model_diagnostic(model, feature_names=strategy_feature_cols)
+
+    # ── Attach health-monitor fields to test_metrics ──
+    if test_metrics is not None:
+        test_metrics['best_epoch'] = _selected_epoch
+        try:
+            strat_w = model.strategy_projection[0].weight.detach().cpu().numpy()
+            test_metrics['feature_importance'] = np.abs(strat_w).mean(axis=0)
+        except Exception:
+            pass
 
     # ── Save fold-complete checkpoint ──
     # Stores next_fold_state + test_metrics so reconnecting Colab sessions can
@@ -1147,6 +1162,7 @@ def run_walk_forward(
     pretrained_path: str = None,
     epoch_callback=None,
     fold_callback=None,
+    health_monitor=None,
     verbose=True,
 ):
     """
@@ -1245,6 +1261,8 @@ def run_walk_forward(
             fold_results[fold['name']] = test_metrics
             if fold_callback is not None:
                 fold_callback(fold['name'], test_metrics)
+            if health_monitor is not None and test_metrics is not None:
+                health_monitor.check(fold['name'], test_metrics)
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
@@ -1761,6 +1779,7 @@ def run_finetune(
     on_epoch_end=None,
     pretrained_path: str = None,
     device=None,
+    health_monitor=None,
 ) -> dict:
     """
     Full fine-tuning pipeline in a single call.
@@ -1816,6 +1835,10 @@ def run_finetune(
         Path to pretrained .pt with context heads; enables context head weights.
     device : torch.device, optional
         Auto-detected (cuda/cpu) when None.
+    health_monitor : FoldHealthMonitor, optional
+        When provided, checks for EARLY_EPOCH / WEIGHT_LOCK / P80_DECLINE
+        after each fold and prints warnings with suggested config patches.
+        Call health_monitor.summary() after run_finetune for a full report.
 
     Returns
     -------
@@ -1843,6 +1866,7 @@ def run_finetune(
         pretrained_path=pretrained_path,
         epoch_callback=on_epoch_end,
         fold_callback=on_fold_complete,
+        health_monitor=health_monitor,
     )
 
     print_eval_summary(fold_results, baseline_wr=baseline_wr, output_dir=output_dir)
