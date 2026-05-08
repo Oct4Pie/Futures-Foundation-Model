@@ -253,6 +253,53 @@ Each strategy is a `StrategyLabeler` subclass with a two-phase training pipeline
 
 ---
 
+## Pretraining Pipeline
+
+**`futures_foundation.pretrain` — a two-step pipeline to train a new backbone from scratch.**
+
+Step 1 (`prepare_data`) derives 68 features and 4 self-supervised labels from raw OHLCV CSVs and saves them as parquet. Step 2 (`run_pretrain`) trains the backbone with AMP, per-task overfit guards, and backbone-quality checkpointing. Use `verify_backbone` to confirm the checkpoint is healthy before fine-tuning.
+
+```python
+from futures_foundation import FFMConfig, PretrainConfig, prepare_data, run_pretrain, verify_backbone
+
+# Step 1 — derive features + labels (skips tickers already prepared)
+prepare_data(raw_dir='/data/5min/', output_dir='/cache/prepared/')
+
+# Step 2 — train backbone
+results = run_pretrain(
+    prepared_dir   = '/cache/prepared/',
+    checkpoint_dir = '/models/backbone_v10/',
+    ffm_config     = FFMConfig(
+        num_features          = 68,
+        hidden_size           = 256,
+        num_hidden_layers     = 6,
+        num_attention_heads   = 8,
+        intermediate_size     = 512,
+        label_smoothing       = 0.1,
+        structure_loss_weight = 0.3,                       # v9: prevents structure from dominating
+        range_class_weights   = [1.0, 2.5, 3.0, 2.5, 1.0],  # v8: prevents U-shaped range collapse
+    ),
+    config         = PretrainConfig(epochs=50, lr=1e-4),
+    on_epoch_end   = lambda m: print(f"E{m['epoch']}  BVL:{m['backbone_val_loss']:.4f}"),
+)
+
+# Verify saved backbone — shape check + instrument similarity matrix
+verify_backbone('/models/backbone_v10/')
+
+# → Use backbone_v10/best_backbone.pt as backbone_path in run_finetune()
+```
+
+| Component | Description |
+|---|---|
+| `prepare_data(raw_dir, output_dir, force=False)` | Derive 68 features + 4 labels from raw OHLCV CSVs → parquet. Idempotent — skips tickers already prepared unless `force=True`. |
+| `run_pretrain(prepared_dir, checkpoint_dir, ffm_config, config, on_epoch_end)` | Full training loop with AMP (bfloat16 on A100, float16 on T4), interleaved 80/20 val split across 20 time blocks, per-task overfit guards (downweights heads that overfit without stopping them), collapse detection, backbone val loss checkpointing (regime+vol+range — structure excluded as it overfits early), and per-instrument accuracy breakdown at the end. |
+| `verify_backbone(checkpoint_dir, seq_len)` | Load saved backbone, run a forward pass, print instrument embedding cosine similarity matrix. Values near 1.0 mean the instrument embedding isn't learning — a deployment blocker. |
+| `PretrainConfig` | Dataclass with all training hyperparameters. Defaults match the v8/v9 backbone configuration. |
+
+**Checkpoint priority:** early stopping and `best_backbone.pt` are gated on *backbone val loss* (regime + volatility + range combined) rather than combined val loss — structure head is excluded because it overfits the 48-bar binary label while the other three tasks are still improving. The saved `best_backbone.pt` is always the best generalization point for the backbone, not just the lowest total loss.
+
+---
+
 ## Architecture
 
 ```
@@ -451,10 +498,14 @@ Futures-Foundation-Model/
 │   ├── __init__.py
 │   ├── config.py               # FFMConfig (HuggingFace compatible)
 │   ├── model.py                # Backbone + Classification/Regression/Strategy heads
-│   ├── features.py             # OHLCV → 66 derived features (10 groups)
+│   ├── features.py             # OHLCV → 68 derived features (10 groups)
 │   ├── candle_psychology.py    # Candle psychology features
 │   ├── labels.py               # Forward-looking label generation
 │   ├── dataset.py              # PyTorch Dataset + DataLoader
+│   ├── pretrain/               # ★ Backbone pretraining pipeline
+│   │   ├── __init__.py
+│   │   ├── config.py           # PretrainConfig dataclass
+│   │   └── trainer.py          # prepare_data, run_pretrain, verify_backbone
 │   └── finetune/               # ★ Strategy fine-tuning framework
 │       ├── __init__.py
 │       ├── base.py             # StrategyLabeler ABC
@@ -462,9 +513,10 @@ Futures-Foundation-Model/
 │       ├── model.py            # HybridStrategyModel
 │       ├── dataset.py          # HybridStrategyDataset
 │       ├── losses.py           # FocalLoss
-│       └── trainer.py          # run_labeling, run_walk_forward, print_eval_summary
-├── tests/                      # Unit tests (431+ total)
+│       └── trainer.py          # run_finetune, run_labeling, run_walk_forward, print_eval_summary
+├── tests/                      # Unit tests (452+ total)
 │   ├── test_model.py           # Backbone + heads
+│   ├── test_pretrain.py        # Pretraining pipeline
 │   ├── test_finetune.py        # Fine-tuning framework (incl. FFM field coverage)
 │   ├── test_features_crt.py    # CRT sweep features
 │   ├── test_features_core.py   # Core feature groups
@@ -483,6 +535,7 @@ Futures-Foundation-Model/
 
 | Version | Description |
 |---------|-------------|
+| **v1.0** | `futures_foundation.pretrain` — full backbone pretraining pipeline in the library; `prepare_data()` derives 68 features + 4 labels from raw OHLCV CSVs (idempotent, skips cached); `run_pretrain()` full training loop with AMP (bfloat16/float16), per-task overfit guards, collapse detection, backbone val loss checkpointing (structure excluded — overfits early while other heads improve); `verify_backbone()` confirms checkpoint health and instrument embedding diversity; `PretrainConfig` dataclass with v8/v9 defaults baked in; Colab script reduced from ~990 → ~90 lines; stale `scripts/pretrain.py` and `scripts/prepare_data.py` (42-feature era) deleted; 21 new unit tests (452 total) |
 | **v0.9** | `run_finetune()` — single-call full pipeline replacing the prior 3-step sequence (labeling + walk-forward + eval); accepts `on_epoch_end` and `on_fold_complete` callbacks; auto-scaled `n_stable_min` — trainer computes `effective_n_stable = min(cfg, max(10, int(val_pos_count × 0.08)))` per fold from actual val signal count so later walk-forward folds with shorter val windows no longer fail to produce stable checkpoints |
 | **v0.8** | Dual patience (`p80_patience`) — P@80 stable (N≥50) tracked independently of val_loss patience; fires early stop when P@80 plateaus even while val_loss is still declining, saving ~30–40% of epochs in typical runs; `backbone_swap_path` in `TrainingConfig` — splices a newer backbone into a `continue_from` checkpoint before training (upgrade backbone, keep strategy heads, no cold start); `risk_head_donor_path` in `export_onnx()` — replaces the final fold's risk head with a better-calibrated earlier fold's risk head at export time; per-fold `epochs` key — overrides global epoch count for a specific fold without touching the config hash |
 | **v0.7** | `AvgMaxRR` column in per-threshold table (average max R:R of winning trades — confirms edge has real follow-through); confidence calibration block auto-printed after every fold (win rate by confidence band with monotonicity check; non-monotonic = deployment blocker); full warm start gracefully skips shape-mismatched keys with a warning instead of crashing (enables `continue_from` across runs with minor architectural differences) |
@@ -550,6 +603,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 - [x] **Dual patience (`p80_patience`)** — P@80 stable (N≥50) patience tracked independently of val_loss; fires early stop when P@80 plateaus even while val_loss is still declining; saves ~30–40% of epoch budget in typical runs
 - [x] **`run_finetune()` single-call pipeline** — replaces the prior 3-step sequence (run_labeling + run_walk_forward + print_eval_summary); adds `on_epoch_end` and `on_fold_complete` callbacks; lower-level functions remain available for scripts needing intermediate access
 - [x] **Auto-scaled `n_stable_min`** — trainer computes effective threshold from actual val signal count per fold; `n_stable_min` in `TrainingConfig` is a cap; later walk-forward folds with shorter val windows scale down proportionally (floor=10), floored to prevent noise-driven checkpoints; fixes F4/F5 stable checkpoint collapse in sparse-signal strategies
+- [x] **`futures_foundation.pretrain` — single-call pretraining pipeline** — `prepare_data`, `run_pretrain`, `verify_backbone`; per-task overfit guards, AMP, backbone val loss checkpointing, instrument similarity verification; captures all v8/v9 fixes in the library; Colab reduced to ~90 lines
 - [ ] Additional strategy implementations (ORB, ICT breaker blocks)
 - [ ] Multi-timeframe input support
 
