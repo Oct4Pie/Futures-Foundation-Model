@@ -44,6 +44,12 @@ INSTRUMENT_MAP = {
 
 SESSION_MAP = {"pre_market": 0, "london": 1, "ny_am": 2, "ny_pm": 3}
 
+# Nominal session lengths in hours, keyed by the session id assigned in
+# _compute_session_features. Used to normalize sess_bars_elapsed *causally*
+# (elapsed-so-far / expected length) — the realized session length is a
+# future quantity and must never be used at inference time.
+SESSION_NOMINAL_HOURS = {0: 8.0, 1: 5.0, 2: 4.0, 3: 4.0}
+
 
 # =============================================================================
 # Main Feature Derivation
@@ -73,6 +79,11 @@ def derive_features(
     df = df.copy().sort_values("datetime").reset_index(drop=True)
     if not pd.api.types.is_datetime64_any_dtype(df["datetime"]):
         df["datetime"] = pd.to_datetime(df["datetime"])
+
+    # Bar cadence in minutes (the timeframe). Median of datetime diffs is
+    # stable across any history window, so this is deterministic and identical
+    # batch vs streaming.
+    bar_minutes = max(1, int(df["datetime"].diff().dt.total_seconds().median() / 60))
 
     atr = _compute_atr(df, atr_period)
     atr_safe = atr.replace(0, np.nan)
@@ -127,7 +138,7 @@ def derive_features(
     features["vty_realized_20"] = features["ret_close_1"].rolling(20).std()
 
     # --- Group 5: Session-Relative Context (5 features) ---
-    session_ids, session_info = _compute_session_features(df)
+    session_ids, session_info = _compute_session_features(df, bar_minutes)
     features["sess_id"] = session_ids
     features["sess_time_of_day"] = session_info["time_of_day"]
     features["sess_bars_elapsed"] = session_info["bars_elapsed"]
@@ -159,8 +170,7 @@ def derive_features(
         features[f"str_range_position_{lb}"] = ((df["close"] - rolling_low) / rng).fillna(0.5)
 
     # --- Group 7: CRT Sweep State (10 features) ---
-    # Detect bar frequency to compute timeframe-agnostic expiry windows.
-    bar_minutes = max(1, int(df["datetime"].diff().dt.total_seconds().median() / 60))
+    # Timeframe-agnostic expiry windows from the bar cadence computed above.
     expiry_1h = max(1, round(60 / bar_minutes))
     expiry_4h = max(1, round(240 / bar_minutes))
 
@@ -330,7 +340,7 @@ def _zscore(series: pd.Series, window: int = 50) -> pd.Series:
     return (series - mean) / std
 
 
-def _compute_session_features(df: pd.DataFrame):
+def _compute_session_features(df: pd.DataFrame, bar_minutes: int):
     hours = df["datetime"].dt.hour
     minutes = df["datetime"].dt.minute
     time_decimal = hours + minutes / 60.0
@@ -348,11 +358,18 @@ def _compute_session_features(df: pd.DataFrame):
     session_high = df.groupby(session_keys)["high"].transform("cummax")
     session_low = df.groupby(session_keys)["low"].transform("cummin")
     bars_elapsed = df.groupby(session_keys).cumcount()
-    max_bars = bars_elapsed.groupby(session_keys).transform("max").replace(0, 1)
+    # Causal normalization: divide elapsed-so-far by the *nominal* (expected)
+    # session length for that session type, NOT the realized max (which needs
+    # the whole future session). Clipped to [0, 1] so a session that runs
+    # longer than nominal saturates instead of leaking length information.
+    nominal_bars = (
+        session_ids.map(SESSION_NOMINAL_HOURS).astype(float) * 60.0
+        / max(1, bar_minutes)
+    ).clip(lower=1.0)
 
     session_info = pd.DataFrame({
         "time_of_day": time_of_day,
-        "bars_elapsed": bars_elapsed / max_bars,
+        "bars_elapsed": (bars_elapsed / nominal_bars).clip(0.0, 1.0),
         "dist_from_open": df["close"] - session_open,
         "dist_from_high": df["close"] - session_high,
         "dist_from_low": df["close"] - session_low,
@@ -370,11 +387,28 @@ def _compute_session_vwap(df: pd.DataFrame) -> pd.Series:
 
 
 def _detect_swings(df: pd.DataFrame, lookback: int = 10):
+    """
+    Causal swing-pivot detection.
+
+    A pivot is geometrically defined by a centered window: bar ``p`` is a
+    swing high iff its high is the max of ``[p-lookback, p+lookback]``. That
+    centered test cannot be evaluated until bar ``p+lookback`` exists, so the
+    pivot is only *confirmable* ``lookback`` bars after it occurs.
+
+    We therefore detect the pivot with the centered window (correct geometry)
+    but **publish its price at the confirmation bar** (``shift(lookback)``).
+    At bar ``i`` the returned series is non-NaN only for pivots whose full
+    confirmation window ``[i-2*lookback, i]`` lies entirely in the past, so
+    every downstream consumer (``.ffill()``, ``_classify_structure``) is
+    causal. Centered rolling over a fixed window is purely local, so the
+    confirmed value is byte-identical between batch and streaming
+    (train == serve).
+    """
     window = 2 * lookback + 1
     rolling_max = df["high"].rolling(window, center=True).max()
     rolling_min = df["low"].rolling(window, center=True).min()
-    swing_highs = df["high"].where(df["high"] == rolling_max)
-    swing_lows = df["low"].where(df["low"] == rolling_min)
+    swing_highs = df["high"].where(df["high"] == rolling_max).shift(lookback)
+    swing_lows = df["low"].where(df["low"] == rolling_min).shift(lookback)
     return swing_highs, swing_lows
 
 
