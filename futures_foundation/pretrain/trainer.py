@@ -390,6 +390,19 @@ def run_pretrain(
     if config is None:
         config = PretrainConfig()
 
+    # Fail fast on a config mismatch that would otherwise surface only as an
+    # opaque CUDA device-side assert deep in the positional-embedding lookup:
+    # the embedding table is sized ffm_config.max_sequence_length (+1 CLS),
+    # but windows are config.seq_len bars. seq_len > max_sequence_length →
+    # arange(seq_len+1) indexes past the table on-device.
+    if config.seq_len > ffm_config.max_sequence_length:
+        raise ValueError(
+            f'PretrainConfig.seq_len ({config.seq_len}) exceeds '
+            f'FFMConfig.max_sequence_length ({ffm_config.max_sequence_length}). '
+            f'Set max_sequence_length >= seq_len (bind both to one constant) '
+            f'or training will crash with a CUDA device-side assert.'
+        )
+
     torch.manual_seed(config.seed)
     np.random.seed(config.seed)
 

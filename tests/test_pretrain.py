@@ -385,3 +385,45 @@ class TestPrepareData:
         summary = prepare_data(str(raw_dir), str(out_dir))  # second call
 
         assert summary['ES'].get('cached') is True
+
+
+# =============================================================================
+# run_pretrain — config validation guard
+# =============================================================================
+
+class TestSeqLenGuard:
+    """seq_len must not exceed FFMConfig.max_sequence_length, else training
+    crashes with an opaque CUDA device-side assert in the position embedding."""
+
+    def test_raises_when_seq_len_exceeds_max_sequence_length(self, tmp_path):
+        from futures_foundation import FFMConfig
+        from futures_foundation.pretrain.trainer import run_pretrain
+
+        ffm_config = FFMConfig(max_sequence_length=128)
+        cfg = PretrainConfig(seq_len=160)  # > 128
+
+        with pytest.raises(ValueError, match='exceeds'):
+            run_pretrain(
+                prepared_dir=str(tmp_path / 'prepared'),
+                checkpoint_dir=str(tmp_path / 'ckpt'),
+                ffm_config=ffm_config,
+                config=cfg,
+            )
+
+    def test_allows_seq_len_equal_to_max_sequence_length(self, tmp_path):
+        # seq_len == max_sequence_length is valid (the +1 CLS slot is extra
+        # capacity in the embedding table). The guard must pass; the call then
+        # fails later on missing parquet, proving the guard did not fire.
+        from futures_foundation import FFMConfig
+        from futures_foundation.pretrain.trainer import run_pretrain
+
+        ffm_config = FFMConfig(max_sequence_length=160)
+        cfg = PretrainConfig(seq_len=160)
+
+        with pytest.raises(FileNotFoundError):
+            run_pretrain(
+                prepared_dir=str(tmp_path / 'empty'),
+                checkpoint_dir=str(tmp_path / 'ckpt'),
+                ffm_config=ffm_config,
+                config=cfg,
+            )
