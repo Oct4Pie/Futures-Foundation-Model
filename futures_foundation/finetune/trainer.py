@@ -316,8 +316,18 @@ def _load_fold_data(
     strategy_feature_cols: list,
     seq_len: int,
     micro_to_full: dict = None,
+    shuffle_train_labels: bool = False,
+    shuffle_seed: int = 42,
 ):
-    """Load and time-slice FFM + strategy data for a single fold."""
+    """Load and time-slice FFM + strategy data for a single fold.
+
+    shuffle_train_labels: ROBUSTNESS AUDIT (borrow #2). When True, the TRAIN
+        split's label rows are permuted (val/test untouched) so the
+        feature->label association is destroyed. A model that still passes
+        the gates with shuffled train labels has a leakage/overfit artifact,
+        not a real edge — the audit that caught CRT and that no existing
+        finetune gate (P@80 progression / val-test gap / FoldHealthMonitor)
+        detects. Default False = exact prior behavior (back-compat)."""
     micro_to_full = micro_to_full or {}
     train_start = pd.Timestamp(fold.get('train_start', '2000-01-01'), tz='America/New_York')
     train_end   = pd.Timestamp(fold['train_end'], tz='America/New_York')
@@ -356,10 +366,20 @@ def _load_fold_data(
             if len(idx) < seq_len + 1:
                 continue
             lo, hi = idx[0], idx[-1] + 1
+            lab_slice = strat_l.iloc[lo:hi].reset_index(drop=True)
+            if shuffle_train_labels and tag == 'train':
+                # permute label ROWS only (features/ffm kept in order) ->
+                # destroys feature->label mapping for TRAIN; seeded per
+                # (ticker, fold) so the audit is reproducible. val/test
+                # are NOT touched (tag guard).
+                _rng = np.random.default_rng(
+                    hash((ticker, fold['train_end'], shuffle_seed)) % (2**32))
+                lab_slice = lab_slice.iloc[
+                    _rng.permutation(len(lab_slice))].reset_index(drop=True)
             ds = HybridStrategyDataset(
                 ffm_df.iloc[lo:hi].reset_index(drop=True),
                 strat_f.iloc[lo:hi].reset_index(drop=True),
-                strat_l.iloc[lo:hi].reset_index(drop=True),
+                lab_slice,
                 strategy_feature_cols=strategy_feature_cols,
                 seq_len=seq_len,
             )
@@ -798,6 +818,7 @@ def _train_fold(
     pretrained_path: str = None,
     epoch_callback=None,
     verbose=True,
+    shuffle_train_labels: bool = False,
 ):
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -838,7 +859,12 @@ def _train_fold(
     # ── Datasets ──
     train_dsets, val_dsets, test_dsets = _load_fold_data(
         fold, tickers, ffm_dir, strategy_dir, strategy_feature_cols,
-        training_cfg.seq_len, micro_to_full)
+        training_cfg.seq_len, micro_to_full,
+        shuffle_train_labels=shuffle_train_labels)
+    if shuffle_train_labels:
+        print(f'  ⚠ {fold["name"]}: SHUFFLE-AUDIT — train labels permuted '
+              f'(val/test intact). A pass here = leakage/overfit, not edge.',
+              flush=True)
 
     if not train_dsets or not val_dsets:
         print(f'  ⚠ {fold_name}: insufficient data — skipping')
@@ -1242,6 +1268,7 @@ def run_walk_forward(
     fold_callback=None,
     health_monitor=None,
     verbose=True,
+    shuffle_train_labels: bool = False,
 ):
     """
     Train all walk-forward folds and return per-fold test metrics.
@@ -1333,6 +1360,7 @@ def run_walk_forward(
             pretrained_path=pretrained_path,
             epoch_callback=epoch_callback,
             verbose=verbose,
+            shuffle_train_labels=shuffle_train_labels,
         )
         if result is not None:
             last_model, test_metrics, prev_fold_state = result
@@ -1858,6 +1886,7 @@ def run_finetune(
     pretrained_path: str = None,
     device=None,
     health_monitor=None,
+    shuffle_train_labels: bool = False,
 ) -> dict:
     """
     Full fine-tuning pipeline in a single call.
@@ -1945,6 +1974,7 @@ def run_finetune(
         epoch_callback=on_epoch_end,
         fold_callback=on_fold_complete,
         health_monitor=health_monitor,
+        shuffle_train_labels=shuffle_train_labels,
     )
 
     print_eval_summary(fold_results, baseline_wr=baseline_wr, output_dir=output_dir)

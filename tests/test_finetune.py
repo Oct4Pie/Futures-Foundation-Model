@@ -4593,3 +4593,54 @@ class TestConfigHashArch:
     def test_passing_ffm_config_changes_hash_vs_omitting(self):
         tc = TrainingConfig(seq_len=96)
         assert _config_hash(tc) != _config_hash(tc, small_ffm_config())
+
+
+# =============================================================================
+# Borrow #2 — label-shuffle robustness audit (_load_fold_data)
+# =============================================================================
+
+def _shuffle_fixture(tmp_path, ticker='ES', n=400):
+    ffm_dir = tmp_path / 'ffm'; ffm_dir.mkdir()
+    strat_dir = tmp_path / 'strat'; strat_dir.mkdir()
+    ffm = make_ffm_df(n)
+    make_strategy_features(n).to_parquet(
+        strat_dir / f'{ticker}_strategy_features.parquet', index=False)
+    make_labels(n, signal_rate=0.2).to_parquet(
+        strat_dir / f'{ticker}_strategy_labels.parquet', index=False)
+    ffm.to_parquet(ffm_dir / f'{ticker}_features.parquet', index=False)
+    dt = ffm['_datetime']
+    fold = {'name': 'F1',
+            'train_end': str(dt.iloc[200]), 'val_end': str(dt.iloc[300]),
+            'test_end': str(dt.iloc[399])}
+    return str(ffm_dir), str(strat_dir), fold, ticker
+
+
+def _load(ffm_dir, strat_dir, fold, ticker, **kw):
+    return _load_fold_data(fold, [ticker], ffm_dir, strat_dir, STRATEGY_COLS,
+                           SEQ_LEN, **kw)
+
+
+def test_shuffle_audit_permutes_train_only(tmp_path):
+    a = _shuffle_fixture(tmp_path)
+    tr0, v0, te0 = _load(*a, shuffle_train_labels=False)
+    tr1, v1, te1 = _load(*a, shuffle_train_labels=True, shuffle_seed=42)
+    # train: same signal multiset, different order (genuinely permuted)
+    assert tr0[0]._labels.sum() == tr1[0]._labels.sum()
+    assert not np.array_equal(tr0[0]._labels, tr1[0]._labels)
+    # val + test: untouched by the shuffle
+    assert np.array_equal(v0[0]._labels, v1[0]._labels)
+    assert np.array_equal(te0[0]._labels, te1[0]._labels)
+
+
+def test_shuffle_audit_is_reproducible(tmp_path):
+    a = _shuffle_fixture(tmp_path)
+    tr1, _, _ = _load(*a, shuffle_train_labels=True, shuffle_seed=42)
+    tr2, _, _ = _load(*a, shuffle_train_labels=True, shuffle_seed=42)
+    assert np.array_equal(tr1[0]._labels, tr2[0]._labels)
+
+
+def test_shuffle_audit_default_is_backcompat(tmp_path):
+    a = _shuffle_fixture(tmp_path)
+    tr_def, _, _ = _load(*a)                                  # no kwarg
+    tr_off, _, _ = _load(*a, shuffle_train_labels=False)
+    assert np.array_equal(tr_def[0]._labels, tr_off[0]._labels)
