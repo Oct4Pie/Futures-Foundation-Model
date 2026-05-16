@@ -88,6 +88,20 @@ class TrainingConfig:
     # Excluded from config hash — tuning this won't bust in-progress fold-resume caches.
     n_stable_min: int = 50
 
+    # ── Economic checkpoint selection (borrow #3, opt-in default-OFF) ──
+    # When True AND borrow #1's realized_r is available in validation (the
+    # labeler emits a `direction` column), an `_econ.pt` tier is tracked on a
+    # CAGR·√Sortino product objective over the val realized-R curve and takes
+    # TOP test-selection priority (_econ > _p80s > _p80 > _f1 > _loss), with
+    # its own early-stop patience. Default False ⇒ selection is byte-identical
+    # to the proven _p80s>_p80>_f1>_loss path (CISD v17/v19, Session VP
+    # unchanged). If True but no realized_r in val (no `direction`), it skips
+    # with a notice and falls back to the default priority (back-compat).
+    # Both fields are excluded from the config hash — toggling them must NOT
+    # bust an existing fold-resume cache.
+    econ_selection: bool = False
+    econ_patience: int = 10       # epochs without econ-objective improvement
+
     # ── Output ──
     num_labels: int = 2           # 2 = noise/signal; 3 = sell/hold/buy
 

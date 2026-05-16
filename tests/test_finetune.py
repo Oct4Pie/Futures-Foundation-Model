@@ -4925,3 +4925,87 @@ def test_threshold_table_realized_econ_backcompat(capsys):
     _print_test_threshold_table(metrics, 'F1')
     out = capsys.readouterr().out
     assert 'REALIZED-R ECONOMICS' not in out
+
+
+# =============================================================================
+# Borrow #3 — economic product objective for checkpoint selection (opt-in)
+# =============================================================================
+
+from futures_foundation.finetune.trainer import (
+    _econ_combined_objective, _val_econ_objective,
+)
+
+
+def test_econ_objective_empty_and_below_min_is_zero():
+    assert _econ_combined_objective([]) == 0.0
+    assert _econ_combined_objective([3, 3, 3, 3]) == 0.0          # < min_trades
+
+
+def test_econ_objective_nonpositive_edge_is_zero():
+    assert _econ_combined_objective([-1, -1, -2, -1, -1, -1]) == 0.0
+    assert _econ_combined_objective([1, -1, 1, -1, 1, -1, -1, -1]) == 0.0
+
+
+def test_econ_objective_is_bounded_no_blowup_when_no_losses():
+    """All-winners (downside→0) must NOT explode on the epsilon term."""
+    v = _econ_combined_objective([2.0] * 20)
+    assert 0.0 < v < 10.0                                          # capped
+
+
+def test_econ_objective_selective_beats_unselective():
+    selective   = _econ_combined_objective([2, 2, 1, 3, 2, 2, 1, 2, 3, 2])
+    unselective = _econ_combined_objective([2, -2, 3, -3, 1, -1, 4, -4, 2, -1])
+    assert selective > unselective
+
+
+def test_econ_objective_rewards_more_signals_same_distribution():
+    """The √n_factor term: more trades at the same R distribution scores
+    higher (the 'maybe the one with most signals' property)."""
+    few  = _econ_combined_objective([2, -1] * 5)
+    many = _econ_combined_objective([2, -1] * 40)
+    assert many > few
+
+
+def test_econ_objective_lower_downside_scores_higher():
+    smooth = _econ_combined_objective([1, 1, 1, 1, 1, 1, 1, 1, 1, 1])
+    jagged = _econ_combined_objective([1, -2, 4, -2, 3, -1, 2, -1, 3, 1])
+    assert smooth > jagged
+
+
+def test_val_econ_objective_nan_when_no_realized_r_backcompat():
+    """Back-compat: no/empty/all-NaN realized_r → NaN so the caller falls
+    back to the default _p80s priority (labeler emits no `direction`)."""
+    assert np.isnan(_val_econ_objective(
+        {'all_realized_r': [], 'all_conf': [1.0], 'all_preds': [1]}))
+    assert np.isnan(_val_econ_objective(
+        {'all_realized_r': [float('nan')] * 4,
+         'all_conf': [0.9] * 4, 'all_preds': [1] * 4}))
+    assert np.isnan(_val_econ_objective(
+        {'all_conf': [0.9], 'all_preds': [1]}))                    # key absent
+
+
+def test_val_econ_objective_filters_predicted_positive_above_thresh():
+    n = 40
+    conf = np.full(n, 0.40); pred = np.zeros(n, int)
+    rr   = np.full(n, np.nan)
+    idx  = np.arange(5, 25)
+    conf[idx] = 0.90; pred[idx] = 1
+    rr[idx]   = 2.0
+    v = _val_econ_objective(
+        {'all_realized_r': rr.tolist(), 'all_conf': conf.tolist(),
+         'all_preds': pred.tolist()}, thresh=0.80)
+    assert v > 0.0
+    # nothing predicted-positive above threshold → 0.0 (not NaN: data exists)
+    v0 = _val_econ_objective(
+        {'all_realized_r': rr.tolist(), 'all_conf': np.full(n, 0.10).tolist(),
+         'all_preds': np.zeros(n, int).tolist()}, thresh=0.80)
+    assert v0 == 0.0
+
+
+def test_econ_config_defaults_off_and_hash_excluded():
+    """econ_selection defaults OFF and toggling it (or econ_patience) must
+    NOT bust an existing fold-resume cache (resume-cache safety)."""
+    base = TrainingConfig()
+    assert base.econ_selection is False and base.econ_patience == 10
+    on   = TrainingConfig(econ_selection=True, econ_patience=7)
+    assert _config_hash(base) == _config_hash(on)

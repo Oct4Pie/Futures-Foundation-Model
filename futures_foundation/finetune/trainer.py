@@ -678,7 +678,7 @@ def _make_optimizer(
 # ── Fold helpers ─────────────────────────────────────────────────────────────
 
 def _config_hash(training_cfg: TrainingConfig, ffm_config: "FFMConfig" = None) -> str:
-    _hash_exclude = {'baseline_wr', 'f1_ok_ceiling', 'continue_from', 'backbone_swap_path', 'p80_patience', 'n_stable_min', 'focal_gamma_end', 'focal_gamma_decay_start', 'strategy_lr_multiplier', 'lr_boost_at_decay_start'}
+    _hash_exclude = {'baseline_wr', 'f1_ok_ceiling', 'continue_from', 'backbone_swap_path', 'p80_patience', 'n_stable_min', 'focal_gamma_end', 'focal_gamma_decay_start', 'strategy_lr_multiplier', 'lr_boost_at_decay_start', 'econ_selection', 'econ_patience'}
     d = {k: v for k, v in training_cfg.__dict__.items() if k not in _hash_exclude}
     if ffm_config is not None:
         # Architecture-determining FFMConfig fields. A change here changes
@@ -909,12 +909,15 @@ def _train_fold(
     # _f1.pt    — best signal-F1 checkpoint (saved whenever F1 improves, survives disconnect)
     # _p80.pt   — best val P@0.80 checkpoint, N≥15 (peak precision)
     # _p80s.pt  — best val P@0.80 checkpoint, N≥50 (stable: more statistically robust)
+    # _econ.pt  — best CAGR·√Sortino econ objective (borrow #3, only when
+    #             training_cfg.econ_selection and val realized_r available)
     # _done.pt  — fold completion marker (next_fold_state + test_metrics; skip re-training)
-    # Test selection priority: _p80s > _p80 > _f1 > _loss
+    # Test selection priority: [_econ if econ_selection] > _p80s > _p80 > _f1 > _loss
     ckpt_path   = os.path.join(output_dir, f'{fold_name}_{config_hash}_loss.pt')
     ckpt_f1     = os.path.join(output_dir, f'{fold_name}_{config_hash}_f1.pt')
     ckpt_p80    = os.path.join(output_dir, f'{fold_name}_{config_hash}_p80.pt')
     ckpt_p80s   = os.path.join(output_dir, f'{fold_name}_{config_hash}_p80s.pt')
+    ckpt_econ   = os.path.join(output_dir, f'{fold_name}_{config_hash}_econ.pt')
     ckpt_done   = os.path.join(output_dir, f'{fold_name}_{config_hash}_done.pt')
 
     print(f"\n{'='*60}")
@@ -1008,8 +1011,12 @@ def _train_fold(
     best_prec_at_80_stable = 0.0
     best_p80s_epoch        = -1
     best_p80s_state        = None
+    best_econ        = 0.0          # borrow #3 (econ_selection only)
+    best_econ_epoch  = -1
+    best_econ_state  = None
     patience_ctr    = 0
     p80s_patience_ctr = 0
+    econ_patience_ctr = 0
     ratio_bad_ctr   = 0
 
     ckpt = load_resume(ckpt_path, config_hash, map_location=device,
@@ -1063,6 +1070,17 @@ def _train_fold(
             best_p80s_epoch        = p80s_saved.get('epoch', best_p80s_epoch)
             print(f'  ▶ Restored best P@0.80 stable state '
                   f'(epoch {best_p80s_epoch+1}, P@80={best_prec_at_80_stable:.3f}, N={saved_n})')
+
+    # Restore best_econ_state (borrow #3, opt-in) so a mid-fold disconnect
+    # doesn't lose the economic checkpoint
+    if start_epoch > 0 and training_cfg.econ_selection:
+        econ_saved = load_resume(ckpt_econ, config_hash, hash_key='config_hash')
+        if econ_saved is not None:
+            best_econ_state = econ_saved['model_state']
+            best_econ       = econ_saved.get('score', best_econ)
+            best_econ_epoch = econ_saved.get('epoch', best_econ_epoch)
+            print(f'  ▶ Restored best econ state '
+                  f'(epoch {best_econ_epoch+1}, econ={best_econ:.4f})')
 
     # ── Training loop ──
     _gamma_schedule  = training_cfg.focal_gamma_end is not None
@@ -1189,6 +1207,35 @@ def _train_fold(
                 p80s_patience_ctr += 1
             # N below stable threshold — counter frozen; low N makes P@80 unreliable
 
+        # ── Economic checkpoint tier (borrow #3, opt-in default-OFF) ──
+        # Tracks the CAGR·√Sortino product over val realized-R. Entirely
+        # inert unless econ_selection is set AND borrow #1's realized_r is
+        # available (labeler emits `direction`); otherwise val_econ is NaN
+        # and this block no-ops → default _p80s>_p80>_f1>_loss path stays
+        # byte-identical (CISD v17/v19, Session VP unchanged).
+        if training_cfg.econ_selection:
+            val_econ = _val_econ_objective(va)
+            if epoch == start_epoch and not np.isfinite(val_econ):
+                print('  ℹ econ_selection set but no val realized_r '
+                      '(labeler emits no `direction`) — econ tier disabled, '
+                      'using default _p80s>_p80>_f1>_loss priority')
+            if np.isfinite(val_econ):
+                if val_econ > best_econ:
+                    best_econ       = val_econ
+                    best_econ_epoch = epoch
+                    best_econ_state = {k: v.cpu().clone()
+                                       for k, v in model.state_dict().items()}
+                    atomic_save_resume(ckpt_econ, {
+                        'config_hash': config_hash,
+                        'model_state': best_econ_state,
+                        'epoch':       epoch,
+                        'score':       best_econ,
+                    })
+                    save_str += ' 📈$'
+                    econ_patience_ctr = 0
+                elif best_econ_state is not None:
+                    econ_patience_ctr += 1
+
         # ── N-triggered gamma acceleration ──
         if _gamma_schedule and epoch < _decay_start:
             if va['n_at_80'] < effective_n_stable:
@@ -1243,6 +1290,7 @@ def _train_fold(
                 'saved_f1':   '📈F' in save_str,
                 'saved_p80':  '📈8' in save_str,
                 'saved_p80s': '📈S' in save_str,
+                'saved_econ': '📈$' in save_str,
                 'all_conf':   va.get('all_conf', []),
                 'all_preds':  va.get('all_preds', []),
                 'all_labels': va.get('all_labels', []),
@@ -1251,22 +1299,39 @@ def _train_fold(
 
         if patience_ctr >= training_cfg.patience:
             print(f'  ⏹ Early stop — val_loss patience exhausted'); break
-        if p80s_patience_ctr >= training_cfg.p80_patience and best_p80s_state is not None:
+        # When econ_selection is active AND an econ checkpoint exists, the
+        # economic objective governs the plateau stop (consistent with it
+        # governing selection); otherwise the proven P@80 stable plateau
+        # rule is used unchanged (default path byte-identical).
+        if training_cfg.econ_selection and best_econ_state is not None:
+            if econ_patience_ctr >= training_cfg.econ_patience:
+                print(f'  ⏹ Early stop — econ plateau ({econ_patience_ctr} epochs, best E{best_econ_epoch+1} {best_econ:.4f})'); break
+        elif p80s_patience_ctr >= training_cfg.p80_patience and best_p80s_state is not None:
             print(f'  ⏹ Early stop — P@80 stable plateau ({p80s_patience_ctr} epochs, best E{best_p80s_epoch+1} {best_prec_at_80_stable:.3f})'); break
         if ratio_bad_ctr >= training_cfg.ratio_patience:
             print(f'  ⏹ Early stop — overfitting'); break
 
-    # ── Checkpoint selection: _p80s > _p80 > _f1 > _loss ──
+    # ── Checkpoint selection ──
+    # Default: _p80s > _p80 > _f1 > _loss (unchanged, byte-identical).
+    # With econ_selection AND an econ checkpoint: _econ takes top priority.
+    _econ_active = training_cfg.econ_selection and best_econ_state is not None
     p80s_str = f'epoch={best_p80s_epoch+1} score={best_prec_at_80_stable:.3f}' if best_p80s_state is not None else 'none'
     p80_str  = f'epoch={best_p80_epoch+1} score={best_prec_at_80:.3f}' if best_p80_state is not None else 'none'
+    econ_str = f'epoch={best_econ_epoch+1} score={best_econ:.4f}' if _econ_active else 'none'
     print(f'\n  Checkpoint summary:')
     print(f'    val_loss        : epoch={best_val_epoch+1} score={best_val_loss:.4f}')
     print(f'    signal_f1       : epoch={best_f1_epoch+1} score={best_signal_f1:.4f}')
     print(f'    prec_at_80 peak : {p80_str}')
     print(f'    prec_at_80 stable (N≥{effective_n_stable}): {p80s_str}')
-    print(f'  Priority: stable > peak > f1 > loss')
+    print(f'    econ (CAGR·√Sortino): {econ_str}')
+    print(f'  Priority: {"econ > " if _econ_active else ""}stable > peak > f1 > loss')
 
-    if best_p80s_state is not None:
+    if _econ_active:
+        print(f'  ✅ Loading econ checkpoint (epoch {best_econ_epoch+1}, '
+              f'score={best_econ:.4f}) for test')
+        model.load_state_dict({k: v.to(device) for k, v in best_econ_state.items()})
+        _selected_epoch = best_econ_epoch + 1
+    elif best_p80s_state is not None:
         print(f'  ✅ Loading P@0.80 stable (epoch {best_p80s_epoch+1}) for test')
         model.load_state_dict({k: v.to(device) for k, v in best_p80s_state.items()})
         _selected_epoch = best_p80s_epoch + 1
@@ -1307,6 +1372,8 @@ def _train_fold(
             test_metrics['val_p80'] = best_prec_at_80_stable
         elif best_p80_state is not None:
             test_metrics['val_p80'] = best_prec_at_80
+        if _econ_active:
+            test_metrics['val_econ'] = best_econ
         try:
             strat_w = model.strategy_projection[0].weight.detach().cpu().numpy()
             test_metrics['feature_importance'] = np.abs(strat_w).mean(axis=0)
@@ -2333,3 +2400,59 @@ def _realized_r_eval(o, h, l, c, atr, sig_idx, is_long, sl_dist,
     rs = _compute_realized_r(o, h, l, c, atr, sig_idx, is_long, sl_dist,
                              trail_atr_k, activate_r, max_hold)
     return _r_stats(rs)
+
+
+def _econ_combined_objective(realized_r, min_trades: int = 5,
+                             n_cap: int = 100, sortino_cap: float = 4.0) -> float:
+    """Borrow #3: a CAGR·√Sortino-style PRODUCT score over a realized-R
+    series (chronological, predicted-positive trades only — NaNs dropped).
+
+    Why a product (not a sum / not precision): it cannot be gamed by the
+    two degenerate collapses a precision/F1 objective rewards —
+      • never-trade (recall→0): n=0 ⇒ score 0.
+      • trade-everything (recall→1): the unselective R mix has poor downside
+        ⇒ Sortino→~0 ⇒ score collapses toward 0.
+    Only a *selective, positive-expectancy, low-downside* policy scores high.
+
+    score = mean_r · √min(sortino, sortino_cap) · √(min(n,n_cap)/n_cap)
+      sortino     = mean_r / (downside_dev + 1e-9)
+      downside_dev= √mean(min(r,0)²)              (0-target Sortino)
+    Sortino is CAPPED (default 4.0): a near-zero-downside val slice is
+    almost always a small-N lucky artifact, and an uncapped ratio explodes
+    on the ε term — the cap makes the score bounded and robust. Sparse n is
+    √-down-weighted so a 2-trade fluke can't win. Returns 0.0 for empty /
+    <min_trades / non-positive edge (clean, monotone, bounded — safe as a
+    'higher is better' checkpoint selector)."""
+    rs = np.asarray(realized_r, float)
+    rs = rs[np.isfinite(rs)]
+    if len(rs) < min_trades:
+        return 0.0
+    mean_r = float(rs.mean())
+    if mean_r <= 0.0:
+        return 0.0
+    downside = float(np.sqrt(np.mean(np.minimum(rs, 0.0) ** 2)))
+    sortino  = min(mean_r / (downside + 1e-9), sortino_cap)
+    if sortino <= 0.0:
+        return 0.0
+    n_factor = min(len(rs), n_cap) / float(n_cap)
+    return float(mean_r * np.sqrt(sortino) * np.sqrt(n_factor))
+
+
+def _val_econ_objective(va: dict, thresh: float = 0.80) -> float:
+    """Borrow #3: economic objective from a validation _evaluate() dict —
+    realized R at predicted-positive rows with confidence ≥ thresh, scored
+    by _econ_combined_objective. Returns NaN when borrow #1's realized_r is
+    unavailable (labeler emitted no `direction`) so the caller can skip the
+    econ tier and fall back to the proven _p80s priority (back-compat)."""
+    rr = va.get('all_realized_r')
+    if not rr:
+        return float('nan')
+    rr  = np.asarray(rr, float)
+    if not np.isfinite(rr).any():
+        return float('nan')
+    conf = np.asarray(va['all_conf'], float)
+    pred = np.asarray(va['all_preds'])
+    m = (conf >= thresh) & (pred > 0)
+    if m.sum() == 0:
+        return 0.0
+    return _econ_combined_objective(rr[m])
