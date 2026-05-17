@@ -34,6 +34,12 @@ class RLStrategy(ABC):
     #: RL is pure exit policy.
     entry_filter: bool = True
 
+    #: Number of extra observation features the strategy appends via
+    #: augment_obs() (default 0 = no augmentation). The env reserves
+    #: obs_dim = ctx_dim + 4 (position) + extra_obs_dim, so PPO's policy
+    #: sees the strategy's own decision state (e.g. account / MLL buffer).
+    extra_obs_dim: int = 0
+
     # ── realized-R exit knobs (reuse futures_foundation.primitives
     #    realized_r_trailing — one exit impl across the codebase; this is the
     #    REWARD basis, not a hard exit: PPO learns the actual exit) ──
@@ -66,6 +72,24 @@ class RLStrategy(ABC):
                          signal 'account blown — terminate the run'.
         """
         return realized_r
+
+    def augment_obs(self, obs, run_state: dict):
+        """OPTIONAL — append `extra_obs_dim` features to the observation so
+        the PPO policy can DECIDE on the strategy's own state (e.g. the
+        prop-firm balance / Maximum-Loss-Limit buffer remaining), enabling
+        true account-aware filtering — not just a post-hoc reward penalty.
+        Default = identity (no-op). Account/MLL specifics are IP and live in
+        the plug-in; the generic pipeline only knows 'a strategy may extend
+        its own observation'.
+
+        Args:
+            obs       : the base observation (ctx ⊕ position-state), 1-D.
+            run_state : the same generic cross-episode dict shape_reward
+                        sees (e.g. {'cum_r': [...]}); the plug-in derives
+                        its account state from it + its own external inputs.
+        Return an array of length len(obs) + self.extra_obs_dim.
+        """
+        return obs
 
     @abstractmethod
     def detect_entries(

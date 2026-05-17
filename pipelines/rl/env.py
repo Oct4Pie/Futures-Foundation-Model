@@ -24,7 +24,8 @@ PRE_ENTRY, IN_TRADE, DONE = 0, 1, 2
 
 class SingleTradeEnv:
     def __init__(self, ctx, o, h, l, c, entry_bar, direction, sl_distance,
-                 tp_rr=2.0, entry_filter=True, max_hold=130, veto_cost=0.02):
+                 tp_rr=2.0, entry_filter=True, max_hold=130, veto_cost=0.02,
+                 strategy=None, run_state=None):
         self.ctx = np.asarray(ctx, np.float32)          # (T, ctx_dim) from signal bar
         self.o = np.asarray(o, float); self.h = np.asarray(h, float)
         self.l = np.asarray(l, float); self.c = np.asarray(c, float)
@@ -35,8 +36,11 @@ class SingleTradeEnv:
         self.entry_filter = bool(entry_filter)
         self.max_hold = int(max_hold)
         self.veto_cost = float(veto_cost)
+        self.strategy = strategy
+        self.run_state = run_state if run_state is not None else {"cum_r": []}
+        self._extra = int(getattr(strategy, "extra_obs_dim", 0)) if strategy else 0
         self.ctx_dim = self.ctx.shape[1]
-        self.obs_dim = self.ctx_dim + 4
+        self.obs_dim = self.ctx_dim + 4 + self._extra
         self.action_dim = 2
         n = len(self.c)
         self._entry_i = self.entry_bar + 1              # entry = next-bar open
@@ -78,7 +82,17 @@ class SingleTradeEnv:
             ur,
             1.0 + ur,                                   # room to SL in R
         ], np.float32)
-        return np.concatenate([self._ctx_at(), pos]).astype(np.float32)
+        base = np.concatenate([self._ctx_at(), pos]).astype(np.float32)
+        if self.strategy is None or self._extra == 0:
+            return base
+        aug = np.asarray(self.strategy.augment_obs(base, self.run_state),
+                         np.float32)
+        if aug.shape[0] != self.obs_dim:
+            raise ValueError(
+                f"{type(self.strategy).__name__}.augment_obs returned "
+                f"{aug.shape[0]} feats; expected base {len(base)} + "
+                f"extra_obs_dim {self._extra} = {self.obs_dim}")
+        return aug
 
     def _close(self, exit_price):
         r = float((exit_price - self.entry_price) * self.dir / self.sl)

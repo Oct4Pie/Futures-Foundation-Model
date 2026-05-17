@@ -61,8 +61,9 @@ def _every_oos_month_pf_gt1(dated_r) -> bool:
     return True
 
 
-def _episodes(strategy, df, ctx, mask):
-    """SingleTradeEnv per detected entry whose signal bar is in `mask`."""
+def _episodes(strategy, df, ctx, mask, run_state):
+    """SingleTradeEnv per detected entry whose signal bar is in `mask`. All
+    envs share `run_state` so augment_obs sees the live account state."""
     ev = strategy.detect_entries(df, df, "T")
     o = df["open"].values; h = df["high"].values
     l = df["low"].values;  c = df["close"].values
@@ -74,12 +75,12 @@ def _episodes(strategy, df, ctx, mask):
         out.append((df.index[bi], SingleTradeEnv(
             ctx[bi:], o, h, l, c, entry_bar=bi, direction=int(e["direction"]),
             sl_distance=float(e["sl_distance"]), tp_rr=float(e["tp_rr"]),
-            entry_filter=strategy.entry_filter, max_hold=strategy.max_hold)))
+            entry_filter=strategy.entry_filter, max_hold=strategy.max_hold,
+            strategy=strategy, run_state=run_state)))
     return out
 
 
-def _rollout(strategy, episodes, policy, rng, shuffle):
-    run_state = {"cum_r": []}
+def _rollout(strategy, episodes, policy, rng, shuffle, run_state):
     dated = []
     order = list(range(len(episodes)))
     for i in order:
@@ -104,12 +105,15 @@ def _run_seed(strategy, data, cfg, trainer, seed, shuffle):
     for tk, (df, ctx) in data.items():
         for tr_mask, te_mask in walk_forward_windows(
                 df.index, cfg.train_months, cfg.test_months):
-            train_eps = _episodes(strategy, df, ctx, tr_mask)
-            test_eps = _episodes(strategy, df, ctx, te_mask)
+            rs_train = {"cum_r": []}            # account state during training
+            rs_test = {"cum_r": []}             # fresh account for the OOS run
+            train_eps = _episodes(strategy, df, ctx, tr_mask, rs_train)
+            test_eps = _episodes(strategy, df, ctx, te_mask, rs_test)
             if not test_eps:
                 continue
             policy = trainer.train(train_eps, seed)
-            oos += _rollout(strategy, test_eps, policy, rng, shuffle)
+            oos += _rollout(strategy, test_eps, policy, rng, shuffle,
+                            rs_test)
     agg = _agg([r for _, r in oos])
     agg_gate = _every_oos_month_pf_gt1(oos) if not shuffle else False
     return {"agg": agg, "gate": agg_gate, "n": len(oos)}

@@ -24,7 +24,14 @@ class _EpisodeSamplingEnv:
         self._g = gym
         self.eps = [e for _, e in episodes]
         self.rng = np.random.default_rng(seed)
-        obs_dim = self.eps[0].obs_dim if self.eps else 1
+        e0 = self.eps[0] if self.eps else None
+        obs_dim = e0.obs_dim if e0 else 1
+        # shared, evolving account state (same dict the episode envs hold,
+        # so augment_obs sees it); strategy.shape_reward shapes the terminal
+        # reward and may StopIteration = account blown → reset the simulated
+        # account so PPO experiences many lifetimes and learns to avoid zero.
+        self.strategy = getattr(e0, "strategy", None)
+        self.run_state = getattr(e0, "run_state", {"cum_r": []})
         self.observation_space = gym.spaces.Box(
             -np.inf, np.inf, (obs_dim,), np.float32)
         self.action_space = gym.spaces.Discrete(2)
@@ -34,7 +41,15 @@ class _EpisodeSamplingEnv:
         return self.cur.reset(), {}
 
     def step(self, action):
-        return self.cur.step(action)
+        obs, r, term, trunc, info = self.cur.step(action)
+        if (term or trunc) and self.strategy is not None:
+            try:
+                r = float(self.strategy.shape_reward(r, self.run_state))
+                self.run_state["cum_r"].append(r)
+            except StopIteration:               # account blown
+                r = -1.0                        # strong terminal penalty
+                self.run_state["cum_r"].clear()  # reset simulated account
+        return obs, r, term, trunc, info
 
 
 class _SB3Trainer:

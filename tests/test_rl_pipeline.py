@@ -289,3 +289,60 @@ def test_shape_reward_stopiteration_blows_account():
     # each window's rollout terminates at <=3 trades (account blown)
     assert res["per_seed"][0]["agg"]["trades"] <= 3 * 20   # generous upper bound
     assert res["per_seed"][0]["agg"]["trades"] > 0
+
+
+# ── augment_obs: account/MLL-aware observation (generic hook) ─────────────────
+from pipelines.rl.env import SingleTradeEnv as _STE
+
+
+class _MLLStrategy(_WFStrategy):
+    """Plug-in style: appends a 'buffer-to-zero' feature so PPO can SEE how
+    close the account is to blowing (generic; the real MLL math is IP)."""
+    name = "mll"
+    extra_obs_dim = 1
+    start_balance_R = 5.0                         # external MLL buffer (in R)
+
+    def _buffer(self, run_state):
+        return self.start_balance_R + float(np.sum(run_state.get("cum_r", []) or [0.0]))
+
+    def augment_obs(self, obs, run_state):
+        return np.concatenate([obs, [np.float32(self._buffer(run_state))]])
+
+    def shape_reward(self, realized_r, run_state):
+        if self._buffer(run_state) + realized_r <= 0.0:
+            raise StopIteration                  # account blown → terminate
+        return realized_r
+
+
+def test_augment_obs_grows_obs_dim_and_reflects_run_state():
+    ctx = np.zeros((20, 3), np.float32)
+    o = 100 + np.arange(20) * 1.0
+    s = _MLLStrategy()
+    rs = {"cum_r": [-1.0, -1.0]}                  # 2 losses → buffer 5-2 = 3
+    env = _STE(ctx, o, o + 0.5, o - 0.5, o, entry_bar=2, direction=1,
+               sl_distance=1.0, strategy=s, run_state=rs)
+    assert env.obs_dim == 3 + 4 + 1
+    obs = env.reset()
+    assert obs.shape == (8,)
+    assert obs[-1] == pytest.approx(3.0)         # buffer-to-zero feature
+    rs["cum_r"].append(-1.0)                      # account moves
+    assert env.reset()[-1] == pytest.approx(2.0)  # obs tracks it live
+
+
+def test_augment_obs_wrong_length_raises():
+    class _Bad(_MLLStrategy):
+        def augment_obs(self, obs, run_state):
+            return obs                            # forgot the extra feature
+    ctx = np.zeros((20, 3), np.float32); o = 100 + np.arange(20) * 1.0
+    env = _STE(ctx, o, o + .5, o - .5, o, entry_bar=2, direction=1,
+               sl_distance=1.0, strategy=_Bad(), run_state={"cum_r": []})
+    with pytest.raises(ValueError, match="augment_obs returned"):
+        env.reset()
+
+
+def test_run_walkforward_with_account_aware_strategy():
+    res = run_walkforward(_MLLStrategy(), _wf_data(),
+                          RLConfig(seeds=(0,), shuffle_control=False),
+                          trainer=_StubTrainer(_take_then_exit))
+    assert isinstance(res["verdict"], bool)
+    assert res["per_seed"][0]["agg"]["trades"] > 0   # ran end-to-end w/ aug obs
