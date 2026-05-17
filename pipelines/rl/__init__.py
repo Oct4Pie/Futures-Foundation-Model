@@ -24,5 +24,7 @@ private.
 """
 
 from .base import RLStrategy, register, get_strategy, RL_STRATEGIES
+from .pipeline import run_walkforward, RLConfig
 
-__all__ = ["RLStrategy", "register", "get_strategy", "RL_STRATEGIES"]
+__all__ = ["RLStrategy", "register", "get_strategy", "RL_STRATEGIES",
+           "run_walkforward", "RLConfig"]

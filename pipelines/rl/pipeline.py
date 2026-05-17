@@ -81,9 +81,13 @@ def _episodes(strategy, df, ctx, mask, run_state):
 
 
 def _rollout(strategy, episodes, policy, rng, shuffle, run_state):
+    """Returns (dated_trades, terminated_early). terminated_early=True when
+    the strategy raised StopIteration mid-run (a self-abort, e.g. an
+    account-blown signal) — a run that self-terminated did NOT complete and
+    must FAIL the verdict, not merely score the partial trades."""
     dated = []
-    order = list(range(len(episodes)))
-    for i in order:
+    terminated = False
+    for i in range(len(episodes)):
         dt, env = episodes[i]
         obs = env.reset(); done = False; r = 0.0
         while not done:
@@ -92,16 +96,18 @@ def _rollout(strategy, episodes, policy, rng, shuffle, run_state):
             r = float(rng.standard_normal()) * 0.0  # shuffled = no signal
         try:
             r = float(strategy.shape_reward(r, run_state))
-        except StopIteration:                    # plug-in: account blown
+        except StopIteration:                    # strategy self-aborted run
+            terminated = True
             break
         run_state["cum_r"].append(r)
         dated.append((dt, r))
-    return dated
+    return dated, terminated
 
 
 def _run_seed(strategy, data, cfg, trainer, seed, shuffle):
     rng = np.random.default_rng(seed)
     oos = []
+    terminated = False
     for tk, (df, ctx) in data.items():
         for tr_mask, te_mask in walk_forward_windows(
                 df.index, cfg.train_months, cfg.test_months):
@@ -112,11 +118,15 @@ def _run_seed(strategy, data, cfg, trainer, seed, shuffle):
             if not test_eps:
                 continue
             policy = trainer.train(train_eps, seed)
-            oos += _rollout(strategy, test_eps, policy, rng, shuffle,
-                            rs_test)
+            d, term = _rollout(strategy, test_eps, policy, rng, shuffle,
+                               rs_test)
+            oos += d
+            if term:
+                terminated = True
     agg = _agg([r for _, r in oos])
     agg_gate = _every_oos_month_pf_gt1(oos) if not shuffle else False
-    return {"agg": agg, "gate": agg_gate, "n": len(oos)}
+    return {"agg": agg, "gate": agg_gate, "n": len(oos),
+            "terminated": terminated}
 
 
 def run_walkforward(strategy, data: dict, cfg: RLConfig = None,
@@ -141,5 +151,6 @@ def run_walkforward(strategy, data: dict, cfg: RLConfig = None,
     ms = multiseed_verdict(seed_pnls, min_median=cfg.min_median)
     verdict = bool(ms["pass"]
                    and all(p["robust"] for p in per)
-                   and all(p["gate"] for p in per))
+                   and all(p["gate"] for p in per)
+                   and not any(p["terminated"] for p in per))  # blown = FAIL
     return {"verdict": verdict, "multiseed": ms, "per_seed": per}

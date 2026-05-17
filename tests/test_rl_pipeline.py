@@ -346,3 +346,19 @@ def test_run_walkforward_with_account_aware_strategy():
                           trainer=_StubTrainer(_take_then_exit))
     assert isinstance(res["verdict"], bool)
     assert res["per_seed"][0]["agg"]["trades"] > 0   # ran end-to-end w/ aug obs
+
+
+def test_blown_account_fails_verdict():
+    """A strategy that self-aborts a run (StopIteration) MUST fail the
+    verdict, not merely score partial trades — 'blowing the balance =
+    failure', and the model must learn not to."""
+    class _AlwaysBlow(_WFStrategy):
+        name = "blow"
+        def shape_reward(self, realized_r, run_state):
+            raise StopIteration                  # blows immediately
+
+    res = run_walkforward(_AlwaysBlow(), _wf_data(),
+                           RLConfig(seeds=(0,), shuffle_control=False),
+                           trainer=_StubTrainer(_take_then_exit))
+    assert res["per_seed"][0]["terminated"] is True
+    assert res["verdict"] is False               # blown ⇒ FAIL
