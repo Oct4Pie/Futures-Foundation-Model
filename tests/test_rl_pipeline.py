@@ -396,3 +396,24 @@ def test_on_fold_complete_default_is_silent_noop():
                           RLConfig(seeds=(0,), shuffle_control=False),
                           trainer=_StubTrainer(_take_then_exit))
     assert set(res) == {"verdict", "multiseed", "per_seed"}
+
+
+def test_episode_sampling_env_is_gymnasium_env():
+    """Regression: SB3 rejects non-gymnasium envs. _EpisodeSamplingEnv must
+    be a real gymnasium.Env instance with the (obs,info)/(o,r,term,trunc,
+    info) API. Skipped where gymnasium isn't installed (dep-light local)."""
+    gym = pytest.importorskip("gymnasium")
+    from pipelines.rl.ppo import _EpisodeSamplingEnv
+    from pipelines.rl.pipeline import _episodes
+    df, ctx = _wf_data()["ES"]
+    eps = _episodes(_WFStrategy(), df, ctx,
+                    np.ones(len(df), bool), {"cum_r": []})
+    assert eps, "need episodes for the test"
+    env = _EpisodeSamplingEnv(eps[:50], seed=0)
+    assert isinstance(env, gym.Env)                  # the SB3 requirement
+    obs, info = env.reset(seed=0)
+    assert obs.shape == (eps[0][1].obs_dim,) and isinstance(info, dict)
+    o, r, term, trunc, i = env.step(env.action_space.sample())
+    assert o.shape == (eps[0][1].obs_dim,)
+    assert isinstance(r, float) and isinstance(term, bool) \
+        and isinstance(trunc, bool) and isinstance(i, dict)
