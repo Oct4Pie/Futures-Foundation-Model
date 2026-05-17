@@ -81,17 +81,21 @@ def _episodes(strategy, df, ctx, mask, run_state):
 
 
 def _rollout(strategy, episodes, policy, rng, shuffle, run_state):
-    """Returns (dated_trades, terminated_early). terminated_early=True when
-    the strategy raised StopIteration mid-run (a self-abort, e.g. an
-    account-blown signal) — a run that self-terminated did NOT complete and
+    """Returns (dated_trades, terminated_early, rich). `rich` is a list of
+    per-trade dicts {dt,r,hold,reason,took} for the on_fold_complete hook
+    (sweep/winner/report logic is plug-in side; the pipeline only surfaces
+    the data). terminated_early=True when the strategy raised StopIteration
+    mid-run (self-abort, e.g. account blown) — that run did NOT complete and
     must FAIL the verdict, not merely score the partial trades."""
-    dated = []
+    dated, rich = [], []
     terminated = False
     for i in range(len(episodes)):
         dt, env = episodes[i]
-        obs = env.reset(); done = False; r = 0.0
+        obs = env.reset(); done = False; r = 0.0; info = {}
         while not done:
-            obs, r, done, _, _ = env.step(policy(obs))
+            obs, r, done, _, info = env.step(policy(obs))
+        reason = next((k for k in ("untradable", "veto", "sl", "exit",
+                                   "timeout") if info.get(k)), "other")
         if shuffle:                              # break entry↔outcome link
             r = float(rng.standard_normal()) * 0.0  # shuffled = no signal
         try:
@@ -101,16 +105,34 @@ def _rollout(strategy, episodes, policy, rng, shuffle, run_state):
             break
         run_state["cum_r"].append(r)
         dated.append((dt, r))
-    return dated, terminated
+        rich.append({"dt": dt, "r": r,
+                     "hold": int(getattr(env, "bars_held", 0)),
+                     "reason": reason,
+                     "took": reason not in ("veto", "untradable")})
+    return dated, terminated, rich
 
 
-def _run_seed(strategy, data, cfg, trainer, seed, shuffle):
+def _fire_fold(strategy, on_fold_complete, info):
+    """Surface per-(ticker,window) OOS to the hook(s): the strategy's
+    overridable no-op AND an optional walk-forward callback. The generic
+    pipeline does nothing with `info` itself — sweep/winner/report are
+    plug-in side."""
+    try:
+        strategy.on_fold_complete(info)
+    except AttributeError:
+        pass
+    if on_fold_complete is not None:
+        on_fold_complete(info)
+
+
+def _run_seed(strategy, data, cfg, trainer, seed, shuffle,
+              on_fold_complete=None):
     rng = np.random.default_rng(seed)
     oos = []
     terminated = False
     for tk, (df, ctx) in data.items():
-        for tr_mask, te_mask in walk_forward_windows(
-                df.index, cfg.train_months, cfg.test_months):
+        for wi, (tr_mask, te_mask) in enumerate(walk_forward_windows(
+                df.index, cfg.train_months, cfg.test_months)):
             rs_train = {"cum_r": []}            # account state during training
             rs_test = {"cum_r": []}             # fresh account for the OOS run
             train_eps = _episodes(strategy, df, ctx, tr_mask, rs_train)
@@ -118,11 +140,16 @@ def _run_seed(strategy, data, cfg, trainer, seed, shuffle):
             if not test_eps:
                 continue
             policy = trainer.train(train_eps, seed)
-            d, term = _rollout(strategy, test_eps, policy, rng, shuffle,
-                               rs_test)
+            d, term, rich = _rollout(strategy, test_eps, policy, rng,
+                                     shuffle, rs_test)
             oos += d
             if term:
                 terminated = True
+            if not shuffle:
+                _fire_fold(strategy, on_fold_complete, {
+                    "ticker": tk, "window": wi, "seed": seed,
+                    "trades": rich, "agg": _agg([t[1] for t in d]),
+                    "terminated": term})
     agg = _agg([r for _, r in oos])
     agg_gate = _every_oos_month_pf_gt1(oos) if not shuffle else False
     return {"agg": agg, "gate": agg_gate, "n": len(oos),
@@ -130,17 +157,28 @@ def _run_seed(strategy, data, cfg, trainer, seed, shuffle):
 
 
 def run_walkforward(strategy, data: dict, cfg: RLConfig = None,
-                    trainer=None) -> dict:
+                    trainer=None, on_fold_complete=None) -> dict:
     """data = {ticker: (df_raw[DatetimeIndex, OHLC], ctx[ndarray T×d])}.
-    trainer.train(train_episodes, seed) -> policy(obs)->action. Returns the
-    consolidated verdict (multi-seed + shuffle + every-OOS-month-PF>1)."""
+    trainer.train(train_episodes, seed) -> policy(obs)->action.
+
+    `on_fold_complete(info)` (optional) is called after every real
+    (non-shuffle) (ticker,window) OOS with a rich dict
+    {ticker,window,seed,trades:[{dt,r,hold,reason,took}],agg,terminated};
+    `strategy.on_fold_complete(info)` (a no-op overridable on RLStrategy)
+    is also called. Default None / no-override ⇒ behaviour byte-identical.
+    Per-fold sweeps / winner-selection / reports are built ON these hooks
+    by the strategy plug-in — never inside this generic pipeline.
+
+    Returns the consolidated verdict (multi-seed + shuffle +
+    every-OOS-month-PF>1 + not-blown)."""
     cfg = cfg or RLConfig()
     if trainer is None:                          # lazy default — no test dep
         from .ppo import make_ppo_trainer
         trainer = make_ppo_trainer()
     seed_pnls, per = [], []
     for sd in cfg.seeds:
-        real = _run_seed(strategy, data, cfg, trainer, sd, shuffle=False)
+        real = _run_seed(strategy, data, cfg, trainer, sd, shuffle=False,
+                         on_fold_complete=on_fold_complete)
         if cfg.shuffle_control:
             shuf = _run_seed(strategy, data, cfg, trainer, sd, shuffle=True)
             real["robust"] = shuffle_robust(real["agg"], shuf["agg"])

@@ -362,3 +362,37 @@ def test_blown_account_fails_verdict():
                            trainer=_StubTrainer(_take_then_exit))
     assert res["per_seed"][0]["terminated"] is True
     assert res["verdict"] is False               # blown ⇒ FAIL
+
+
+# ── on_fold_complete hook (the single sweep/winner seam — plug-in side) ──
+def test_on_fold_complete_callback_and_override_receive_rich_info():
+    seen_cb, seen_ov = [], []
+
+    class _HookStrat(_WFStrategy):
+        name = "hook"
+        def on_fold_complete(self, info):        # overridable no-op
+            seen_ov.append(info)
+
+    run_walkforward(_HookStrat(), _wf_data(),
+                    RLConfig(seeds=(0,), shuffle_control=True),
+                    trainer=_StubTrainer(_take_then_exit),
+                    on_fold_complete=lambda i: seen_cb.append(i))
+
+    assert seen_cb and seen_ov                    # both fired
+    assert len(seen_cb) == len(seen_ov)           # same per-(tk,window) calls
+    info = seen_cb[0]
+    assert {"ticker", "window", "seed", "trades", "agg",
+            "terminated"} <= set(info)
+    assert all(not i.get("shuffle") for i in seen_cb)   # real folds only
+    if info["trades"]:
+        t = info["trades"][0]
+        assert {"dt", "r", "hold", "reason", "took"} <= set(t)
+
+
+def test_on_fold_complete_default_is_silent_noop():
+    # default RLStrategy.on_fold_complete is a no-op; no callback passed →
+    # behaves exactly as before (verdict structure intact)
+    res = run_walkforward(_WFStrategy(), _wf_data(),
+                          RLConfig(seeds=(0,), shuffle_control=False),
+                          trainer=_StubTrainer(_take_then_exit))
+    assert set(res) == {"verdict", "multiseed", "per_seed"}

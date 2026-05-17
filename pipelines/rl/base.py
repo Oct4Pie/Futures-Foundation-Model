@@ -91,6 +91,20 @@ class RLStrategy(ABC):
         """
         return obs
 
+    def on_fold_complete(self, info: dict) -> None:
+        """OPTIONAL no-op hook — called after every real (non-shuffle)
+        (ticker, window) OOS rollout with a rich dict:
+          {ticker, window, seed, agg, terminated,
+           trades: [{dt, r, hold, reason, took}, ...]}.
+        The generic pipeline does nothing with it. Override (or pass
+        run_walkforward(on_fold_complete=...)) to build STRATEGY-SIDE
+        machinery — per-fold hyperparameter sweep, winner-by-OOS-score,
+        convergence gating, OOS report, sanity checks, winning-config
+        manifest. The framework never contains a 'sweep' concept; this is
+        the single seam the plug-in drives it through (mirrors the finetune
+        framework's on_fold_complete / health_monitor pattern)."""
+        pass
+
     @abstractmethod
     def detect_entries(
         self,
