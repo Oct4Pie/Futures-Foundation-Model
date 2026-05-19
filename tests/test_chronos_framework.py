@@ -145,16 +145,21 @@ class _DummyLabelerFeat(_DummyLabeler):
 # ---- XGBoost head (in-process xgboost — isolated from FFM torch) ---------
 
 @iso_only
-def test_xgbhead_deterministic_and_bounded():
+@pytest.mark.parametrize('nc', [2, 3])
+def test_xgbhead_deterministic_and_bounded(nc):
+    """Binary (nc=2) AND multiclass (nc=3). The binary case caught a real
+    regression where forcing objective='multi:softprob' + num_class=2 made
+    predict() return a 2-D array — must stay covered."""
     rng = np.random.default_rng(0)
     X = rng.standard_normal((60, 16)).astype('float32')
-    y = rng.integers(0, 3, 60)
-    p1 = XGBHead(3).fit(X, y, seed=0).predict(X)
-    p2 = XGBHead(3).fit(X, y, seed=0).predict(X)
+    y = rng.integers(0, nc, 60)
+    p1 = XGBHead(nc).fit(X, y, seed=0).predict(X)
+    p2 = XGBHead(nc).fit(X, y, seed=0).predict(X)
     assert np.array_equal(p1, p2)                 # same seed -> identical
-    assert len(p1) == 60 and set(np.unique(p1)) <= {0, 1, 2}
-    proba = XGBHead(3).fit(X, y, seed=0).predict_proba(X)
-    assert proba.shape == (60, 3)
+    assert p1.ndim == 1 and len(p1) == 60         # not 2-D (binary regress)
+    assert set(np.unique(p1)) <= set(range(nc))
+    proba = XGBHead(nc).fit(X, y, seed=0).predict_proba(X)
+    assert proba.shape == (60, nc)
     assert np.allclose(proba.sum(1), 1.0, atol=1e-4)
 
 

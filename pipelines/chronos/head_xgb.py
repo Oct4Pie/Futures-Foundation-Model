@@ -23,9 +23,11 @@ class XGBHead:
         self._clf = None
 
     def fit(self, X, y, seed=0):
+        # Let XGBClassifier infer the objective from y: binary:logistic for
+        # 2 classes, multi:softprob for >2. Forcing multi+num_class breaks
+        # the binary case (predict returns 2-D).
         import xgboost as xgb
         self._clf = xgb.XGBClassifier(
-            objective='multi:softprob', num_class=self.n_classes,
             tree_method='hist', random_state=seed, n_jobs=1,
             verbosity=0, **self._p)
         self._clf.fit(np.asarray(X, np.float32), np.asarray(y))

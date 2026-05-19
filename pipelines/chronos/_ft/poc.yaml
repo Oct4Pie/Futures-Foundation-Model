@@ -1,0 +1,36 @@
+# POC-scale local fine-tune of chronos-t5-tiny on our futures data.
+# CPU/Mac-safe: no tf32, no torch_compile, no fused optim, 0 workers.
+# training_data_paths is rewritten by run_ft.py to the prepared arrow.
+training_data_paths:
+- "PLACEHOLDER.arrow"
+probability:
+- 1.0
+context_length: 256
+prediction_length: 32
+min_past: 32
+max_steps: 200
+save_steps: 200
+log_steps: 25
+per_device_train_batch_size: 8
+learning_rate: 0.001
+optim: adamw_torch
+num_samples: 20
+shuffle_buffer_length: 10000
+gradient_accumulation_steps: 1
+model_id: amazon/chronos-t5-tiny
+model_type: seq2seq
+random_init: false
+tie_embeddings: true
+output_dir: "PLACEHOLDER_OUT"
+tf32: false
+torch_compile: false
+tokenizer_class: "MeanScaleUniformBins"
+tokenizer_kwargs:
+  low_limit: -15.0
+  high_limit: 15.0
+n_tokens: 4096
+lr_scheduler_type: linear
+warmup_ratio: 0.0
+dataloader_num_workers: 0
+max_missing_prop: 0.9
+use_eos_token: true

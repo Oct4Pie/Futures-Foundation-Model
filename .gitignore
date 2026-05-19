@@ -234,4 +234,4 @@ scripts/trade_monitor.py
 .claude/
 
 # GCP — contains project ID and machine-specific config
-gcp/
+gcp/_poc_resolved.yaml
