@@ -46,7 +46,9 @@ def run_pipeline(labeler: XGBStrategyLabeler, timeframe: str,
                  train_months: int = 3, test_months: int = 1,
                  val_frac: float = 0.15,
                  shuffle_train_labels: bool = False,
-                 save_artifact: bool = True, seed: int = 42) -> dict:
+                 save_artifact: bool = True, seed: int = 42,
+                 prepared_dir: str | None = None,
+                 device: str = 'cpu') -> dict:
     """End-to-end run for ANY strategy labeler (finetune-parity API):
 
         run_pipeline(MyLabeler(bar_minutes=5), '5m', 'ES', trials=300)
@@ -59,19 +61,59 @@ def run_pipeline(labeler: XGBStrategyLabeler, timeframe: str,
     shuffle_train_labels: ROBUSTNESS CONTROL — permute the label vector
         within each TRAIN window only (OOS untouched). A model that still
         passes the gate with shuffled train labels has a leakage/overfit
-        artifact, not a real edge (the audit that killed CRT)."""
+        artifact, not a real edge (the audit that killed CRT).
+
+    prepared_dir: ADDITIVE INPUT-SOURCE SEAM (flagged vs literal spec §3,
+        which says the pipeline calls derive_features itself). When set, the
+        68 features + vty_atr_raw are loaded from
+        {prepared_dir}/{INSTRUMENT}_features.parquet — the SAME, already
+        causality-validated derive_features output that prepare_data
+        (colabs/prepare_data_3min.py, atr_period=20) caches for the whole
+        3-min line. Identical feature matrix, no recompute, no train/serve
+        skew vs the rest of the line; §1-9 modelling untouched. The parquet
+        carries no _open (derive_features emits none) and run_backtest needs
+        the next-bar open, so OHLCV still comes from the raw CSV; the two are
+        hard-aligned on datetime below or the run aborts.
+    device: 'cpu' (default, unchanged) or 'cuda' (Colab GPU). Additive,
+        spec-CONSISTENT (the owner rule is XGBoost-accel-is-CUDA-only)."""
     period, atr_p, bar_min = _TF[timeframe]
     csv = os.path.join(_DATA, f'{instrument}_{period}.csv')
     if not os.path.exists(csv):
         sys.exit(f'data file not found: {csv} (run databento/build_continuous.py '
                  f'{period})')
 
+    src = f'parquet:{prepared_dir}' if prepared_dir else 'csv+derive_features'
     print(f'== XGBoost pipeline | {instrument} {timeframe} | '
-          f'labeler={labeler.name} | trials={trials} ==', flush=True)
+          f'labeler={labeler.name} | trials={trials} | feat={src} | '
+          f'device={device} ==', flush=True)
     df = pd.read_csv(csv)
     df['datetime'] = pd.to_datetime(df['datetime'], utc=True)
-    feat = derive_features(df, instrument=instrument, atr_period=atr_p)
     FCOLS = labeler.feature_cols()
+
+    if prepared_dir is None:
+        feat = derive_features(df, instrument=instrument, atr_period=atr_p)
+    else:
+        pq = os.path.join(prepared_dir, f'{instrument}_features.parquet')
+        if not os.path.exists(pq):
+            sys.exit(f'prepared parquet not found: {pq} '
+                     f'(build it with colabs/prepare_data_3min.py)')
+        print(f'  [seam] features <- {pq} (validated; input source only, '
+              f'modelling unchanged)', flush=True)
+        feat = pd.read_parquet(pq).reset_index(drop=True)
+        # The parquet is row-1:1 with the raw CSV by construction (prepare_data
+        # never drops rows). PROVE it on datetime before trusting positional
+        # alignment — a silent off-by-one would poison every (feature,label).
+        if len(feat) != len(df):
+            sys.exit(f'seam abort: parquet rows {len(feat)} != CSV rows '
+                     f'{len(df)} ({instrument}) — out of sync, rebuild parquet')
+        pq_dt = pd.to_datetime(feat['_datetime'], utc=True).to_numpy()
+        if not np.array_equal(pq_dt, df['datetime'].to_numpy()):
+            sys.exit(f'seam abort: parquet _datetime != CSV datetime '
+                     f'({instrument}) — cannot positionally align')
+        miss = [c for c in (*FCOLS, 'vty_atr_raw') if c not in feat.columns]
+        if miss:
+            sys.exit(f'seam abort: parquet missing {miss[:8]} '
+                     f'(stale/mismatched prepare_data build)')
     X = feat[FCOLS].reset_index(drop=True)             # NO nan-fill (xgb native)
 
     lab_df = pd.DataFrame({'datetime': df['datetime'].values,
@@ -109,13 +151,14 @@ def run_pipeline(labeler: XGBStrategyLabeler, timeframe: str,
         Xv = X[val_m].to_numpy()
         dfv = ohlcv[val_m].reset_index(drop=True)
 
-        best = tune(Xf, yf, Xv, dfv, timeframe, n_trials=trials)
+        best = tune(Xf, yf, Xv, dfv, timeframe, n_trials=trials, device=device)
 
         # refit on the FULL train window, early-stopping on the val fold
         import xgboost as xgb
         model = xgb.XGBClassifier(
             objective='multi:softprob', num_class=3, eval_metric='mlogloss',
-            tree_method='hist', n_jobs=-1, early_stopping_rounds=50, **best)
+            tree_method='hist', device=device, n_jobs=-1,
+            early_stopping_rounds=50, **best)
         from .tuner import _TO_XGB
         ytr_all = np.array([_TO_XGB[v] for v in yw[tr_m]])
         yval_x = np.array([_TO_XGB[v] for v in yw[val_m]])
@@ -178,6 +221,14 @@ def main(argv=None):
     ap.add_argument('--max-windows', type=int, default=None,
                     help='cap walk-forward windows (smoke: e.g. 3). '
                          'trials only bounds Optuna; this bounds the run.')
+    ap.add_argument('--parquet-dir', default=None,
+                    help='ADDITIVE seam (flagged vs spec §3): load 68 features '
+                         '+ vty_atr_raw from {dir}/{INSTRUMENT}_features.parquet '
+                         '(validated prepare_data output) instead of deriving; '
+                         'OHLCV/open still from the raw CSV.')
+    ap.add_argument('--device', choices=['cpu', 'cuda'], default='cpu',
+                    help="XGBoost device. 'cuda' for Colab GPU. Default cpu = "
+                         "unchanged behaviour.")
     ap.add_argument('--rf-gate', action='store_true')
     ap.add_argument('--hmm', action='store_true')
     a = ap.parse_args(argv)
@@ -186,7 +237,8 @@ def main(argv=None):
               'NOT implemented (primary path = sections 1-9). Ignoring.')
     bar_min = _TF[a.timeframe][2]
     labeler = get_labeler(a.labeler, bar_minutes=bar_min)
-    run_pipeline(labeler, a.timeframe, a.instrument, a.trials, a.max_windows)
+    run_pipeline(labeler, a.timeframe, a.instrument, a.trials, a.max_windows,
+                 prepared_dir=a.parquet_dir, device=a.device)
 
 
 if __name__ == '__main__':

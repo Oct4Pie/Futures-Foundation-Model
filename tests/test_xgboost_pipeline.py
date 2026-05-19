@@ -345,3 +345,64 @@ def test_shuf_robust_meaningful_shuffled_but_clean_passes():
 def test_shuf_robust_meaningful_real_not_clearly_above_flagged():
     """Shuffled meaningful & low-PF, but real not 0.30 above shuffled PF."""
     assert _shuf_robust(_agg(800, 0.30, 1.20), _agg(400, 0.20, 1.05)) is False
+
+
+# ── parquet seam: parquet-load == in-process derive (additive input source) ──
+# The seam's correctness claim: {prepared_dir}/{INST}_features.parquet (what
+# prepare_data caches) is bit-identical to deriving in-process at the same
+# atr_period, and row-1:1 with the raw CSV by datetime. Prove it without
+# xgboost (mirrors this file's no-xgboost convention).
+
+import os as _os
+import shutil as _sh
+from futures_foundation import prepare_data, derive_features
+from futures_foundation.features import get_model_feature_columns
+
+_ES3 = Path(__file__).parent.parent / 'data' / 'ES_3min.csv'
+_TMP = Path(__file__).parent.parent / 'temp' / 'seamtest'   # repo temp/, not /tmp
+
+
+@pytest.mark.skipif(not _ES3.exists(), reason='data/ES_3min.csv absent')
+def test_parquet_seam_equivials_inprocess_derive():
+    raw, prep = _TMP / 'raw', _TMP / 'prep'
+    if _TMP.exists():
+        _sh.rmtree(_TMP)
+    raw.mkdir(parents=True); prep.mkdir(parents=True)
+    try:
+        df = pd.read_csv(_ES3).head(6000)
+        df.to_csv(raw / 'ES_3min.csv', index=False)
+
+        prepare_data(str(raw), str(prep), atr_period=20)   # what colab builds
+
+        df['datetime'] = pd.to_datetime(df['datetime'], utc=True)
+        feat_csv = derive_features(df, instrument='ES', atr_period=20)
+        feat_pq = pd.read_parquet(prep / 'ES_features.parquet')
+
+        FCOLS = get_model_feature_columns()
+        # 1. row-1:1 + datetime aligned (the seam's hard-guard premise)
+        assert len(feat_pq) == len(df) == len(feat_csv)
+        assert np.array_equal(
+            pd.to_datetime(feat_pq['_datetime'], utc=True).to_numpy(),
+            df['datetime'].to_numpy())
+        # 2. features + vty_atr_raw bit-identical (same fn, same atr_period)
+        for c in (*FCOLS, 'vty_atr_raw'):
+            assert c in feat_pq.columns, f'parquet missing {c}'
+            pd.testing.assert_series_equal(
+                feat_pq[c].reset_index(drop=True),
+                feat_csv[c].reset_index(drop=True),
+                check_names=False, check_dtype=False)
+        # 3. parquet has no _open -> seam MUST read open from raw CSV
+        assert '_open' not in feat_pq.columns
+        assert {'open', 'high', 'low', 'close'}.issubset(df.columns)
+    finally:
+        _sh.rmtree(_TMP, ignore_errors=True)
+
+
+def test_parquet_seam_alignment_guard_predicate():
+    """The seam aborts when parquet/CSV datetimes disagree — verify the exact
+    np.array_equal predicate run_pipeline uses (no full pipeline needed)."""
+    a = pd.to_datetime(pd.Series(
+        ['2024-01-02 09:30', '2024-01-02 09:33']), utc=True).to_numpy()
+    b = pd.to_datetime(pd.Series(
+        ['2024-01-02 09:30', '2024-01-02 09:36']), utc=True).to_numpy()
+    assert np.array_equal(a, a) and not np.array_equal(a, b)

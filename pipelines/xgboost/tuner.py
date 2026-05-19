@@ -35,17 +35,20 @@ def _signals_from_proba(proba: np.ndarray, thr: float) -> np.ndarray:
     return sig
 
 
-def _fit_xgb(params, Xf, yf):
+def _fit_xgb(params, Xf, yf, device: str = 'cpu'):
     import xgboost as xgb
+    # device: ADDITIVE (flagged) vs literal spec text — spec-CONSISTENT, since
+    # the spec/owner rule is "XGBoost accel is CUDA-only (no Metal)"; 'cuda' on
+    # Colab is the intended GPU path. Default 'cpu' => behaviour unchanged.
     m = xgb.XGBClassifier(
         objective="multi:softprob", num_class=3, eval_metric="mlogloss",
-        tree_method="hist", n_jobs=-1, **params)
+        tree_method="hist", device=device, n_jobs=-1, **params)
     m.fit(Xf, np.array([_TO_XGB[v] for v in yf]))
     return m
 
 
 def tune(Xf, yf, Xv, df_val, timeframe: str, n_trials: int = 300,
-         seed: int = 42) -> dict:
+         seed: int = 42, device: str = 'cpu') -> dict:
     """Xf/yf: train-fit features/labels. Xv: val-fold features. df_val:
     val-fold OHLCV+datetime (row-aligned to Xv) for the backtest. Returns the
     best XGB param dict."""
@@ -67,7 +70,7 @@ def tune(Xf, yf, Xv, df_val, timeframe: str, n_trials: int = 300,
             n_estimators=trial.suggest_int("n_estimators",
                                            *_BOUNDS["n_estimators"]),
         )
-        model = _fit_xgb(params, Xf, yf)
+        model = _fit_xgb(params, Xf, yf, device)
         proba = model.predict_proba(Xv)
         sig = _signals_from_proba(proba, CONF_THRESHOLD)
         res = run_backtest(df_val, sig)
