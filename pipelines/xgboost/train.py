@@ -102,7 +102,9 @@ def run_pipeline(labeler: XGBStrategyLabeler, timeframe: str,
                  save_artifact: bool = True, seed: int = 42,
                  prepared_dir: str | None = None,
                  device: str = 'cpu',
-                 instruments: str | list | None = None) -> dict:
+                 instruments: str | list | None = None,
+                 window_select: set | None = None,
+                 optuna_jobs: int = 1) -> dict:
     """End-to-end run for ANY strategy labeler (finetune-parity API):
 
         run_pipeline(MyLabeler(bar_minutes=5), '5m', 'ES', trials=300)
@@ -135,7 +137,16 @@ def run_pipeline(labeler: XGBStrategyLabeler, timeframe: str,
           * a backtest is ONE sequential book — it CANNOT span tickers, so
             each ticker is backtested on its own contiguous slice (full bar
             series; signals only at event rows) and per-trade returns are
-            concatenated for the Optuna objective and the OOS month."""
+            concatenated for the Optuna objective and the OOS month.
+
+    window_select / optuna_jobs: ADDITIVE, flagged, back-compat (defaults
+        None / 1 = unchanged). window_select = the set of 1-based walk-forward
+        window indices to run (indices are globally deterministic from the
+        fixed month calendar) so independent PROCESSES can each own a disjoint
+        subset for GIL-free parallelism; the return dict carries
+        month_returns + per_ticker_returns for an exact merge. optuna_jobs =
+        Optuna's own (thread) trial parallelism (spec-sanctioned; real
+        speedup is the process/window route)."""
     period, atr_p, bar_min = _TF[timeframe]
     if instruments is None:
         tickers = [instrument]
@@ -177,6 +188,11 @@ def run_pipeline(labeler: XGBStrategyLabeler, timeframe: str,
         if max_windows is not None and w > max_windows:
             print(f'  (stopping at --max-windows={max_windows})', flush=True)
             break
+        # window index w is globally deterministic (fixed month calendar),
+        # so independent processes can each own a disjoint window subset and
+        # the merge is exact. Default None = all windows (unchanged).
+        if window_select is not None and w not in window_select:
+            continue
 
         Xf_p, yf_p, Xtr_p, ytr_p, Xvl_p, yvl_p = [], [], [], [], [], []
         val_blocks, oos_blocks = [], []
@@ -234,7 +250,7 @@ def run_pipeline(labeler: XGBStrategyLabeler, timeframe: str,
               f'({len(data)}tk) — tuning...', flush=True)
 
         best = tune(Xf, yf, val_blocks, timeframe, n_trials=trials,
-                    device=device)
+                    device=device, n_jobs=optuna_jobs)
 
         import xgboost as xgb
         model = xgb.XGBClassifier(
@@ -269,6 +285,10 @@ def run_pipeline(labeler: XGBStrategyLabeler, timeframe: str,
         _print_stats(f'OOS {mlabel}', st)
 
     if not oos_returns:
+        if window_select is not None:            # a parallel worker's subset
+            return {'gate_pass': True, 'months': [], 'aggregate': None,
+                    'artifact': None, 'n_months': 0, 'month_returns': [],
+                    'per_ticker_returns': {}}     # nothing to merge from here
         sys.exit('No completed walk-forward windows (need >=4 months data).')
 
     agg = pd.concat(oos_returns, ignore_index=True)
@@ -310,7 +330,12 @@ def run_pipeline(labeler: XGBStrategyLabeler, timeframe: str,
               flush=True)
     return {'gate_pass': pf_floor_ok, 'months': month_rows,
             'aggregate': _stats(agg, []), 'artifact': out,
-            'n_months': len(month_rows)}
+            'n_months': len(month_rows),
+            # raw returns for a multiprocess driver to MERGE exactly
+            # (additive; sequential callers can ignore):
+            'month_returns': list(zip([m for m, _ in month_rows],
+                                      oos_returns)),
+            'per_ticker_returns': per_tk}
 
 
 def main(argv=None):

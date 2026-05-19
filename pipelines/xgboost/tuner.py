@@ -68,7 +68,7 @@ def _score_val_blocks(model, val_blocks: list, ppy: int) -> float:
 
 
 def tune(Xf, yf, val_blocks: list, timeframe: str, n_trials: int = 300,
-         seed: int = 42, device: str = 'cpu') -> dict:
+         seed: int = 42, device: str = 'cpu', n_jobs: int = 1) -> dict:
     """Xf/yf: pooled train-fit EVENT-row features/labels. val_blocks: list of
     {'Xv': event-row features, 'ohlcv': full val bar series, 'ev_pos': int
     positions of the event rows within ohlcv} — one per ticker. Returns the
@@ -98,5 +98,11 @@ def tune(Xf, yf, val_blocks: list, timeframe: str, n_trials: int = 300,
         direction="maximize",
         sampler=optuna.samplers.TPESampler(seed=seed),
         pruner=optuna.pruners.MedianPruner())
-    study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
+    # n_jobs>1 = Optuna's own (thread) trial parallelism (spec-sanctioned).
+    # NOTE: real GIL-free speedup comes from PROCESS-level window
+    # parallelism (run_pipeline window_select + a multiprocess driver) —
+    # threaded n_jobs mostly overlaps the XGBoost fit, not the Python
+    # backtest. Default 1 = unchanged behaviour.
+    study.optimize(objective, n_trials=n_trials, n_jobs=n_jobs,
+                   show_progress_bar=False)
     return study.best_params

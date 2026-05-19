@@ -410,7 +410,7 @@ def test_parquet_seam_alignment_guard_predicate():
 
 # ── event_mask seam + pooled multi-ticker (generic, strategy-agnostic) ───────
 
-from pipelines.xgboost.train import _load_ticker
+from pipelines.xgboost.train import _load_ticker, run_pipeline
 from pipelines.xgboost.labeler import TripleBarrierV2Labeler
 
 
@@ -457,3 +457,25 @@ def test_load_ticker_wiring_and_backcompat():
     assert d['ev'].dtype == bool and d['ev'].all()      # back-compat invariant
     assert str(d['periods'].dtype) == 'period[M]'
     assert d['inst'] == 'ES' and len(d['span']) == 2
+
+
+# ── window_select / parallel-merge return contract (generic, back-compat) ────
+
+@pytest.mark.skipif(not _ES3.exists(), reason='data/ES_3min.csv absent')
+def test_window_select_empty_subset_returns_mergeable_no_xgb():
+    """A parallel worker whose window subset is empty must return the
+    mergeable contract (no sys.exit, no xgboost) so it can't kill a pool."""
+    lab = TripleBarrierV2Labeler(bar_minutes=3)
+    r = run_pipeline(lab, '3m', instruments=['ES'],
+                     window_select={10**9},          # selects nothing
+                     save_artifact=False)
+    assert r['n_months'] == 0
+    assert r['month_returns'] == [] and r['per_ticker_returns'] == {}
+    assert r['gate_pass'] is True and r['artifact'] is None
+
+
+def test_window_select_optuna_jobs_defaults_backcompat():
+    import inspect
+    p = inspect.signature(run_pipeline).parameters
+    assert p['window_select'].default is None        # default = all windows
+    assert p['optuna_jobs'].default == 1             # default = sequential
