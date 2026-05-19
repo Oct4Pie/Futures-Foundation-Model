@@ -129,10 +129,17 @@ def update_ms_hybrid_short(bar, entry, lwm, sl, trail_on,
     return new_lwm, ms_sl, True
 
 
-# Spec 7.2 defaults
+# Spec 7.2 defaults + ADDITIVE realism/stress knobs (all default to the
+# original behaviour — flagged vs spec, back-compat; only an explicit
+# verification stress sets them non-default).
 TRAIL_CONFIG = {
     "init_stop_atr":      3.0,   # initial stop = 3.0 x ATR(RS)_entry
     "trail_trigger_atr":  0.5,   # activate when move >= 0.5 x ATR(RS)_entry
     "trail_distance_atr": 0.5,   # trail distance = 0.5 x ATR(RS)_live
     "ms_buffer_atr":      0.1,
+    # ── verification stresses (0 / 'trail' = unchanged) ──
+    "cost_per_trade":     0.0,   # fractional round-trip cost subtracted /trade
+    "stop_slippage_atr":  0.0,   # stop fills WORSE than sl by this x ATR_entry
+    "exit_mode":          "trail",  # 'trail' (spec) | 'fixed_bars' (isolation)
+    "fixed_hold_bars":    0,     # 'fixed_bars': exit at close after N bars
 }

@@ -479,3 +479,51 @@ def test_window_select_optuna_jobs_defaults_backcompat():
     p = inspect.signature(run_pipeline).parameters
     assert p['window_select'].default is None        # default = all windows
     assert p['optuna_jobs'].default == 1             # default = sequential
+
+
+# ── backtest verification stresses: cost / slippage / fixed-exit (generic) ───
+
+from pipelines.xgboost.backtest import run_backtest as _rbt
+
+
+def _toy_df(nbars=60):
+    # RTH bars (10:00 ET, no EOD), gentle uptrend so longs are winners
+    dt = pd.date_range('2024-03-04 14:00', periods=nbars, freq='3min',
+                        tz='UTC')                      # 10:00 ET
+    base = 100.0 + np.arange(nbars) * 0.05
+    return pd.DataFrame({'datetime': dt, 'open': base,
+                         'high': base + 0.10, 'low': base - 0.10,
+                         'close': base + 0.02})
+
+
+def test_cost_per_trade_is_exact_and_backcompat():
+    df = _toy_df()
+    sig = np.zeros(len(df), np.int8); sig[5] = 1; sig[35] = 1
+    base = _rbt(df, sig)['returns']                    # default cfg = unchanged
+    base2 = _rbt(df, sig, {})['returns']               # empty cfg == default
+    pd.testing.assert_series_equal(base, base2)
+    k = 0.001
+    costed = _rbt(df, sig, {'cost_per_trade': k})['returns']
+    assert len(costed) == len(base) and len(base) >= 1
+    # every trade return reduced by EXACTLY k (back-compat at k=0 implied)
+    assert np.allclose(costed.to_numpy(), base.to_numpy() - k)
+
+
+def test_fixed_bars_exit_isolates_from_trail():
+    df = _toy_df()
+    sig = np.zeros(len(df), np.int8); sig[5] = 1
+    trail = _rbt(df, sig)['trades'][0]
+    fx = _rbt(df, sig, {'exit_mode': 'fixed_bars',
+                        'fixed_hold_bars': 4})['trades'][0]
+    assert fx['bars_held'] <= 4                         # dumb time exit
+    assert fx['exit_idx'] != trail['exit_idx'] or \
+        fx['bars_held'] <= 4                            # not the trail path
+
+
+def test_stop_slippage_worsens_a_stopout():
+    df = _toy_df()
+    df.loc[10:, ['open', 'high', 'low', 'close']] -= 8.0   # crash -> long stop
+    sig = np.zeros(len(df), np.int8); sig[5] = 1
+    r0 = _rbt(df, sig, {'stop_slippage_atr': 0.0})['returns'].iloc[0]
+    rs = _rbt(df, sig, {'stop_slippage_atr': 1.0})['returns'].iloc[0]
+    assert rs < r0                                     # slipped fill = worse

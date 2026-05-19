@@ -78,6 +78,10 @@ def run_backtest(df: pd.DataFrame, signals: np.ndarray,
         trail_on = False
         cfg_run = dict(cfg, atr_rs_entry=atr_e)
 
+        slip = cfg["stop_slippage_atr"] * atr_e   # stop fills worse by this
+        fixed = cfg["exit_mode"] == "fixed_bars"
+        hb = cfg["fixed_hold_bars"]
+
         exit_px = exit_idx = None
         held = 0
         for j in range(e_idx, n):
@@ -88,24 +92,35 @@ def run_backtest(df: pd.DataFrame, signals: np.ndarray,
             if eod[j]:
                 exit_px, exit_idx = c[j], j
                 break
-            # 3) stop check BEFORE trail update (pessimistic intrabar)
+            # 3) stop check BEFORE trail update (pessimistic intrabar);
+            #    stop fills WORSE than sl by `slip` (0 = exact, spec default)
             if is_long:
                 if l[j] <= sl:
-                    exit_px, exit_idx = sl, j
+                    exit_px, exit_idx = sl - slip, j
                     break
+            else:
+                if h[j] >= sl:
+                    exit_px, exit_idx = sl + slip, j
+                    break
+            # fixed-exit isolation: dumb time exit, NO trail (initial stop
+            # still bounds loss above). Isolates whether the ENTRY (not the
+            # clever trail) carries the edge.
+            if fixed:
+                if held >= hb:
+                    exit_px, exit_idx = c[j], j
+                    break
+                continue
+            if is_long:
                 hwm, sl, trail_on = update_ms_hybrid_long(
                     bar, entry, hwm, sl, trail_on, held, 1, cfg_run)
             else:
-                if h[j] >= sl:
-                    exit_px, exit_idx = sl, j
-                    break
                 lwm, sl, trail_on = update_ms_hybrid_short(
                     bar, entry, lwm, sl, trail_on, held, 1, cfg_run)
         if exit_px is None:                       # ran out of data
             exit_px, exit_idx = c[n - 1], n - 1
 
         dirn = 1 if is_long else -1
-        ret = dirn * (exit_px - entry) / entry
+        ret = dirn * (exit_px - entry) / entry - cfg["cost_per_trade"]
         trades.append({'entry_idx': e_idx, 'exit_idx': exit_idx,
                        'dir': dirn, 'entry': entry, 'exit': exit_px,
                        'ret': ret, 'bars_held': exit_idx - e_idx})

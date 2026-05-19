@@ -47,7 +47,8 @@ def _fit_xgb(params, Xf, yf, device: str = 'cpu'):
     return m
 
 
-def _score_val_blocks(model, val_blocks: list, ppy: int) -> float:
+def _score_val_blocks(model, val_blocks: list, ppy: int,
+                      bt_cfg: dict | None = None) -> float:
     """Score the Optuna objective on PER-TICKER val backtests.
 
     Pooled training mixes tickers, but a backtest simulates ONE sequential
@@ -61,14 +62,15 @@ def _score_val_blocks(model, val_blocks: list, ppy: int) -> float:
         ev_sig = _signals_from_proba(proba, CONF_THRESHOLD)
         sig = np.zeros(len(b['ohlcv']), dtype=np.int8)
         sig[b['ev_pos']] = ev_sig                  # signals only at event rows
-        rets.append(run_backtest(b['ohlcv'], sig)['returns'])
+        rets.append(run_backtest(b['ohlcv'], sig, bt_cfg)['returns'])
     if not rets:
         return 0.0
     return combined_objective(pd.concat(rets, ignore_index=True), ppy)
 
 
 def tune(Xf, yf, val_blocks: list, timeframe: str, n_trials: int = 300,
-         seed: int = 42, device: str = 'cpu', n_jobs: int = 1) -> dict:
+         seed: int = 42, device: str = 'cpu', n_jobs: int = 1,
+         backtest_config: dict | None = None) -> dict:
     """Xf/yf: pooled train-fit EVENT-row features/labels. val_blocks: list of
     {'Xv': event-row features, 'ohlcv': full val bar series, 'ev_pos': int
     positions of the event rows within ohlcv} — one per ticker. Returns the
@@ -92,7 +94,7 @@ def tune(Xf, yf, val_blocks: list, timeframe: str, n_trials: int = 300,
                                            *_BOUNDS["n_estimators"]),
         )
         model = _fit_xgb(params, Xf, yf, device)
-        return _score_val_blocks(model, val_blocks, ppy)
+        return _score_val_blocks(model, val_blocks, ppy, backtest_config)
 
     study = optuna.create_study(
         direction="maximize",

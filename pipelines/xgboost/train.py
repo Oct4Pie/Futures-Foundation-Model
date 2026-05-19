@@ -104,7 +104,8 @@ def run_pipeline(labeler: XGBStrategyLabeler, timeframe: str,
                  device: str = 'cpu',
                  instruments: str | list | None = None,
                  window_select: set | None = None,
-                 optuna_jobs: int = 1) -> dict:
+                 optuna_jobs: int = 1,
+                 backtest_config: dict | None = None) -> dict:
     """End-to-end run for ANY strategy labeler (finetune-parity API):
 
         run_pipeline(MyLabeler(bar_minutes=5), '5m', 'ES', trials=300)
@@ -250,7 +251,8 @@ def run_pipeline(labeler: XGBStrategyLabeler, timeframe: str,
               f'({len(data)}tk) — tuning...', flush=True)
 
         best = tune(Xf, yf, val_blocks, timeframe, n_trials=trials,
-                    device=device, n_jobs=optuna_jobs)
+                    device=device, n_jobs=optuna_jobs,
+                    backtest_config=backtest_config)
 
         import xgboost as xgb
         model = xgb.XGBClassifier(
@@ -272,7 +274,7 @@ def run_pipeline(labeler: XGBStrategyLabeler, timeframe: str,
                                        CONF_THRESHOLD)
             sig = np.zeros(len(b['ohlcv']), dtype=np.int8)
             sig[b['ev_pos']] = esig
-            r = run_backtest(b['ohlcv'], sig)['returns']
+            r = run_backtest(b['ohlcv'], sig, backtest_config)['returns']
             mret.append(r)
             per_tk.setdefault(b['inst'], []).append(r)   # pooling-harm check
         if not mret:
