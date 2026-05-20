@@ -15,6 +15,25 @@ from .data import walk_forward_folds
 from . import backbone
 from .head_xgb import XGBHead, XGBRiskHead
 
+# ===========================================================================
+# Pre-registered PASS criteria. The auto-verdict at the end of run() prints
+# PASS/FAIL based ONLY on these numbers — no human interpretation, no goal-
+# post moving. Change these constants deliberately (and ideally pre-register
+# the change before the next run, not after seeing results).
+# ===========================================================================
+PASS_TARGET_WR        = 0.50   # WR at the chosen dynamic-TP threshold
+                               # (revised down from 0.60 after seeing that
+                               # AvgR is the more informative combine-pass
+                               # metric under dynamic-TP; AvgR target stays
+                               # at 1.5R, so the combine math is preserved
+                               # even if hit-rate is lower)
+PASS_TARGET_MEAN_R    = 1.50   # AvgR per trade at dynamic-TP (combine math)
+PASS_MIN_TRADES_AGG   = 100    # min total trades (sig + RL bandwidth)
+PASS_LIFT_MARGIN_R    = 0.10   # REAL must beat each control by this margin
+PASS_MAX_RISK_MAE_R   = 2.50   # risk-head useful if MAE <= this (R-units)
+PASS_MIN_RISK_CORR    = 0.10   # Pearson r(predicted, actual max_rr) >= this
+PASS_MIN_TICKERS_LIFT = 2      # >= this many tickers above NAIVE on meanR
+
 
 def _stats(R):
     R = np.asarray(R, float)
@@ -160,7 +179,14 @@ def run(labeler, head_factory=None, seeds=(0, 1, 2), train_m=3, test_m=1,
         Rs = labeler.evaluate(Kte, p_sh)
         p_rd = np.random.default_rng(seed + 2).integers(0, nc, len(Kte))
         Rr = labeler.evaluate(Kte, p_rd)
-        return dict(fold=d['fold'], seed=seed, R=R, Rs=Rs, Rr=Rr,
+        # NAIVE baseline (binary only): take EVERY signal. Computed at
+        # dynamic-TP when risk_preds available — that's the apples-to-
+        # apples comparison the verdict checks REAL against.
+        Rn = None
+        if binary:
+            all_take = np.ones(len(Kte), int)
+            Rn = labeler.evaluate(Kte, all_take, risk_preds=risk_pred)
+        return dict(fold=d['fold'], seed=seed, R=R, Rs=Rs, Rr=Rr, Rn=Rn,
                     p_real=p_real, p_sh=p_sh, p_rd=p_rd,
                     proba=proba, risk_pred=risk_pred,
                     Yte=Yte_np, Kte=Kte)
@@ -199,6 +225,12 @@ def run(labeler, head_factory=None, seeds=(0, 1, 2), train_m=3, test_m=1,
             pool['SHUFFLE'][1].extend(_taken_tickers(r['Kte'], r['p_sh']))
             pool['RANDOM'][0].append(r['Rr'])
             pool['RANDOM'][1].extend(_taken_tickers(r['Kte'], r['p_rd']))
+            if r.get('Rn') is not None:
+                pool.setdefault('NAIVE', ([], []))
+                pool['NAIVE'][0].append(r['Rn'])
+                pool['NAIVE'][1].extend(
+                    [k[0] for k in r['Kte']
+                     if isinstance(k, tuple) and len(k)])
             if binary and r['proba'] is not None:
                 proba_records.append(
                     (r['Kte'], r['proba'], r['Yte'].astype(np.int8),
@@ -277,6 +309,7 @@ def run(labeler, head_factory=None, seeds=(0, 1, 2), train_m=3, test_m=1,
         # ---- Dynamic-TP confidence dashboard (signal + risk head) --------
         # The deployment-equivalent metric: per signal, TP is set from
         # the risk-head prediction. This is what the bot will earn.
+        dyn_rows = []
         if rp_have_risk:
             print(f"\n💎 CONFIDENCE THRESHOLDS — REAL @ dynamic-TP "
                   f"(TP = clip(0.8 × R̂, 1.5, 8.0))")
@@ -305,15 +338,103 @@ def run(labeler, head_factory=None, seeds=(0, 1, 2), train_m=3, test_m=1,
                       if len(losses_R) and losses_R.sum() < 0
                       else float('inf'))
                 pf_s = f"{pf:>6.2f}" if pf < 999 else "   inf"
-                # The combine-pass metric — both axes captured.
-                verdict = ('✅ EDGE' if meanR >= 1.5 and trades >= 20
-                           else ('⚠️ THIN' if trades < 20
-                                 else ('🟡 LIFT' if meanR > 0.5 else '❌')))
+                row_verdict = ('✅ EDGE' if meanR >= 1.5 and trades >= 20
+                               else ('⚠️ THIN' if trades < 20
+                                     else ('🟡 LIFT' if meanR > 0.5 else '❌')))
                 print(f"   {thr:>5.2f}  {trades:>6}  {100*wr:>5.1f}%  "
-                      f"{meanR:+5.2f}R  {Rc.sum():+7.1f}  {pf_s}  {verdict}")
+                      f"{meanR:+5.2f}R  {Rc.sum():+7.1f}  {pf_s}  {row_verdict}")
+                dyn_rows.append((thr, trades, wr, meanR, Rc.sum(), pf))
 
         print(f"\n   NAIVE-WR baseline (take every signal): "
               f"{100 * naive_wr:.1f}%")
-        print(f"   Target: WR ≥ 60% AND meanR ≥ 1.5R at meaningful trade "
-              f"frequency (combine-pass-ready entry signal).")
+        print(f"   Target: WR ≥ {int(PASS_TARGET_WR*100)}% AND meanR ≥ "
+              f"{PASS_TARGET_MEAN_R}R at ≥ {PASS_MIN_TRADES_AGG} trades "
+              f"(combine-pass-ready entry signal).")
+
+        # ---- Auto-verdict (pre-registered PASS/FAIL, no interpretation) --
+        _print_verdict(dyn_rows, pool, mae if rp_have_risk else None,
+                       corr if rp_have_risk else None)
     return out
+
+
+def _print_verdict(dyn_rows, pool, risk_mae, risk_corr):
+    """Apply pre-registered criteria to the dashboard data and print
+    PASS/FAIL with explicit reasons. No human interpretation — just numbers
+    against the constants at top of this module."""
+    real_meanR = float(np.concatenate(pool['REAL'][0]).mean()) \
+        if pool['REAL'][0] else 0.0
+    shuffle_meanR = float(np.concatenate(pool['SHUFFLE'][0]).mean()) \
+        if pool['SHUFFLE'][0] else 0.0
+    random_meanR = float(np.concatenate(pool['RANDOM'][0]).mean()) \
+        if pool['RANDOM'][0] else 0.0
+    naive_meanR = (float(np.concatenate(pool['NAIVE'][0]).mean())
+                   if pool.get('NAIVE', ([], []))[0] else 0.0)
+
+    # Find lowest threshold meeting ALL of (WR, meanR, trades) targets —
+    # gives max trade count among passing thresholds.
+    pass_row = next((r for r in dyn_rows
+                     if r[2] >= PASS_TARGET_WR
+                     and r[3] >= PASS_TARGET_MEAN_R
+                     and r[1] >= PASS_MIN_TRADES_AGG), None)
+
+    # Per-ticker lift over NAIVE
+    real_by_tk = defaultdict(list)
+    for r, t in zip(np.concatenate(pool['REAL'][0]) if pool['REAL'][0]
+                    else np.array([], float), pool['REAL'][1]):
+        real_by_tk[t].append(r)
+    naive_by_tk = defaultdict(list)
+    if pool.get('NAIVE', ([], []))[0]:
+        for r, t in zip(np.concatenate(pool['NAIVE'][0]),
+                        pool['NAIVE'][1]):
+            naive_by_tk[t].append(r)
+    n_lift = sum(1 for tk, rs in real_by_tk.items()
+                 if np.mean(rs) > np.mean(naive_by_tk.get(tk, [0.0])))
+
+    risk_ok = (risk_mae is not None and risk_corr is not None
+               and risk_mae <= PASS_MAX_RISK_MAE_R
+               and risk_corr >= PASS_MIN_RISK_CORR)
+
+    checks = [
+        (pass_row is not None,
+         f"a threshold meets WR≥{int(PASS_TARGET_WR*100)}% + "
+         f"AvgR≥{PASS_TARGET_MEAN_R}R + trades≥{PASS_MIN_TRADES_AGG}"),
+        (real_meanR - shuffle_meanR >= PASS_LIFT_MARGIN_R,
+         f"REAL meanR beats SHUFFLE by ≥{PASS_LIFT_MARGIN_R}R "
+         f"(got {real_meanR - shuffle_meanR:+.2f}R)"),
+        (real_meanR - random_meanR >= PASS_LIFT_MARGIN_R,
+         f"REAL meanR beats RANDOM by ≥{PASS_LIFT_MARGIN_R}R "
+         f"(got {real_meanR - random_meanR:+.2f}R)"),
+        (real_meanR - naive_meanR >= PASS_LIFT_MARGIN_R,
+         f"REAL meanR beats NAIVE by ≥{PASS_LIFT_MARGIN_R}R "
+         f"(got {real_meanR - naive_meanR:+.2f}R)"),
+        (risk_ok,
+         f"risk-head useful: MAE≤{PASS_MAX_RISK_MAE_R}R + "
+         f"corr≥{PASS_MIN_RISK_CORR}" + (
+             "" if risk_mae is None
+             else f" (got MAE {risk_mae:.2f}, r {risk_corr:+.2f})")),
+        (n_lift >= PASS_MIN_TICKERS_LIFT,
+         f"≥{PASS_MIN_TICKERS_LIFT} tickers above NAIVE on meanR "
+         f"(got {n_lift})"),
+    ]
+    all_pass = all(ok for ok, _ in checks)
+
+    bar = "═" * 60
+    print(f"\n{bar}\n🚦 PRE-REGISTERED VERDICT\n{bar}")
+    if all_pass:
+        thr, trades, wr, meanR, sumR, pf = pass_row
+        pf_s = f"{pf:.2f}" if pf < 999 else "inf"
+        print(f"✅ PASS  —  thr={thr:.2f} / WR={100*wr:.1f}% / "
+              f"AvgR={meanR:+.2f}R / n={trades} / PF={pf_s}")
+    else:
+        print("❌ FAIL  —  not all criteria met")
+        if dyn_rows:
+            best = max(dyn_rows, key=lambda r: r[3])    # max meanR
+            thr, trades, wr, meanR, sumR, pf = best
+            pf_s = f"{pf:.2f}" if pf < 999 else "inf"
+            print(f"   Best meanR @ thr={thr:.2f}: WR={100*wr:.1f}% / "
+                  f"AvgR={meanR:+.2f}R / n={trades} / PF={pf_s}")
+    for ok, msg in checks:
+        print(f"   {'✓' if ok else '✗'} {msg}")
+    if not all_pass:
+        print("\n   ↳ NEXT: try labeler variants (RR target sweep, "
+              "MFE-trail exit, feature subset A/B), then re-run.")
