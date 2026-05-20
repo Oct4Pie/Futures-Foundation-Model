@@ -91,6 +91,10 @@ def run(labeler, head_factory=None, seeds=(0, 1, 2), train_m=3, test_m=1,
     REAL, AND (binary labelers only) a WR-by-confidence-threshold sweep
     — the entry-signal calibration test for downstream RL/account
     management. Returns the per-(fold,seed) records."""
+    # Stamp the active backbone BEFORE any work — surfaces a wiring
+    # gap (fine-tuned ckpt sitting unused, CHRONOS_FT_CKPT not exported)
+    # at run-START, not after we've burnt 15 min on the wrong backbone.
+    backbone.stamp_active_source(context='walk-forward eval')
     head_factory = head_factory or (lambda nc: XGBHead(nc))
     binary = labeler.n_classes == 2
     out = []

@@ -62,6 +62,11 @@ def train(labeler, *, holdout_months: int = 1, seed: int = 0,
                     pairs with the n_estimators bump.
     output_path     explicit joblib path; default is auto-named in CWD.
     """
+    # Stamp the active backbone BEFORE any work — production training
+    # bakes the backbone choice into the joblib bundle; surfacing it at
+    # run-START prevents the 2026-05-19 wiring gap (fine-tuned ckpt
+    # silently ignored because CHRONOS_FT_CKPT was unset).
+    backbone.stamp_active_source(context='production training')
     cal = labeler.calendar()
     cal_min = pd.Timestamp(cal['timestamp'].min())
     cal_max = pd.Timestamp(cal['timestamp'].max())

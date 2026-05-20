@@ -7,6 +7,7 @@ XGBoost) must stay torch-free. The pretrained-load / pool / fresh_model
 helpers below are torch and used ONLY inside the subprocess worker or the
 legacy in-process NN fine-tune path — never by the XGBoost eval parent.
 """
+import os
 from pathlib import Path
 
 import numpy as np
@@ -15,6 +16,65 @@ MODEL = 'amazon/chronos-bolt-tiny'
 D_MODEL = 256                          # bolt-tiny (torch-free constant)
 _PIPE = None
 _PRISTINE = None                       # cloned pretrained state_dict
+
+
+def active_source() -> str:
+    """Resolve which Chronos checkpoint embed() will load. Parent-safe
+    (no torch import). Returns the explicit CHRONOS_FT_CKPT path if set,
+    else the frozen HF model name."""
+    return os.environ.get('CHRONOS_FT_CKPT') or MODEL
+
+
+def _find_unused_finetunes(root: Path) -> list:
+    """Scan temp/ for unused fine-tune checkpoints on disk. Returns paths
+    of any directory containing model.safetensors under the canonical
+    fine-tune output tree. Used by stamp_active_source() to warn when a
+    fine-tune exists but is silently ignored (the 2026-05-19 wiring gap)."""
+    found = []
+    for pat in ('temp/chronos_*_ft/out/run-*/checkpoint-final',
+                'temp/chronos_*_ft/out/run-*/checkpoint-[0-9]*'):
+        for p in root.glob(pat):
+            if (p / 'model.safetensors').exists():
+                found.append(p)
+    return sorted(set(found))
+
+
+def stamp_active_source(context: str = '') -> str:
+    """Loud one-line stamp of which backbone embed() will load. Call at
+    the start of every training/eval entry-point so a wiring gap (env
+    var unset, fine-tuned ckpt sitting unused) is impossible to miss.
+
+    Also scans temp/ for unused fine-tune checkpoints — if one exists
+    but CHRONOS_FT_CKPT is unset, prints the exact export command. This
+    is the assumption-vs-reality gap that bit us on 2026-05-19."""
+    src = active_source()
+    # HF model ids contain '/' too ('amazon/chronos-bolt-tiny'), so '/' alone
+    # is not a "local" signal. Use absolute-path OR filesystem-exists.
+    is_local = os.path.isabs(src) or os.path.exists(src)
+    tag = '🧪 FINE-TUNED (local)' if is_local else '❄️  FROZEN (vanilla HF)'
+    ctx = f" [{context}]" if context else ''
+    print(f"\n{'='*72}")
+    print(f"  CHRONOS BACKBONE{ctx}: {tag}")
+    print(f"  source: {src}")
+    if not is_local:
+        root = Path(__file__).resolve().parents[2]
+        candidates = _find_unused_finetunes(root)
+        if candidates:
+            print(f"\n  ⚠ Found {len(candidates)} unused fine-tune "
+                  f"checkpoint(s) on disk:")
+            for p in candidates[:3]:
+                try:
+                    rel = p.relative_to(root)
+                except ValueError:
+                    rel = p
+                print(f"    - {rel}")
+            print(f"  ⚠ CHRONOS_FT_CKPT is UNSET — vanilla backbone will "
+                  f"be used.")
+            print(f"  ⚠ To use the fine-tuned backbone instead, abort and "
+                  f"export first:")
+            print(f"    export CHRONOS_FT_CKPT={candidates[-1]}")
+    print(f"{'='*72}\n", flush=True)
+    return src
 
 
 def pipeline():

@@ -85,8 +85,19 @@ def run(months=6, steps=200, smoke=False, tickers=None, tfs=None):
         return None
     runs = sorted((work / 'out').glob('run-*'))
     ckpt = runs[-1] if runs else (work / 'out')
-    print(f"DONE — fine-tuned checkpoint: {ckpt}")
-    return ckpt
+    final = ckpt / 'checkpoint-final'
+    target = final if final.exists() else ckpt
+    print(f"\nDONE — fine-tuned checkpoint: {target}")
+    # ⚠ Wiring gap from 2026-05-19: downstream training does NOT auto-pick
+    # up the fine-tuned checkpoint. The user must export CHRONOS_FT_CKPT
+    # before any walk-forward / production run. Print the exact command so
+    # nobody has to remember it.
+    print(f"\n  ⚠ To actually USE this checkpoint downstream, export the "
+          f"env var BEFORE the next walk-forward / production run:")
+    print(f"\n    export CHRONOS_FT_CKPT={target}\n")
+    print(f"  ⚠ Without this export, downstream scripts silently fall back "
+          f"to the frozen vanilla `amazon/chronos-bolt-tiny`.")
+    return target
 
 
 if __name__ == '__main__':

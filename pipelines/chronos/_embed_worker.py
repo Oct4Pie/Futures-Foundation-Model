@@ -23,7 +23,11 @@ def main(inp, outp, batch):
     from chronos import BaseChronosPipeline
 
     from . import backbone
-    src = os.environ.get('CHRONOS_FT_CKPT') or backbone.MODEL
+    src = backbone.active_source()
+    is_local = os.path.isabs(src) or os.path.exists(src)
+    tag = 'FINE-TUNED' if is_local else 'FROZEN-VANILLA'
+    print(f"[chronos worker] loading {tag} backbone: {src}",
+          flush=True, file=sys.stderr)
     pipe = BaseChronosPipeline.from_pretrained(
         src, device_map='cpu', dtype=torch.float32)
     X = np.load(inp).astype(np.float32)
