@@ -419,13 +419,13 @@ class MyLabeler:
         ...
 ```
 
+```python
+from pipelines.chronos import evaluate as ev, produce
+ev.run(MyLabeler())                                      # walk-forward + auto-verdict
+produce.train(MyLabeler(), holdout_months=1)             # production bundle
+```
+
 ```bash
-# Walk-forward evaluator — auto-verdict prints PASS/FAIL on 6 pre-registered checks
-python3 colabs/my_strategy_chronos.py
-
-# Production training (1-month holdout, n_estimators=600, max_depth=5)
-python3 colabs/my_strategy_chronos_produce.py --holdout-months 1
-
 # ONNX export + 3-layer verify (requires: pip install onnxmltools skl2onnx)
 python3 -m pipelines.chronos.export_onnx <bundle.joblib>
 ```
@@ -451,11 +451,7 @@ The fine-tune output → downstream training pipeline is **not** auto-wired. Eve
 - **`_ft/run_ft.py`** — on fine-tune completion, prints the exact `export CHRONOS_FT_CKPT=...` command the user must run before the next downstream call.
 - **`bundle['chronos_ckpt']`** — production joblib bundle records which backbone was actually baked in. Always inspect post-train to confirm before shipping.
 
-### Strategy IP boundary
-
-Same as XGBoost / RL pipelines: the public repo holds only generic machinery. Concrete strategies (e.g. SuperTrend selection, CRT meta-label) are private plug-ins under `colabs/` (gitignored; live in the private strategies repo). The labelers conform to the duck-typed `StrategyLabeler` protocol — `evaluate.run()` and `produce.train()` are strategy-agnostic.
-
-Build artifacts (`*.joblib`, `*.onnx`) are also gitignored — distributed to consuming repos out-of-band (the bot loads from its own model storage). Extra deps (not in `requirements.txt`): `chronos-forecasting` (backbone), `xgboost>=2.0` (already in deps), `onnxmltools` + `skl2onnx` (only when running the ONNX export path).
+Extra deps (not in `requirements.txt`): `chronos-forecasting` (backbone), `xgboost>=2.0` (already in deps), `onnxmltools` + `skl2onnx` (only when running the ONNX export path).
 
 ---
 
