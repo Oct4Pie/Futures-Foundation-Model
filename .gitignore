@@ -234,4 +234,7 @@ scripts/trade_monitor.py
 .claude/
 
 # GCP — contains project ID and machine-specific config
-gcp/_poc_resolved.yaml
+gcp/
+
+# Runtime-generated FT config (rewritten on each run_ft invocation)
+_poc_resolved.yaml
