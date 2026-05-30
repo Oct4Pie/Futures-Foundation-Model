@@ -244,3 +244,7 @@ gcp/
 
 # Runtime-generated FT config (rewritten on each run_ft invocation)
 _poc_resolved.yaml
+
+# Chronos model artifacts (regenerated from config + code; ONNX is the deploy target)
+configs/*.joblib
+configs/*.onnx
