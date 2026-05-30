@@ -236,6 +236,9 @@ scripts/trade_monitor.py
 # Cross-repo handoff docs (kept local — shared via channel that fits, not git)
 HANDOFF_TO_ALGOTRADER.md
 
+# Discord / external post drafts (kept local — not repo docs)
+DISCORD_QUICKSTART.md
+
 # GCP — contains project ID and machine-specific config
 gcp/
 
