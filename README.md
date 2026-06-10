@@ -22,17 +22,34 @@ This architecture is **proven live**: the production SuperTrend selection model 
 
 ### What the foundation actually knows (measured)
 
-We probe the frozen embedding with XGBoost heads against five forward-looking targets, with pre-registered gates, a shuffled-label control (leak detector), and a **trivial baseline** (8 trailing summary stats — "does the embedding know more than cheap features?"). Full pre-2023 corpus, 6 tickers × {3min, 5min}, ~236k decision bars, validated on held-out late-2022:
+Every context target is probed with pre-registered gates, a shuffled-label control (leak detector), and a **trivial baseline** (8 trailing summary stats — "does the foundation know more than cheap features?"). Full pre-2023 corpus, 6 tickers × {3min, 5min}, ~236k decision bars. The decisive finding (FFM 2.1): the **enriched input recipe — `[Bolt embedding | 68-feature library]`** — beats both the embedding alone and the trivial adversary on every shipped head; close-only context was the binding constraint:
 
-| Forward target (close-only) | Embedding | Shuffle | Trivial stats | Verdict |
+| Forward target | Emb only | Trivial | **Emb + 68 features** | Verdict |
 |---|---|---|---|---|
-| Realized-vol percentile (10-bar fwd) | **r = +0.52** | +0.01 | +0.41 | ✅ knows it, **beyond trivial** |
-| Vol expansion >1.5× median (20-bar fwd) | **AUC 0.78** | 0.51 | 0.70 | ✅ knows it, **beyond trivial** |
-| Structure: HH/HL vs LH/LL (20-bar fwd) | AUC 0.79 | 0.49 | 0.81 | 🟡 knows it; trivial matches |
-| Range position of fwd close (10-bar) | r = +0.48 | +0.01 | +0.53 | 🟡 knows it; trivial matches |
-| Direction: z-scored fwd return (20-bar) | r = +0.03 | +0.01 | +0.07 | ❌ does not know |
+| Realized-vol percentile (10-bar fwd) | r .52 | .41 | **r .64** | ✅ ships |
+| Vol expansion >1.5× median (20-bar fwd) | AUC .78 | .70 | **AUC .82** | ✅ ships |
+| Quiet persists (on quiet bars, 20-bar) | AUC .69 | .59 | **AUC .74** | ✅ ships |
+| Structure: HH/HL vs LL/LH (20-bar fwd) | AUC .79 | .81 | **AUC .82** | ✅ ships (beats trivial only when enriched) |
+| Range-bound (10-bar fwd) | AUC .59 | .67 | **AUC .70** | ✅ ships |
+| Trendiness: fwd efficiency ratio | r .12 | .12 | **r .15** | ✅ ships (weak — a tilt, not a trigger) |
+| Direction: z-scored fwd return | r .03 | .07 | r .10 | 🟡 ships flagged marginal |
+| Range position of fwd close | r .48 | .53 | .53 | ❌ removed — never beats trivial |
+| Trend START (chop→trend transition) | .52 | .51 | .53 | ❌ removed — unforecastable by anything |
 
-The division of labor this implies is exactly the design: the foundation understands **conditions** (volatility regime, expansion risk, structural state); the strategy heads supply the **edge** (signal selection, direction, sizing). Probe script: `scripts/probe_context_heads.py`; results JSON in `temp/`.
+The division of labor this implies is the design: the foundation understands **conditions** (volatility regime, expansion risk, structure, persistence); the strategy supplies the **edge** (signal selection, direction, sizing). Probe harness: `scripts/probe_context_heads.py` (`--ff68` for the input-arm comparison).
+
+### Context Heads — the per-candle market readout (FFM 2.1)
+
+`futures_foundation.context.ContextHeads` packages that knowledge as **seven named, calibrated fields at any bar** — for entry confirmation, exit/management context, RL observations, or fusion into any downstream model:
+
+```python
+from futures_foundation.context import ContextHeads
+
+heads = ContextHeads.load('heads_<date>.joblib')        # or $CONTEXT_HEADS_BUNDLE
+ctx = heads.context_at(ohlcv_df, bar_indices, 'ES')     # DataFrame: 7 ctx_* columns
+```
+
+Certified out-of-sample on 80,786 bars (2023–2026) the heads never saw: calibration is monotone — `ctx_vol_expansion` deciles run 1%→90% realized, `ctx_structure` 10%→92%, `ctx_quiet_persist` 58%→99% — and a 7-feature regime classifier scores 52.2% vs a 30.2% majority baseline OOS (`scripts/demo_regime_model.py`). Heads are trained once on pre-2023 data (`scripts/train_context_heads.py`), frozen, and leak-guarded: downstream training that consumes `ctx_*` is restricted to ≥ 2023 by the fusion seam. Measured honestly: fusing these into a mature strategy's *entry selection* adds nothing (the selection model's embedding already contains it — four independent A/Bs) — their value is for consumers that don't see embeddings.
 
 ### Why this architecture
 
@@ -214,6 +231,7 @@ Futures-Foundation-Model/
 │   ├── labels.py                 # Legacy forward-looking label generation
 │   ├── prepare.py                # prepare_data: raw CSVs → features+labels parquet
 │   ├── primitives/               # Indicators, barriers, rolling, session, detection
+│   ├── context.py                # ★ ContextHeads — 7 calibrated ctx_* fields per candle (FFM 2.1)
 │   ├── chronos/                  # ★ Foundation training/eval/deploy harness (see above)
 │   └── finetune/                 # Torch-free framework survivors
 │       ├── base.py               # StrategyLabeler ABC (final run() = TP≥SL triple barrier)
@@ -226,9 +244,11 @@ Futures-Foundation-Model/
 │   ├── xgboost/                  # Standalone direction classifier on 68 features
 │   └── rl/                       # Generic PPO walk-forward pipeline
 ├── scripts/
-│   └── probe_context_heads.py    # Phase-0 capability probe (labels + gates + controls)
+│   ├── probe_context_heads.py    # Capability probe (labels × input arms × gates/controls)
+│   ├── train_context_heads.py    # Trains the production enriched heads bundle
+│   └── demo_regime_model.py      # OOS certification: calibration + regime model
 ├── docs/                         # Build specs + runbooks
-├── tests/                        # 436+ unit tests (pre-commit gated)
+├── tests/                        # 460+ unit tests (pre-commit gated; torch-free by contract)
 ├── data/                         # Raw OHLCV CSVs (gitignored)
 └── checkpoints/                  # Legacy FFM checkpoints (resolve at tag ffm-transformer-final)
 ```
@@ -239,6 +259,7 @@ Futures-Foundation-Model/
 
 | Version | Description |
 |---------|-------------|
+| **v2.1** | **Enriched context heads — the foundation's second input pillar.** Measured recipe (5-arm probe, 236k bars): heads on **`[Bolt embedding | 68-feature library]`** beat embedding-alone AND the trivial adversary on every shipped target — volume/orderflow/wicks/session/CRT/HTF were the missing inputs; close-only was the binding constraint. Ships 7 heads (`fwd_return`✱, `vol_expansion` .82, `volatility` r .64, `structure` .82 — beats trivial for the first time, `quiet_persist` .74, `trendiness` r .15✱, `range_bound` .69; ✱=weak/marginal, flagged). Removed: `range_pos` (never beats trivial), `trend_start` (trend initiation unforecastable from bars — measured). `context_at(df, idx, instrument)` consumes OHLCV; emb-only bundles back-compatible; chronos event-fusion seam refuses enriched bundles (entry fusion measured ineffective — 4 independent A/Bs: a mature strategy's selection head already contains bar-context). OOS-certified on 80,786 unseen bars: monotone calibration, regime model +22.0pts over baseline. 462 tests. |
 | **v2.0** | **Chronos-Bolt IS the foundation.** The from-scratch FFM transformer (model/dataset/pretrain/torch fine-tune trainer, ~6k lines) retired — preserved at tag `ffm-transformer-final`. The proven `pipelines/chronos` backbone seam promoted to **`futures_foundation.foundation`** (`embed_bars`, subprocess isolation, wiring-gap stamps); `import futures_foundation` is now torch-free by contract (tested). `finetune/` reduced to its torch-free, model-agnostic survivors (StrategyLabeler triple-barrier ABC, run_labeling, FoldHealthMonitor, reporting, realized-R economics); `prepare_data` rescued to `futures_foundation.prepare`. **Phase-0 capability probe** (`scripts/probe_context_heads.py`): frozen Bolt embeddings know future volatility regime beyond trivial features (vol percentile r=0.52 vs 0.41 trivial; expansion AUC 0.78 vs 0.70), know structure/range at trivial-matching level, don't know direction — with shuffle controls clean. 436+ tests. |
 | **v1.5** | `pipelines/chronos` — frozen Chronos backbone + XGBoost head pipeline: walk-forward batch-embed evaluator with REAL/SHUFFLE/RANDOM/NAIVE controls + 6-check pre-registered auto-verdict; `produce.py` production bundles; `export_onnx.py` 3-file export with 3-layer verify; `XGBRiskHead` log1p dynamic-TP; backbone wiring-gap guards (`stamp_active_source`). |
 | **v1.4** | `pipelines/rl` — generic PPO walk-forward pipeline (SingleTradeEnv, causal-parity harness, shuffle + multi-seed verdicts, `shape_reward` IP seam). |
@@ -251,13 +272,15 @@ Futures-Foundation-Model/
 ## Roadmap
 
 - [x] Chronos-Bolt as the foundation (seam promoted, torch stack retired, torch-free import contract)
-- [x] Phase-0 capability probe — measured what the frozen embedding knows (vol regime ✅ beyond trivial)
+- [x] Capability probes — measured what the foundation knows, per input recipe (5 arms, gates + shuffle + trivial adversary)
 - [x] Bolt domain-adaptation fine-tune + A/B harness (verdict: vanilla wins for selection — stay frozen)
-- [ ] **Context heads** — promote probe labels into the library; expose `ctx_*` features (volatility pair first) as named handles
-- [ ] **Fusion A/B on the honest ruler** — pre-registered: heads adopt only if ≥ +0.10R over the embedding-only baseline at comparable trade count
+- [x] **Context heads (FFM 2.1)** — 7 calibrated `ctx_*` fields per candle on the enriched `[emb | 68-feature]` recipe, OOS-certified
+- [x] Entry-fusion A/Bs on the honest ruler — verdict: no lift for mature strategies (selection heads already contain bar context); heads target consumers without embeddings
+- [x] Closed levers, with proofs: trend-start prediction, range-position head, backbone capacity scaling, per-trade magnitude (risk ladder)
+- [ ] First ctx consumers, pre-registered A/Bs: RL exit observations; new strategies built with context from day one
+- [ ] Enriched HTF readout (1h/4h ctx for enriched bundles — emb-only bundles cover it today)
 - [ ] Single-file ONNX export (foundation + heads in one graph) for the bot
-- [ ] Additional strategies through the proven pipeline (the bar: beat live SuperTrend on the honest ruler)
-- [ ] Multivariate context / Chronos-2 (close-only is the foundation's current information boundary)
+- [ ] Multivariate context / Chronos-2 (next information rung beyond bars+features)
 
 ---
 
