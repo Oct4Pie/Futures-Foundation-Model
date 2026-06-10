@@ -1,8 +1,11 @@
-"""Train the production ContextHeads bundle on pre-cutoff foundation embeddings.
+"""Train the production ContextHeads bundle (FFM 2.1 enriched inputs).
 
-Reuses the Phase-0 probe's dataset machinery (same labels, same decision-bar
-sampling, same split) but fits `futures_foundation.context.ContextHeads`
-and saves a frozen joblib bundle with full metadata + the exact env line to
+Heads consume [Bolt embedding | 68-feature library] per the FF68 probe
+(temp/probe_ff68_full.json — emb+ff68 beat emb-only on every surviving
+head). Reuses the Phase-0 probe's dataset machinery (same labels, same
+decision-bar sampling, same split) but fits
+`futures_foundation.context.ContextHeads` on the hstacked matrix and
+saves a frozen joblib bundle with full metadata + the exact env line to
 activate it downstream.
 
 Leak discipline: trains ONLY on bars whose forward label window ends before
@@ -21,10 +24,13 @@ import subprocess
 import sys
 from pathlib import Path
 
+import numpy as np
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from futures_foundation.context import ContextHeads, HEADS_CUTOFF  # noqa: E402
+from futures_foundation.features import get_model_feature_columns  # noqa: E402
 from futures_foundation import foundation  # noqa: E402
 
 _spec = importlib.util.spec_from_file_location(
@@ -53,9 +59,12 @@ def main():
     print(f"[train] tickers={tickers} tfs={tfs} stride={stride} "
           f"trees={trees} cutoff={HEADS_CUTOFF.date()}")
 
-    C, labels, _T, ts = probe.build_dataset(tickers, tfs, stride)
-    print(f"[train] decision bars: {len(C):,}")
+    C, labels, _T, ts, F = probe.build_dataset(tickers, tfs, stride,
+                                               ff68=True)
+    print(f"[train] decision bars: {len(C):,}  "
+          f"ff68 features: {F.shape[1]}")
     E = probe.embed_chunked(C)
+    X = np.hstack([E, F])                      # enriched: [emb | ff68]
 
     tr = (ts < probe.VAL_START).to_numpy()
     va = ((ts >= probe.VAL_START) & (ts < HEADS_CUTOFF)).to_numpy()
@@ -63,8 +72,8 @@ def main():
           f"(val = {probe.VAL_START.date()} .. {HEADS_CUTOFF.date()})\n")
 
     heads = ContextHeads(seed=a.seed, n_estimators=trees)
-    heads.fit(E[tr], labels[tr].reset_index(drop=True),
-              E[va], labels[va].reset_index(drop=True))
+    heads.fit(X[tr], labels[tr].reset_index(drop=True),
+              X[va], labels[va].reset_index(drop=True))
 
     try:
         sha = subprocess.run(['git', 'rev-parse', '--short', 'HEAD'],
@@ -73,6 +82,7 @@ def main():
     except Exception:
         sha = 'unknown'
     heads.meta = dict(
+        inputs='emb+ff68', feature_cols=get_model_feature_columns(),
         cutoff=str(HEADS_CUTOFF), val_start=str(probe.VAL_START),
         train_span=(str(ts[tr].min()), str(ts[tr].max())),
         tickers=tickers, tfs=tfs, stride=stride, ctx=probe.CTX,
@@ -87,9 +97,13 @@ def main():
     path = heads.save(out)
 
     print(f"\n[train] active heads: {heads.active_names or 'NONE'}")
+    print(f"[train] input_dim: {heads.input_dim} "
+          f"(= {foundation.D_MODEL} emb + {F.shape[1]} ff68)")
     print(f"[train] bundle -> {path}")
-    print(f"\nTo activate downstream (evaluate.run / produce.train):")
-    print(f"  export CONTEXT_HEADS_BUNDLE={path}")
+    print("\nEnriched (emb+ff68) bundle — consume via "
+          "ContextHeads.context_at(df, idx, instrument).")
+    print("NOTE: the chronos event-fusion seam (fuse()) only has "
+          "embeddings and will REFUSE this bundle.")
 
 
 if __name__ == '__main__':

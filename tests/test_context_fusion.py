@@ -36,8 +36,9 @@ def _heads(n=2000):
         'vol_expansion': (E[:, 1] > 0).astype(float),
         'volatility': 1 / (1 + np.exp(-E[:, 2])),
         'structure': (E[:, 0] > 0).astype(float),
-        'range_pos': 1 / (1 + np.exp(-E[:, 1])),
-        'quiet_persist': (E[:, 2] > 0).astype(float)})
+        'quiet_persist': (E[:, 2] > 0).astype(float),
+        'trendiness': 1 / (1 + np.exp(-E[:, 1])),
+        'range_bound': (E[:, 0] < 0).astype(float)})
     cut = int(n * .8)
     return ContextHeads(seed=0, n_estimators=40).fit(
         E[:cut], lab.iloc[:cut], E[cut:], lab.iloc[cut:], verbose=False)
@@ -70,6 +71,17 @@ def test_fuse_arm_dims(heads):
     assert cf.fuse(E, None, heads, 'heads').shape == (10, n_ctx)       # arm D
     with pytest.raises(ValueError):
         cf.fuse(E, F, heads, 'bogus')
+
+
+def test_fuse_raises_on_enriched_bundle(heads):
+    """The event-fusion seam only has embeddings — an emb+ff68 bundle
+    must be refused loudly, never silently mis-fed."""
+    E = RNG.normal(0, 1, (5, D)).astype(np.float32)
+    enriched = ContextHeads(seed=0, n_estimators=40)
+    enriched.models, enriched.metrics = heads.models, heads.metrics
+    enriched.meta = {'inputs': 'emb+ff68'}
+    with pytest.raises(ValueError, match='emb\\+ff68'):
+        cf.fuse(E, None, enriched, 'both')
 
 
 # ---------------------------------------------------------------------------
@@ -173,9 +185,15 @@ def test_evaluate_run_default_off_unchanged(monkeypatch, capsys):
 def test_context_at_per_candle_readout(monkeypatch, heads):
     from futures_foundation import foundation
     monkeypatch.setattr(foundation, 'embed', _fake_embed)
-    close = 100 * np.exp(np.cumsum(RNG.normal(0, .002, 500)))
+    n = 500
+    close = 100 * np.exp(np.cumsum(RNG.normal(0, .002, n)))
+    ohlcv = pd.DataFrame({
+        'datetime': pd.date_range('2023-06-01', periods=n, freq='5min',
+                                  tz='UTC'),
+        'open': close, 'high': close * 1.001, 'low': close * 0.999,
+        'close': close, 'volume': np.full(n, 1000.0)})
     idx = [200, 300, 499]
-    df = heads.context_at(close, idx)
+    df = heads.context_at(ohlcv, idx, 'ES')   # emb-only bundle: emb alone
     assert list(df.index) == idx
     assert list(df.columns) == heads.active_names
     assert df.notna().all().all()

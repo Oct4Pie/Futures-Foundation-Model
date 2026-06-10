@@ -43,7 +43,7 @@ def test_all_heads_present_and_tail_nan(random_close):
     assert lab['vol_expansion'].iloc[-20:].isna().all()
     assert lab['volatility'].iloc[-10:].isna().all()
     assert lab['structure'].iloc[-20:].isna().all()
-    assert lab['range_pos'].iloc[-10:].isna().all()
+    assert lab['range_bound'].iloc[-10:].isna().all()
     # head of series (trailing windows unavailable) also NaN
     assert lab['fwd_return'].iloc[:49].isna().all()      # needs 50 obs of sigma
     # and there IS a populated middle
@@ -88,15 +88,6 @@ def test_structure_known_answer():
     assert flat.isna().all()                              # mixed = sentinel
 
 
-def test_range_pos_known_answer():
-    """Uptrend: close at t+10 sits above the trailing range -> clipped 1.
-    Downtrend -> clipped 0."""
-    up = probe.compute_labels(_series(np.arange(100, 100 + N)))['range_pos']
-    assert np.allclose(up.dropna(), 1.0)
-    dn = probe.compute_labels(_series(np.arange(100 + N, 100, -1)))['range_pos']
-    assert np.allclose(dn.dropna(), 0.0)
-
-
 def test_volatility_percentile_bounds_and_response(random_close):
     v = probe.compute_labels(random_close)['volatility'].dropna()
     assert ((v >= 0) & (v <= 1)).all()
@@ -135,7 +126,8 @@ def test_trivial_features_are_strictly_trailing():
 
 
 # ---------------------------------------------------------------------------
-# Candidate heads (trend/range/chop set) — known answers + conditionality
+# Trend/range/chop heads (promoted 2026-06-10, FF68 arm) — known answers +
+# conditionality
 # ---------------------------------------------------------------------------
 
 def test_trendiness_known_answer():

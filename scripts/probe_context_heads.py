@@ -62,7 +62,7 @@ HEADS = HEAD_SPECS + CANDIDATE_HEAD_SPECS
 
 # unconditional labels every decision bar must have (conditional labels
 # like quiet_persist are NaN by design on most bars — never row-filtered).
-REQUIRED_LABELS = ['fwd_return', 'vol_expansion', 'volatility', 'range_pos']
+REQUIRED_LABELS = ['fwd_return', 'vol_expansion', 'volatility']
 
 CTX = 128                    # bars per Bolt context (matches *_chronos labelers)
 VAL_START = pd.Timestamp('2022-11-01', tz='UTC')
@@ -91,17 +91,18 @@ def trivial_features(close: pd.Series) -> pd.DataFrame:
     return f
 
 
-def build_dataset(tickers, tfs, stride):
+def build_dataset(tickers, tfs, stride, ff68=False):
     """Per (ticker, tf): sample decision bars pre-cutoff, return contexts,
     labels, trivial features, timestamps."""
-    ctxs, labs, trivs, tss = [], [], [], []
+    ctxs, labs, trivs, tss, ffs = [], [], [], [], []
     for tk in tickers:
         for tf in tfs:
             path = ROOT / 'data' / f'{tk}_{tf}.csv'
             if not path.exists():
                 print(f"  [skip] {path.name} not found")
                 continue
-            df = pd.read_csv(path, usecols=['datetime', 'close'])
+            usecols = None if ff68 else ['datetime', 'close']
+            df = pd.read_csv(path, usecols=usecols)
             df['ts'] = pd.to_datetime(df['datetime'], utc=True)
             df = df.sort_values('ts').reset_index(drop=True)
             close = df['close'].astype(float)
@@ -127,6 +128,17 @@ def build_dataset(tickers, tfs, stride):
             labs.append(lab.iloc[idx].reset_index(drop=True))
             trivs.append(triv.iloc[idx].reset_index(drop=True))
             tss.append(ts.iloc[idx].reset_index(drop=True))
+            if ff68:
+                from futures_foundation.features import (
+                    derive_features, get_model_feature_columns)
+                t0 = time.time()
+                fdf = derive_features(df, tk)
+                cols = [c for c in get_model_feature_columns()
+                        if c in fdf.columns]
+                ffs.append(fdf[cols].iloc[idx].reset_index(drop=True)
+                           .to_numpy(np.float32))
+                print(f"    [ff68] {len(cols)} features "
+                      f"({time.time() - t0:.0f}s)")
             print(f"  [data] {tk}_{tf}: {len(idx):,} decision bars "
                   f"({ts.iloc[idx[0]].date()} -> {ts.iloc[idx[-1]].date()})")
     if not ctxs:
@@ -134,7 +146,8 @@ def build_dataset(tickers, tfs, stride):
     return (np.concatenate(ctxs),
             pd.concat(labs, ignore_index=True),
             pd.concat(trivs, ignore_index=True).to_numpy(np.float32),
-            pd.concat(tss, ignore_index=True))
+            pd.concat(tss, ignore_index=True),
+            np.concatenate(ffs) if ffs else None)
 
 
 def embed_chunked(contexts):
@@ -171,7 +184,7 @@ def _score(kind, model, X, y):
     return float(roc_auc_score(y, model.predict_proba(X)[:, 1]))
 
 
-def run_probes(E, T, labels, ts, seed, n_estimators):
+def run_probes(E, T, labels, ts, seed, n_estimators, F=None):
     tr = (ts < VAL_START).to_numpy()
     va = ((ts >= VAL_START) & (ts < HEADS_CUTOFF)).to_numpy()
     print(f"\n[split] train={tr.sum():,}  val={va.sum():,}  "
@@ -193,6 +206,21 @@ def run_probes(E, T, labels, ts, seed, n_estimators):
         t0 = time.time()
         emb = _score(kind, _fit_probe(kind, E[m_tr], ytr, seed,
                                       n_estimators), E[m_va], yva)
+        # COMBINED arm: embedding + trailing stats — the enriched-head
+        # candidate. Ships only if it beats BOTH single-source arms.
+        ET_tr = np.hstack([E[m_tr], T[m_tr]])
+        ET_va = np.hstack([E[m_va], T[m_va]])
+        comb = _score(kind, _fit_probe(kind, ET_tr, ytr, seed,
+                                       n_estimators), ET_va, yva)
+        ff = embff = None
+        if F is not None:
+            Fc = np.nan_to_num(F, copy=True)
+            ff = _score(kind, _fit_probe(kind, Fc[m_tr], ytr, seed,
+                                         n_estimators), Fc[m_va], yva)
+            EF_tr = np.hstack([E[m_tr], Fc[m_tr]])
+            EF_va = np.hstack([E[m_va], Fc[m_va]])
+            embff = _score(kind, _fit_probe(kind, EF_tr, ytr, seed,
+                                            n_estimators), EF_va, yva)
         ysh = rng.permutation(ytr)
         shuf = _score(kind, _fit_probe(kind, E[m_tr], ysh, seed,
                                        n_estimators), E[m_va], yva)
@@ -200,12 +228,18 @@ def run_probes(E, T, labels, ts, seed, n_estimators):
                                        n_estimators), T[m_va], yva)
         passed = emb > gate
         results[name] = dict(kind=kind, metric=metric, emb=emb, shuffle=shuf,
-                             trivial=triv, gate=gate, passed=bool(passed),
+                             trivial=triv, combined=comb, ff68=ff,
+                             emb_ff68=embff, gate=gate,
+                             passed=bool(passed),
                              n_train=int(m_tr.sum()), n_val=int(m_va.sum()))
         flag = '✅ PASS' if passed else '❌ FAIL'
         beats_triv = '> trivial' if emb > triv else '<= trivial'
+        both = '✚ COMBINED WINS' if comb > max(emb, triv) else ''
+        if ff is not None:
+            both += f"  FF68={ff:+.3f}  EMB+FF68={embff:+.3f}" 
         print(f"  [{name:<13}] {metric}: EMB={emb:+.3f}  SHUFFLE={shuf:+.3f} "
-              f" TRIVIAL={triv:+.3f}  gate>{gate}  {flag}  ({beats_triv}, "
+              f" TRIVIAL={triv:+.3f}  COMB={comb:+.3f}  gate>{gate}  {flag}  "
+              f"({beats_triv} {both}, "
               f"ntr={m_tr.sum():,} nva={m_va.sum():,}, "
               f"{time.time() - t0:.0f}s)")
     return results
@@ -220,6 +254,8 @@ def main():
     ap.add_argument('--stride', type=int, default=8)
     ap.add_argument('--trees', type=int, default=400)
     ap.add_argument('--seed', type=int, default=0)
+    ap.add_argument('--ff68', action='store_true',
+                    help='add the 68-feature library as head-input arms')
     ap.add_argument('--out', default=None,
                     help='JSON results path (default temp/probe_context_heads_<mode>.json)')
     a = ap.parse_args()
@@ -233,13 +269,13 @@ def main():
     print(f"[probe] tickers={tickers} tfs={tfs} stride={stride} "
           f"trees={trees} cutoff={HEADS_CUTOFF.date()}")
 
-    C, labels, T, ts = build_dataset(tickers, tfs, stride)
+    C, labels, T, ts, F = build_dataset(tickers, tfs, stride, ff68=a.ff68)
     print(f"[probe] total decision bars: {len(C):,}")
     E = embed_chunked(C)
     assert E.shape[0] == len(C), E.shape   # d_model varies by backbone
     np.nan_to_num(T, copy=False)   # XGBoost handles NaN, but keep parity
 
-    results = run_probes(E, T, labels, ts, a.seed, trees)
+    results = run_probes(E, T, labels, ts, a.seed, trees, F=F)
 
     n_pass = sum(r['passed'] for r in results.values())
     print(f"\n{'=' * 64}\n🚦 PROBE VERDICT: {n_pass}/{len(results)} heads "

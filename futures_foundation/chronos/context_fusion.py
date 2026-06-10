@@ -46,6 +46,12 @@ def resolve_heads(path=None, verbose=True):
         print(f"  CONTEXT HEADS: 🧠 ACTIVE")
         print(f"  source: {p}")
         print(f"  emits : {heads.active_names or '(none passed gate!)'}")
+        if heads.meta.get('inputs') == 'emb+ff68':
+            print(f"  ⚠️  ENRICHED BUNDLE (inputs=emb+ff68): NOT usable in "
+                  f"this event-fusion seam")
+            print(f"  ⚠️  (only embeddings exist here) — fuse() will raise. "
+                  f"Use ContextHeads.context_at,")
+            print(f"  ⚠️  or train an emb-only bundle for fusion.")
         if heads.meta:
             for k in ('cutoff', 'train_span', 'tickers', 'tfs', 'git_sha'):
                 if k in heads.meta:
@@ -61,6 +67,12 @@ def fuse(E, extra=None, heads=None, emb_mode='both'):
     if emb_mode not in EMB_MODES:
         raise ValueError(f"emb_mode must be one of {EMB_MODES}, "
                          f"got {emb_mode!r}")
+    if heads is not None and heads.meta.get('inputs') == 'emb+ff68':
+        raise ValueError(
+            "context-heads bundle was trained on inputs='emb+ff68' — the "
+            "chronos event-fusion seam only has embeddings, so enriched "
+            "heads cannot run here. Use ContextHeads.context_at for the "
+            "per-candle readout, or train an emb-only bundle for fusion.")
     E = np.asarray(E, np.float32)
     parts = []
     if heads is None or emb_mode in ('emb', 'both'):

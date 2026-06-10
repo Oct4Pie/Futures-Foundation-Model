@@ -1,10 +1,16 @@
 """Context heads — named market-understanding handles on the foundation.
 
-Five forward-looking, close-only context targets (close-only because the
-foundation's Bolt context is close-only — a head must be able to see the
-inputs that define its target), and `ContextHeads`: XGBoost probes trained
-ONCE on pre-cutoff foundation embeddings, frozen thereafter, exposing
-`ctx_*` features downstream models can fuse by name.
+Seven forward-looking context targets (close-only labels — a head must be
+able to see the inputs that define its target), and `ContextHeads`:
+XGBoost probes trained ONCE on pre-cutoff data, frozen thereafter,
+exposing `ctx_*` features downstream models can fuse by name.
+
+FFM 2.1 enriched inputs (2026-06-10, temp/probe_ff68_full.json): heads
+consume [Bolt embedding | 68-feature library] instead of the embedding
+alone — the EMB+FF68 arm beat the emb-only arm on every surviving head
+(e.g. vol_expansion AUC 0.824 vs 0.775, volatility r 0.636 vs 0.521,
+quiet_persist AUC 0.744 vs 0.693). Older emb-only bundles keep working
+via `meta['inputs']`/`input_dim` back-compat.
 
 Capability evidence (Phase-0 probe, full pre-2023 corpus, shuffle +
 trivial-baseline controls): the frozen embedding knows future VOLATILITY
@@ -40,33 +46,32 @@ GATE_REG_PEARSON = 0.05
 GATE_CLF_AUC = 0.55
 
 #: (name, kind) — kind: 'reg' | 'clf'. Feature name downstream = 'ctx_<name>'.
+#: FFM 2.1 enriched set (user-approved prune, 2026-06-10 FF68 probe).
+#: fwd_return is the weakest seat (r .099, first time past gate) —
+#: flagged marginal. range_pos REMOVED (never beat trivial); trend_start
+#: REMOVED (dead in all arms).
 HEAD_SPECS = [
     ('fwd_return', 'reg'),
     ('vol_expansion', 'clf'),
     ('volatility', 'reg'),
     ('structure', 'clf'),
-    ('range_pos', 'reg'),
-    # promoted 2026-06-10: beat gate AND trivial on the full probe
-    # (AUC 0.693 vs trivial 0.591) — the rotational/"quiet stays quiet"
-    # detector; consistent with Bolt's vol-dynamics advantage.
     ('quiet_persist', 'clf'),
-]
-
-#: Candidate heads under probe evaluation — promoted into HEAD_SPECS only
-#: after beating BOTH their gate AND the trivial baseline on the probe
-#: (scripts/probe_context_heads.py). Direction-agnostic by design: Bolt's
-#: proven advantage is shape/volatility dynamics, not direction.
-#: Probed 2026-06-10 and NOT promoted (kept for the record, labels still
-#: computed): trendiness r=.120 == trivial .120 (dead tie — knowable, but
-#: trivially); range_bound AUC .588 < trivial .670 (trivial wins).
-CANDIDATE_HEAD_SPECS = [
     ('trendiness', 'reg'),       # trend vs chop: fwd 20-bar efficiency ratio
     ('range_bound', 'clf'),      # ranging: fwd 10-bar closes stay in range
 ]
 
+#: Candidate heads under probe evaluation — promoted into HEAD_SPECS only
+#: after beating BOTH their gate AND the trivial baseline on the probe
+#: (scripts/probe_context_heads.py). Currently empty.
+#: Graveyard: trendiness/range_bound PROMOTED 2026-06-10 via the FF68
+#: enriched arm (temp/probe_ff68_full.json); range_pos/trend_start
+#: REMOVED the same day (range_pos never beat trivial; trend_start dead
+#: in every arm).
+CANDIDATE_HEAD_SPECS = []
+
 
 def compute_context_labels(close: pd.Series) -> pd.DataFrame:
-    """All five forward-looking labels from a close series. NaN where a
+    """All seven forward-looking labels from a close series. NaN where a
     trailing or forward window is unavailable — never filled.
 
       fwd_return     reg  20-bar fwd log-return / trailing 200-bar std of
@@ -77,7 +82,10 @@ def compute_context_labels(close: pd.Series) -> pd.DataFrame:
                           100 bars' 10-bar vols, continuous [0,1]
       structure      clf  fwd 20-bar close max/min vs trailing 12-bar close
                           max/min: both higher = 1, both lower = 0, mixed NaN
-      range_pos      reg  close at t+10 within trailing 20-bar close range
+      trendiness     reg  fwd 20-bar efficiency ratio (|net|/path), [0,1]
+      range_bound    clf  fwd 10-bar closes stay in trailing 20-bar range
+      quiet_persist  clf  on currently-quiet bars only: quiet persists
+                          (fwd vol <= 1.25x trailing median); else NaN
     """
     lc = np.log(close)
     r1 = lc.diff()
@@ -124,8 +132,6 @@ def compute_context_labels(close: pd.Series) -> pd.DataFrame:
 
     rh = close.rolling(20).max()
     rl = close.rolling(20).min()
-    width = (rh - rl).replace(0, np.nan)
-    out['range_pos'] = ((close.shift(-10) - rl) / width).clip(0, 1)
 
     # trendiness: efficiency ratio of the NEXT 20 bars — |net move| over
     # path length. 1 = clean trend (either direction), ~0 = chop.
@@ -155,6 +161,23 @@ def compute_context_labels(close: pd.Series) -> pd.DataFrame:
     return out
 
 
+def context_features(df: pd.DataFrame, instrument: str) -> np.ndarray:
+    """The 68-feature library matrix for enriched heads — strictly trailing.
+
+    Wraps `futures_foundation.features.derive_features(df, instrument)` and
+    returns the float32 matrix of the `get_model_feature_columns()` columns
+    present, in that fixed order, aligned to `df` rows. NaNs are left as-is
+    (XGBoost handles missing values natively).
+
+    df: DataFrame with datetime/open/high/low/close/volume columns.
+    -> float32 [len(df), n_features]
+    """
+    from .features import derive_features, get_model_feature_columns
+    fdf = derive_features(df, instrument)
+    cols = [c for c in get_model_feature_columns() if c in fdf.columns]
+    return fdf[cols].to_numpy(np.float32)
+
+
 def _fit_head(kind, X, y, seed, n_estimators):
     import xgboost as xgb
     common = dict(n_estimators=n_estimators, max_depth=5, learning_rate=0.05,
@@ -180,18 +203,25 @@ def _score_head(kind, model, X, y):
 
 @dataclass
 class ContextHeads:
-    """Frozen XGBoost context heads on foundation embeddings.
+    """Frozen XGBoost context heads on foundation inputs.
 
     fit() trains every head and applies the pre-registered gate on the
     validation slice; transform() emits ONLY the heads that passed (or an
     explicit `include` override for ablations). save()/load() round-trip
     via joblib with full training metadata.
+
+    fit/transform are matrix-agnostic: X may be the embedding alone
+    (legacy emb-only bundles) or [embedding | 68-feature library] (FFM 2.1
+    enriched bundles — the trainer records meta['inputs']='emb+ff68' and
+    meta['feature_cols']). `input_dim` is captured in fit and enforced in
+    transform so a bundle can never be silently fed the wrong matrix.
     """
     seed: int = 0
     n_estimators: int = 400
     models: dict = field(default_factory=dict)      # name -> fitted model
     metrics: dict = field(default_factory=dict)     # name -> metrics dict
     meta: dict = field(default_factory=dict)
+    input_dim: int = None                           # set in fit from X width
 
     @property
     def active_names(self):
@@ -203,6 +233,7 @@ class ContextHeads:
         """Train all heads on (E_tr, labels_tr); gate on (E_va, labels_va).
         Rows with NaN labels are dropped per head (structure's mixed
         sentinel). Returns self."""
+        self.input_dim = int(np.asarray(E_tr).shape[1])
         for name, kind in HEAD_SPECS:
             ytr = np.asarray(labels_tr[name], np.float32)
             yva = np.asarray(labels_va[name], np.float32)
@@ -231,9 +262,16 @@ class ContextHeads:
         return self
 
     def transform(self, E, include=None):
-        """[N, D_MODEL] embeddings -> [N, n_active] ctx features (float32),
-        column order = active_names. `include` overrides the gate (list of
-        bare head names) for ablation studies."""
+        """[N, input_dim] input matrix -> [N, n_active] ctx features
+        (float32), column order = active_names. `include` overrides the
+        gate (list of bare head names) for ablation studies."""
+        E = np.asarray(E)
+        if self.input_dim is not None and E.shape[1] != self.input_dim:
+            raise ValueError(
+                f"input width {E.shape[1]} != bundle input_dim "
+                f"{self.input_dim} (inputs={self.meta.get('inputs', 'emb')!r})"
+                " — enriched bundles need [embedding | ff68 features],"
+                " emb-only bundles need the embedding alone.")
         names = (include if include is not None
                  else [n for n, _ in HEAD_SPECS
                        if self.metrics.get(n, {}).get('passed')])
@@ -249,23 +287,37 @@ class ContextHeads:
                 cols.append(model.predict_proba(E)[:, 1].astype(np.float32))
         return np.column_stack(cols)
 
-    def context_at(self, close, indices, ctx: int = 128, batch: int = 64,
-                   include=None) -> pd.DataFrame:
+    def context_at(self, df, indices, instrument, ctx: int = 128,
+                   batch: int = 64, include=None) -> pd.DataFrame:
         """Per-candle market readout — the live-inference entry point.
 
         For each decision bar index: causal log-close window -> foundation
-        embedding (subprocess) -> named ctx_* features. The bot can call
-        this every bar to know the current regime/volatility/structure
-        state without ever touching embeddings directly.
+        embedding (subprocess), hstacked with the 68-feature library row
+        for enriched bundles (meta inputs=='emb+ff68') -> named ctx_*
+        features. The bot can call this every bar to know the current
+        regime/volatility/structure state without ever touching
+        embeddings directly.
+
+        df:         DataFrame with datetime/open/high/low/close/volume.
+        indices:    decision-bar integer positions into df.
+        instrument: symbol for the feature library (e.g. 'ES').
+
+        Emb-only bundles (old format, no meta inputs) use the embedding
+        alone — full back-compat via input_dim/meta.
 
         -> DataFrame indexed by `indices`, columns = active_names.
         """
         from .foundation import embed_bars
-        E = embed_bars(close, indices, ctx=ctx, batch=batch)
+        idx = np.asarray(indices)
+        E = embed_bars(df['close'].to_numpy(), idx, ctx=ctx, batch=batch)
+        if self.meta.get('inputs') == 'emb+ff68':
+            X = np.hstack([E, context_features(df, instrument)[idx]])
+        else:
+            X = E
         names = ([f'ctx_{n}' for n in include] if include is not None
                  else self.active_names)
-        return pd.DataFrame(self.transform(E, include=include),
-                            index=np.asarray(indices), columns=names)
+        return pd.DataFrame(self.transform(X, include=include),
+                            index=idx, columns=names)
 
     def htf_context_at(self, ts, close, indices, htf: str = '1h',
                        ctx: int = 128, batch: int = 64,
@@ -292,7 +344,14 @@ class ContextHeads:
         transfer application. Bolt embeds log-close shapes scale-free and
         the labels are bar-count-relative, but validate per strategy on
         the honest ruler before relying on it.
+
+        Emb-only bundles only: enriched (emb+ff68) heads need the feature
+        library on HTF bars, which is not built yet.
         """
+        if self.meta.get('inputs') == 'emb+ff68':
+            raise NotImplementedError(
+                'HTF readout not yet supported for enriched heads — train '
+                'an emb-only bundle for HTF use')
         ts = pd.DatetimeIndex(ts)
         c = np.asarray(close, dtype=np.float64)
         idx = np.asarray(indices, dtype=np.int64)
@@ -325,7 +384,8 @@ class ContextHeads:
         path.parent.mkdir(parents=True, exist_ok=True)
         joblib.dump(dict(models=self.models, metrics=self.metrics,
                          meta=self.meta, seed=self.seed,
-                         n_estimators=self.n_estimators), path)
+                         n_estimators=self.n_estimators,
+                         input_dim=self.input_dim), path)
         return str(path)
 
     @classmethod
@@ -337,6 +397,7 @@ class ContextHeads:
         obj.models = blob['models']
         obj.metrics = blob['metrics']
         obj.meta = blob.get('meta', {})
+        obj.input_dim = blob.get('input_dim')   # None on pre-2.1 bundles
         return obj
 
     def describe(self) -> str:

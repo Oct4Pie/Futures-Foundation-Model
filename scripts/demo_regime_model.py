@@ -1,14 +1,16 @@
 """Demo — does the trained ContextHeads bundle KNOW the market?
 
-Sample regime model built from JUST the 4 context features (no embedding,
-no strategy features), evaluated strictly OUT-OF-SAMPLE: all data here is
->= 2023-01-01, which the heads (trained pre-cutoff) have never seen.
+Sample regime model built from JUST the ctx_* context features (no raw
+embedding, no strategy features), evaluated strictly OUT-OF-SAMPLE: all
+data here is >= 2023-01-01, which the heads (trained pre-cutoff) have
+never seen. Works with both enriched (emb+ff68, FFM 2.1) and legacy
+emb-only bundles — context_at handles the input build.
 
 Two proofs:
 1. CALIBRATION — per head, bucket the head's per-candle prediction into
    deciles and show the REALIZED outcome per decile. Monotonic = the head
    genuinely tracks the market, OOS, years past its training window.
-2. SAMPLE REGIME MODEL — a tiny XGBoost on the 4-dim ctx vector predicts
+2. SAMPLE REGIME MODEL — a tiny XGBoost on the ctx vector predicts
    a 4-class intraday regime (volatile-expansion / trending-up /
    trending-down / rotational) defined from REALIZED forward outcomes.
    Compared against the majority-class baseline.
@@ -78,7 +80,7 @@ def main():
             path = ROOT / 'data' / f'{tk}_{tf}.csv'
             if not path.exists():
                 continue
-            df = pd.read_csv(path, usecols=['datetime', 'close'])
+            df = pd.read_csv(path)          # full OHLCV — enriched heads
             df['ts'] = pd.to_datetime(df['datetime'], utc=True)
             df = df.sort_values('ts').reset_index(drop=True)
             close = df['close'].astype(float)
@@ -90,7 +92,7 @@ def main():
             idx = np.flatnonzero(ok)[::a.stride]
             if not len(idx):
                 continue
-            ctx_df = heads.context_at(close.to_numpy(), idx)
+            ctx_df = heads.context_at(df, idx, tk)
             X_parts.append(ctx_df.to_numpy())
             lab_parts.append(lab.iloc[idx].reset_index(drop=True))
             ts_parts.append(df['ts'].iloc[idx].reset_index(drop=True))
@@ -108,7 +110,10 @@ def main():
               ('ctx_vol_expansion', lab['vol_expansion'],
                'realized expansion rate'),
               ('ctx_structure', lab['structure'], 'realized bull-structure rate'),
-              ('ctx_range_pos', lab['range_pos'], 'realized range position'),
+              ('ctx_trendiness', lab['trendiness'],
+               'realized fwd efficiency ratio'),
+              ('ctx_range_bound', lab['range_bound'],
+               'realized range-bound rate'),
               ('ctx_quiet_persist', lab['quiet_persist'],
                'realized quiet-persists rate (quiet bars only)')]
     print(f"\n{'=' * 64}\nPROOF 1 — OOS CALIBRATION (prediction decile -> "
@@ -154,7 +159,8 @@ def main():
         if mk.sum():
             rec = float((pred[mk] == k).mean())
             print(f"    {name:<20} n={mk.sum():>6,}  recall={rec:.1%}")
-    verdict = ('✅ the 4 ctx features carry real regime knowledge OOS'
+    verdict = (f'✅ the {len(names)} ctx features carry real regime '
+               f'knowledge OOS'
                if acc - base > 0.05 else '❌ no material lift over baseline')
     print(f"\n  {verdict}  (pre-registered bar: lift > +5pts)")
 

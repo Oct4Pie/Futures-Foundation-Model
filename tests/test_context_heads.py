@@ -39,16 +39,18 @@ def _synthetic_dataset(n=3000, d=24, informative=True):
         lab['volatility'] = 1 / (1 + np.exp(-(E[:, 2] + RNG.normal(0, .3, n))))
         s = E[:, 3] + RNG.normal(0, .3, n)
         lab['structure'] = np.where(s > .5, 1.0, np.where(s < -.5, 0.0, np.nan))
-        lab['range_pos'] = 1 / (1 + np.exp(-(E[:, 4] + RNG.normal(0, .3, n))))
         q = E[:, 5] + RNG.normal(0, .3, n)          # conditional label: some NaN
         lab['quiet_persist'] = np.where(q > 1.2, np.nan, (q > 0).astype(float))
+        lab['trendiness'] = 1 / (1 + np.exp(-(E[:, 4] + RNG.normal(0, .3, n))))
+        lab['range_bound'] = (E[:, 6] + RNG.normal(0, .3, n) > 0).astype(float)
     else:
         lab['fwd_return'] = RNG.normal(0, 1, n)
         lab['vol_expansion'] = (RNG.random(n) > .5).astype(float)
         lab['volatility'] = RNG.random(n)
         lab['structure'] = (RNG.random(n) > .5).astype(float)
-        lab['range_pos'] = RNG.random(n)
         lab['quiet_persist'] = (RNG.random(n) > .5).astype(float)
+        lab['trendiness'] = RNG.random(n)
+        lab['range_bound'] = (RNG.random(n) > .5).astype(float)
     cut = int(n * .8)
     return E[:cut], lab.iloc[:cut], E[cut:], lab.iloc[cut:]
 
@@ -86,7 +88,7 @@ def test_transform_include_override_for_ablation(fitted_heads):
 
 
 def test_noise_labels_fail_gates_and_transform_is_empty():
-    # large n: with 3 clf heads, chance AUC > 0.55 must be ~impossible
+    # large n: with 4 clf heads, chance AUC > 0.55 must be ~impossible
     E_tr, lab_tr, E_va, lab_va = _synthetic_dataset(n=8000, informative=False)
     heads = ContextHeads(seed=0, n_estimators=40).fit(
         E_tr, lab_tr, E_va, lab_va, verbose=False)
@@ -101,8 +103,91 @@ def test_save_load_roundtrip(fitted_heads, tmp_path):
     loaded = ContextHeads.load(p)
     assert loaded.active_names == heads.active_names
     assert loaded.meta['note'] == 'unit'
+    assert loaded.input_dim == heads.input_dim == E_va.shape[1]
     np.testing.assert_allclose(loaded.transform(E_va), heads.transform(E_va),
                                rtol=1e-6)
+
+
+def test_transform_input_dim_mismatch_raises(fitted_heads):
+    heads, E_va = fitted_heads
+    bad = np.hstack([E_va, np.zeros((len(E_va), 3), np.float32)])
+    with pytest.raises(ValueError, match='input_dim'):
+        heads.transform(bad)
+
+
+# ---------------------------------------------------------------------------
+# context_at — enriched (emb+ff68) vs emb-only input build
+# ---------------------------------------------------------------------------
+
+D_EMB, K_FF = 16, 8
+
+
+def _ohlcv_df(n=400):
+    ts = pd.date_range('2024-01-01', periods=n, freq='3min', tz='UTC')
+    close = 100 * np.exp(np.cumsum(RNG.normal(0, .001, n)))
+    return pd.DataFrame({'datetime': ts, 'open': close,
+                         'high': close * 1.001, 'low': close * 0.999,
+                         'close': close, 'volume': np.full(n, 1000.0)})
+
+
+def _fake_embed_bars(d):
+    def f(close, indices, ctx=128, batch=64):
+        out = np.zeros((len(indices), d), np.float32)
+        out[:, 0] = np.asarray(close, float)[np.asarray(indices)]
+        return out
+    return f
+
+
+def test_context_at_enriched_hstacks_embedding_and_features(monkeypatch):
+    """Enriched bundle: X = [embed_bars | context_features[indices]] —
+    monkeypatched embed + features (no subprocess, no heavy
+    derive_features)."""
+    from futures_foundation import foundation
+    E_tr, lab_tr, E_va, lab_va = _synthetic_dataset(d=D_EMB + K_FF)
+    heads = ContextHeads(seed=0, n_estimators=40).fit(
+        E_tr, lab_tr, E_va, lab_va, verbose=False)
+    heads.meta = {'inputs': 'emb+ff68'}
+    monkeypatch.setattr(foundation, 'embed_bars', _fake_embed_bars(D_EMB))
+    seen = {}
+
+    def fake_features(df, instrument):
+        seen['instrument'] = instrument
+        return RNG.normal(0, 1, (len(df), K_FF)).astype(np.float32)
+
+    monkeypatch.setattr(ctx, 'context_features', fake_features)
+    df = _ohlcv_df()
+    idx = [200, 300, 399]
+    out = heads.context_at(df, idx, 'ES')
+    assert seen['instrument'] == 'ES'
+    assert list(out.index) == idx
+    assert list(out.columns) == heads.active_names
+    assert out.shape == (3, len(heads.active_names))
+    assert out.notna().all().all()
+
+
+def test_context_at_emb_only_backcompat_skips_features(monkeypatch,
+                                                       fitted_heads):
+    """Old emb-only bundle (no meta inputs): embedding alone, the feature
+    library must never be touched."""
+    from futures_foundation import foundation
+    heads, _ = fitted_heads
+    monkeypatch.setattr(foundation, 'embed_bars', _fake_embed_bars(24))
+
+    def boom(df, instrument):
+        raise AssertionError('context_features must not be called for '
+                             'emb-only bundles')
+
+    monkeypatch.setattr(ctx, 'context_features', boom)
+    out = heads.context_at(_ohlcv_df(), [100, 200], 'ES')
+    assert out.shape == (2, len(heads.active_names))
+
+
+def test_htf_context_at_enriched_raises():
+    heads = ContextHeads()
+    heads.meta = {'inputs': 'emb+ff68'}
+    ts = pd.date_range('2023-01-01', periods=10, freq='5min', tz='UTC')
+    with pytest.raises(NotImplementedError, match='emb-only'):
+        heads.htf_context_at(ts, np.ones(10), [5], htf='1h')
 
 
 def test_structure_nan_rows_dropped_not_filled(fitted_heads):
