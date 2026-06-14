@@ -247,6 +247,7 @@ _poc_resolved.yaml
 
 # Chronos model artifacts: *.joblib already ignored above; ONNX is deploy-only
 *.onnx
+models/
 
 # CISD+OTE handoff doc (local/temp only)
 docs/HANDOFF_CISD_OTE_CHRONOS.md
