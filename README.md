@@ -4,6 +4,35 @@
 
 **A futures-market foundation layer built on pretrained Chronos-Bolt — frozen embeddings of intraday market context, plus strategy-pluggable training, evaluation, and deployment pipelines.**
 
+**Contents:** [Quick Start](#quick-start) · [Overview](#overview) · [Foundation Surface](#the-foundation-surface) · [Chronos Pipeline](#chronos-pipeline--training-evaluation-deployment) · [The Training Loop](#the-training-loop--overfit-driven) · [Add a Strategy](#add-a-strategy) · [Standalone Pipelines](#xgboost-pipeline-standalone) · [Data](#data) · [Project Structure](#project-structure) · [Releases](#releases)
+
+---
+
+## Quick Start
+
+```bash
+pip install -e .
+pip install chronos-forecasting "xgboost>=2.0"      # foundation embed + heads
+```
+
+A strategy is a small **labeler** (event candidates + features) that rides the frozen foundation embedding. Two calls take it from idea to deployable bundle:
+
+```python
+from futures_foundation.chronos import evaluate as ev, produce
+
+# 1) VALIDATE — the overfit-driven training loop (one call does it all):
+#    default walk-forward → VAL→TEST generalization gate → Optuna ONLY if it
+#    overfits → rerun → repeat until it passes → final FULL walk-forward.
+verdict = ev.run(MyLabeler(), loop=True, return_verdict=True)
+
+# 2) PRODUCE — only if it generalizes; trains on all data minus a holdout,
+#    saves one joblib bundle the bot loads.
+if verdict['final']['generalizes']:
+    produce.train(MyLabeler(), holdout_months=1)
+```
+
+→ Labeler contract: [Add a Strategy](#add-a-strategy) · How validation catches & fixes overfitting: [The Training Loop](#the-training-loop--overfit-driven)
+
 ---
 
 ## Overview
@@ -18,7 +47,7 @@ FFM gives downstream trading models a shared **market-understanding layer**. The
 
 Just as BERT learns language structure before being fine-tuned for sentiment or Q&A, the foundation embedding captures market state before any strategy logic runs. The strategy adds only what the foundation cannot derive: setup geometry, zone age, entry distance, risk sizing. Market-context knowledge is never duplicated across strategies.
 
-This architecture is **proven live**: the production SuperTrend selection model (frozen Bolt embedding + XGBoost head) runs in production at 60.5% WR / PF 4.45, certified on the honest-ruler walk-forward with pre-registered controls.
+This architecture is **proven live**: a production selection model (frozen Bolt embedding + XGBoost head) runs in production, certified on the honest-ruler walk-forward with pre-registered controls.
 
 ### What the foundation actually knows (measured)
 
@@ -52,7 +81,7 @@ Certified out-of-sample on 80,786 bars (2023–2026) the heads never saw: calibr
 
 1. **Regime changes don't require retraining.** The frozen embedding maps any market state into the same representation space; downstream heads trained across regimes adjust automatically. Domain shift handling comes from Bolt's pretraining breadth, not from our retraining cadence.
 2. **Adding new data is just a re-run.** The foundation is frozen; only the cheap XGBoost heads retrain (quarterly runbook: `docs/`).
-3. **One foundation, unlimited strategies.** Each strategy is a thin labeler + features plug-in; SuperTrend, Kalman-NW, CISD all ride the same embedding.
+3. **One foundation, unlimited strategies.** Each strategy is a thin labeler + features plug-in; many strategies ride the same embedding.
 4. **Honest by construction.** Every result passes the honest ruler: walk-forward × {REAL, SHUFFLE, RANDOM, NAIVE} × seeds with a pre-registered auto-verdict. A number is believed only if REAL clearly beats every control.
 
 ---
@@ -80,7 +109,20 @@ Domain-adapting the foundation is supported but optional: `futures_foundation/ch
 
 **`futures_foundation/chronos/` — the strategy-pluggable harness around the foundation: walk-forward evaluator with honest-ruler controls, production trainer, ONNX export.** This is the proven path every new strategy goes through.
 
-**What it does:** a strategy labeler defines event candidates (e.g., SuperTrend flips); for each event, the trailing 128-bar context → frozen foundation embedding → fused with hand-crafted features → XGBoost predicts `(P(take), R̂)`. Walk-forward 3-month-train / 1-month-test with **REAL/SHUFFLE/RANDOM/NAIVE controls** and a **6-check pre-registered PASS/FAIL auto-verdict** at run-end. The production trainer fits ONE signal head + ONE risk head on the full corpus minus an N-month holdout and saves a single joblib bundle the bot loads.
+**What it does:** a strategy labeler defines event candidates (e.g., trend-flip or channel-break events); for each event, the trailing 128-bar context → frozen foundation embedding → fused with hand-crafted features → XGBoost predicts `(P(take), R̂)`. Validation runs the **overfit-driven training loop** (below) on a **train / validate / test** walk-forward with **REAL/SHUFFLE/RANDOM/NAIVE controls** and a **pre-registered PASS/FAIL auto-verdict**. The production trainer then fits ONE signal head + ONE risk head on the full corpus minus an N-month holdout and saves a single joblib bundle the bot loads.
+
+### The training loop — overfit-driven
+
+`ev.run(labeler, loop=True)` runs the whole training process as one self-correcting loop. **Optuna is triggered only when overfitting is detected** — a strategy whose defaults already generalize keeps them untouched:
+
+1. **Walk-forward** with the **default** XGBoost head.
+2. **Generalizes?** (VAL→TEST meanR gap within tolerance) → **keep defaults, done.**
+3. **Overfit?** → **Optuna scan** for params that generalize (objective rewards cross-fold stability; auto-falls-back to defaults unless the tuned params beat them on a held-out guard).
+4. **Rerun** the walk-forward with the chosen params.
+5. **Repeat** 2–4 until it passes (capped; if no params generalize, the model is **flagged**).
+6. **One final FULL walk-forward** to confirm on unseen data.
+
+Two guardrails make this honest: the **VAL→TEST generalization gate** (threshold is picked on *validation*, reported on *test*; an edge that decays from val to test is rejected as fake), and **auto-regularize** (when a head overfits train→val, it re-fits down a regularization ladder, keeping the rung with the best *validation* meanR). All tuning/selection sees train+validation only — **test is never consulted**.
 
 ### Add a strategy
 
@@ -101,9 +143,13 @@ class MyLabeler:
 
 ```python
 from futures_foundation.chronos import evaluate as ev, produce
-ev.run(MyLabeler())                                      # walk-forward + auto-verdict
-produce.train(MyLabeler(), holdout_months=1)             # production bundle
+
+verdict = ev.run(MyLabeler(), loop=True, return_verdict=True)   # overfit-driven training loop
+if verdict['final']['generalizes']:
+    produce.train(MyLabeler(), holdout_months=1)                # production bundle
 ```
+
+> `loop=True` runs the full [training loop](#the-training-loop--overfit-driven). Use `loop=False` (default) for a single walk-forward pass — e.g. inside A/B harnesses where each arm must see the *same* untuned pass.
 
 ```bash
 # ONNX export + 3-layer verify (requires: pip install onnxmltools skl2onnx)
@@ -115,7 +161,9 @@ python3 -m futures_foundation.chronos.export_onnx <bundle.joblib>
 | Component | Role |
 |---|---|
 | (backbone) | The seam is `futures_foundation.foundation`; modules here import it as `backbone` (removed `pipelines/chronos` entirely). |
-| `evaluate.py` | Walk-forward harness — batch-embed ONCE across all folds → per-fold thread-parallel XGBoost (5–10× speedup). Dual dashboard: 🎯 fixed-TP @ RR=3 + 💎 dynamic-TP @ `clip(0.8 × R̂, 1.5, 8.0)`. Auto-verdict with 6 pre-registered checks (constants at module top — goalpost-moving requires editing constants *before* the next run). |
+| `evaluate.py` | Walk-forward harness (`run`) — batch-embed ONCE across all folds → per-fold thread-parallel XGBoost (5–10× speedup). **3-way train/validate/test** with VAL-selected threshold + **VAL→TEST generalization gate** + auto-regularize. `loop=True` runs the [overfit-driven training loop](#the-training-loop--overfit-driven); `loop=False` is the single-pass primitive. Pre-registered PASS/FAIL auto-verdict (constants at module top — goalpost-moving requires editing constants *before* the next run). |
+| `train_loop.py` | The overfit-driven training loop: default WF → generalize check → Optuna only if overfit → rerun → repeat → final full WF. Returns chosen params + final verdict + history. |
+| `tune_head.py` | Optuna head tuner with a **generalization-robust** objective + held-out guard and **auto-fallback to defaults**. `--walkforward` runs the scan then the full 3-way walk-forward with the tuned params. |
 | `produce.py` | Production training: ONE fit on full corpus minus N-month holdout; saves joblib bundle (signal head + risk head + `feat_dim` + `ctx_window` + `chronos_ckpt` + labeler config + holdout threshold sweep). Production-scale defaults (`n_estimators=600, max_depth=5`). |
 | `export_onnx.py` | joblib → 3 ONNX files (chronos + signal + risk) via subprocess-isolated phases. End-to-end `verify()`: per-stage drift < 1e-3, chained-pipeline equivalence, decision parity at the trading threshold. |
 | `head_xgb.py` | `XGBHead` (signal classifier) + `XGBRiskHead` (log1p-transformed max-favorable-R regression for dynamic TP). |
@@ -244,7 +292,7 @@ Futures-Foundation-Model/
 │   ├── train_context_heads.py    # Trains the production enriched heads bundle
 │   └── demo_regime_model.py      # OOS certification: calibration + regime model
 ├── docs/                         # Build specs + runbooks
-├── tests/                        # 470 unit tests (pre-commit gated; torch-free by contract)
+├── tests/                        # 487 unit tests (pre-commit gated; torch-free by contract)
 └── data/                         # Raw OHLCV CSVs (gitignored)
 ```
 
@@ -254,7 +302,7 @@ Futures-Foundation-Model/
 
 | Version | Description |
 |---------|-------------|
-| **v2.2** | **Train / validate / test walk-forward + overfit detect-and-fix.** The Chronos rebuild had regressed the walk-forward to a 2-way train→test split, dropping the validation window the original FFM finetune used — so the confidence **threshold was being selected on the test dashboard** (threshold-on-test bias). Restored the standard **3-way split** (`walk_forward_folds` now yields `train/val/test`, hard-asserted `train.max < val.min < test.min`): the head is fit on **train**, the threshold is selected on **validation**, and **test** is reported untouched. **Generalization gate** — the **VAL→TEST meanR gap** is a hard PASS/FAIL criterion; an edge that holds on val but decays on test is rejected as fake. **Auto-regularize** (detect→fix loop, adapting the original `FoldHealthMonitor`): when a head overfits train→val (>0.30R), it re-fits down a regularization ladder and keeps the rung with the best **validation** meanR (XGBoost analog of "reduce epochs / increase regularization"). **Scan → walk-forward** (`tune_head --walkforward`): Optuna scans the head's anti-overfit params, then the full 3-way walk-forward runs with the tuned params and the gen-gate confirms they generalize. The threshold-free REAL-vs-SHUFFLE/RANDOM edge is unchanged and still honest OOS. 463 tests. |
+| **v2.2** | **Overfit-driven training loop (train / validate / test + detect-and-fix).** The whole training process is now one self-correcting loop — `ev.run(labeler, loop=True)`: default walk-forward → **VAL→TEST generalization gate** → Optuna **only if overfit** → rerun → repeat until it passes → one final FULL walk-forward (`futures_foundation/chronos/train_loop.py`). Fixes a regression where the Chronos rebuild had collapsed the walk-forward to a 2-way train→test split (threshold-on-test bias): restored the **3-way split** (`walk_forward_folds` yields `train/val/test`, hard-asserted `train.max < val.min < test.min`) — head fit on **train**, threshold picked on **validation**, **test** reported untouched and never used for any selection. The **generalization gate** is a hard PASS/FAIL (an edge that decays val→test is rejected as fake). **Auto-regularize** re-fits down a regularization ladder when a head overfits train→val, keeping the best **validation** rung. The tuner (`tune_head`) optimizes a **generalization-robust** objective (cross-fold mean − penalty·std) and **auto-falls-back to defaults** unless tuned params beat them on a held-out guard. One entry point everywhere (`ev.run(loop=True)`); `loop=False` stays the single-pass primitive for A/B harnesses. 487 tests. |
 | **v2.1** | **Enriched context heads — the foundation's second input pillar.** Measured recipe (5-arm probe, 236k bars): heads on **`[Bolt embedding \| 68-feature library]`** beat embedding-alone AND the trivial adversary on every shipped target — volume/orderflow/wicks/session/CRT/HTF were the missing inputs; close-only was the binding constraint. Ships 7 heads (`fwd_return`✱, `vol_expansion` .82, `volatility` r .64, `structure` .82 — beats trivial for the first time, `quiet_persist` .74, `trendiness` r .15✱, `range_bound` .69; ✱=weak/marginal, flagged). `context_at(df, idx, instrument)` consumes OHLCV; emb-only bundles back-compatible. OOS-certified on 80,786 unseen bars: monotone calibration, regime model +22.0pts over baseline. 462 tests. |
 | **v2.0** | **Chronos-Bolt IS the foundation.** The from-scratch FFM transformer (model/dataset/pretrain/torch fine-tune trainer, ~6k lines) retired — preserved at tag `ffm-transformer-final`. The proven `pipelines/chronos` backbone seam promoted to **`futures_foundation.foundation`** (`embed_bars`, subprocess isolation, wiring-gap stamps); `import futures_foundation` is now torch-free by contract (tested). `finetune/` reduced to its torch-free, model-agnostic survivors (StrategyLabeler triple-barrier ABC, run_labeling, FoldHealthMonitor, reporting, realized-R economics); `prepare_data` rescued to `futures_foundation.prepare`. **Phase-0 capability probe** (`scripts/probe_context_heads.py`): frozen Bolt embeddings know future volatility regime beyond trivial features (vol percentile r=0.52 vs 0.41 trivial; expansion AUC 0.78 vs 0.70) — with shuffle controls clean. 436+ tests. |
 | **v1.5** | `pipelines/chronos` — frozen Chronos backbone + XGBoost head pipeline: walk-forward batch-embed evaluator with REAL/SHUFFLE/RANDOM/NAIVE controls + 6-check pre-registered auto-verdict; `produce.py` production bundles; `export_onnx.py` 3-file export with 3-layer verify; `XGBRiskHead` log1p dynamic-TP; backbone wiring-gap guards (`stamp_active_source`). |
