@@ -5,22 +5,28 @@ frozen Chronos embedding + the labeler's features — it does NOT touch the
 architecture, the signal generator, or any labeler. Use it to fill the
 "XGB head tuning" lever: the pipeline otherwise ships fixed params.
 
+Goal: the best setting that GENERALIZES — not the best in-sample fit.
+
 Method (overfit-aware):
   1. Build the walk-forward folds for a labeler, embed ONCE (batched), fuse the
      labeler features — same construction the evaluator uses.
   2. Split folds in time: the first (1-holdout_frac) are the TUNE set, the last
      holdout_frac are an untouched GUARD set.
   3. Optuna (TPE + MedianPruner) searches the tight anti-overfit bounds, scoring
-     each trial by POOLED realized meanR (labeler.evaluate) across the TUNE
-     folds' OOS test slices — never on training rows.
-  4. The winning params are then scored on the GUARD folds. If GUARD meanR
-     collapses vs TUNE meanR, the tuning overfit — reported, not hidden.
-  5. A default-params baseline is scored on the same folds, so the output answers
-     one question directly: does tuning LIFT over the shipped defaults?
+     each trial by a GENERALIZATION-ROBUST objective: cross-fold mean − penalty·
+     std of per-fold meanR on the TUNE folds' OOS slices. A config that spikes on
+     a few folds and collapses on others (overfit signature) cannot win; only a
+     config that is consistent across folds scores high.
+  4. The winning params are scored on the untouched GUARD folds vs the shipped
+     defaults. ACCEPT the tuned params ONLY if they beat defaults on the GUARD by
+     >= GEN_ACCEPT_MARGIN_R (they generalize); otherwise AUTO-FALL-BACK to
+     defaults. The function returns what should ACTUALLY be used — params={} means
+     keep defaults.
 
-The winning params are returned (and printed as a head_factory snippet). NOTHING
-is auto-applied — certify with evaluate.run(head_factory=...) on the full
-walk-forward, and only then pass them to produce.train.
+`tune_head(...)` returns dict(params=<{} if keep-defaults else tuned>,
+generalizes=bool, chosen='tuned'|'default', best_params=...). With --walkforward
+the chosen params are run straight through the full 3-way walk-forward, whose
+VAL->TEST gate is the final independent generalization check.
 
 CLI:
     python -m futures_foundation.chronos.tune_head \
@@ -47,6 +53,24 @@ BOUNDS = dict(
     reg_lambda=(1.0, 10.0), min_child_weight=(5, 50),
     n_estimators=(200, 800),
 )
+
+# Generalization knobs. STD_PENALTY: how hard the objective punishes cross-fold
+# instability (overfit signature) — higher = more conservative. ACCEPT_MARGIN:
+# the held-out (GUARD) lift the tuned params must clear to be accepted over the
+# shipped defaults; below it we auto-fall-back to defaults.
+GEN_STD_PENALTY = 0.5
+GEN_ACCEPT_MARGIN_R = 0.05
+
+
+def _gen_score(per_fold):
+    """Generalization-robust score: cross-fold mean penalized by instability.
+    A config consistent across folds beats one that spikes on a few and
+    collapses on others (the overfit signature), even at equal mean."""
+    if not per_fold:
+        return -1.0
+    mean = float(np.mean(per_fold))
+    std = float(np.std(per_fold)) if len(per_fold) > 1 else 0.0
+    return mean - GEN_STD_PENALTY * std
 
 
 def _suggest(trial):
@@ -137,18 +161,25 @@ def tune_head(labeler, *, n_trials=80, seed=42, max_folds=14,
           f"(held-out) folds\n")
 
     def objective(trial):
+        # Score = "best that GENERALIZES", not best in-sample. We optimize the
+        # cross-fold-robust meanR (mean − GEN_STD_PENALTY·std of per-fold meanR),
+        # so a config that spikes on a few tune folds and collapses on others —
+        # the signature of overfitting — cannot win. A config that generalizes
+        # is consistent across folds and scores high here. The untouched GUARD
+        # set then independently verifies (below).
         p = _suggest(trial)
-        Rs = []
+        per_fold, pooled = [], []
         for k, d in enumerate(tune_folds):
             head = XGBHead(labeler.n_classes, **p).fit(d['Xtr'], d['Ytr'], seed)
             R = labeler.evaluate(d['Kte'], head.predict(d['Xte']))
             if len(R):
-                Rs.append(R)
-            running = float(np.concatenate(Rs).mean()) if Rs else 0.0
+                per_fold.append(float(R.mean()))
+                pooled.append(R)
+            running = float(np.concatenate(pooled).mean()) if pooled else 0.0
             trial.report(running, k)
             if trial.should_prune():
                 raise optuna.TrialPruned()
-        return float(np.concatenate(Rs).mean()) if Rs else -1.0
+        return _gen_score(per_fold)                 # generalization-robust score
 
     study = optuna.create_study(
         direction='maximize',
@@ -173,15 +204,29 @@ def tune_head(labeler, *, n_trials=80, seed=42, max_folds=14,
     lift_guard = t_guard - b_guard
     print(f"\n  GUARD lift (tuned − default): {lift_guard:+.3f}R  "
           f"(this is the honest, held-out lift)")
-    overfit = t_tune - t_guard
-    if overfit > 0.15 and t_guard < b_guard:
-        print(f"  ⚠ OVERFIT: tuned wins on TUNE (+{t_tune-b_tune:+.3f}) but "
-              f"loses on GUARD — params overfit the tune folds. Keep defaults.")
-    print(f"\n  best params: {best}")
-    print(f"\n  → certify before use:")
-    print(f"    ev.run(lab, head_factory=lambda nc: XGBHead(nc, "
-          f"**{best}))")
-    return dict(params=best, tune_meanR=t_tune, guard_meanR=t_guard,
+
+    # ---- ACCEPT / FALL-BACK decision (auto) -----------------------------
+    # Accept the tuned params ONLY if they GENERALIZE: beat the shipped defaults
+    # on the untouched GUARD set by a real margin. Otherwise the search overfit
+    # the tune folds (won TUNE, lost GUARD) → auto-fall-back to defaults. We
+    # return what should ACTUALLY be used, not the raw Optuna winner.
+    generalizes = lift_guard >= GEN_ACCEPT_MARGIN_R
+    if generalizes:
+        chosen, chosen_name = best, 'tuned'
+        print(f"\n  ✅ ACCEPT tuned — generalizes (GUARD lift "
+              f"{lift_guard:+.3f}R ≥ {GEN_ACCEPT_MARGIN_R}R).")
+    else:
+        chosen, chosen_name = {}, 'default'
+        why = ("overfit the tune folds" if t_tune > t_guard + 0.15
+               else "no held-out lift")
+        print(f"\n  ↩️  KEEP DEFAULTS — tuned did not generalize "
+              f"({why}; GUARD lift {lift_guard:+.3f}R < {GEN_ACCEPT_MARGIN_R}R).")
+    print(f"\n  chosen params ({chosen_name}): {chosen or 'shipped defaults'}")
+    if generalizes:
+        print(f"\n  → certify before use:")
+        print(f"    ev.run(lab, head_factory=lambda nc: XGBHead(nc, **{best}))")
+    return dict(params=chosen, generalizes=generalizes, chosen=chosen_name,
+                best_params=best, tune_meanR=t_tune, guard_meanR=t_guard,
                 default_tune_meanR=b_tune, default_guard_meanR=b_guard,
                 guard_lift=lift_guard)
 
@@ -214,12 +259,13 @@ def main():
     if args.walkforward:
         from . import evaluate as ev
         from .head_xgb import XGBHead
-        p = res['params']
+        p = res['params']                       # {} → shipped defaults (auto-fallback)
         bar = "█" * 64
-        print(f"\n{bar}\n  WALK-FORWARD with Optuna-tuned params:\n  {p}\n{bar}")
-        # auto_regularize OFF — params are already tuned by the scan; the
-        # walk-forward just reports the honest 3-way OOS at those params, and
-        # the VAL→TEST gate confirms the tuned params actually generalize.
+        print(f"\n{bar}\n  WALK-FORWARD with {res['chosen']} params:"
+              f"\n  {p or 'shipped defaults'}\n{bar}")
+        # auto_regularize OFF — the scan already chose the params (tuned if they
+        # generalized on the guard, else defaults); the walk-forward reports the
+        # honest 3-way OOS and the VAL→TEST gate is the final generalization check.
         ev.run(lab, head_factory=lambda nc: XGBHead(nc, **p),
                auto_regularize=False)
 

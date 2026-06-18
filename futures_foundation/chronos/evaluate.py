@@ -57,6 +57,58 @@ REG_LADDER = [
 ]
 
 
+def _overfit_trigger(train_meanR, val_meanR):
+    """True if the head overfit TRAIN relative to VALIDATION by more than
+    OVERFIT_GAP_R → the auto-regularize remediation should fire."""
+    return (train_meanR - val_meanR) > OVERFIT_GAP_R
+
+
+def _best_rung(default_val_meanR, rung_val_means):
+    """Pick the regularization rung with the best VALIDATION meanR, but only if
+    it beats the default head's validation meanR; otherwise None (keep default).
+    rung_val_means: iterable of (cfg, val_meanR). Selection never sees TEST."""
+    best_vm, best_cfg = default_val_meanR, None
+    for cfg, vm in rung_val_means:
+        if vm > best_vm:
+            best_vm, best_cfg = vm, cfg
+    return best_cfg
+
+
+def _operating_verdict(v_at, t_at, gap, real_m, shuf_m, rand_m, naive_m,
+                       thr=None, records=None):
+    """Build the pre-registered operating-point verdict (pure; unit-tested).
+    Returns (checks, all_pass, verdict_dict). checks: list of (ok, msg). The
+    VAL→TEST gap is a HARD generalization criterion — fake edge fails here."""
+    checks = [
+        (t_at is not None and t_at['wr'] >= PASS_TARGET_WR
+         and t_at['n'] >= PASS_MIN_TRADES_AGG,
+         f"TEST@val-thr: WR≥{int(PASS_TARGET_WR*100)}% + trades≥"
+         f"{PASS_MIN_TRADES_AGG}"
+         + (f" (WR={100*t_at['wr']:.1f}%, n={t_at['n']})" if t_at else "")),
+        (real_m - shuf_m >= PASS_LIFT_MARGIN_R,
+         f"edge REAL−SHUFFLE ≥{PASS_LIFT_MARGIN_R}R (got {real_m-shuf_m:+.2f}R)"),
+        (real_m - rand_m >= PASS_LIFT_MARGIN_R,
+         f"edge REAL−RANDOM ≥{PASS_LIFT_MARGIN_R}R (got {real_m-rand_m:+.2f}R)"),
+        (real_m - naive_m >= PASS_LIFT_MARGIN_R,
+         f"edge REAL−NAIVE ≥{PASS_LIFT_MARGIN_R}R (got {real_m-naive_m:+.2f}R)"),
+        (gap is not None and gap <= GEN_GAP_TOL,
+         f"GENERALIZES: VAL→TEST gap ≤{GEN_GAP_TOL}R"
+         + (f" (got {gap:+.2f}R)" if gap is not None else " (no val/test)")),
+    ]
+    all_pass = all(ok for ok, _ in checks)
+    verdict = dict(
+        all_pass=all_pass,
+        generalizes=(gap is not None and gap <= GEN_GAP_TOL),
+        gap=gap, thr=thr,
+        test_meanR=(t_at['meanR'] if t_at else None),
+        test_wr=(t_at['wr'] if t_at else None),
+        test_n=(t_at['n'] if t_at else 0),
+        val_meanR=(v_at['meanR'] if v_at else None),
+        edge_shuffle=real_m - shuf_m, edge_random=real_m - rand_m,
+        edge_naive=real_m - naive_m, records=records)
+    return checks, all_pass, verdict
+
+
 def _stats(R):
     R = np.asarray(R, float)
     if not len(R):
@@ -106,7 +158,7 @@ def _agg_stats(name, R, tks=None):
 
 def run(labeler, head_factory=None, seeds=(0, 1, 2), train_m=3, val_m=1, test_m=1,
         max_folds=None, context_heads_path=None, emb_mode='both',
-        min_train_start=None, auto_regularize=True):
+        min_train_start=None, auto_regularize=True, return_verdict=False):
     """labeler: a StrategyLabeler. head_factory: nc -> head (default
     XGBHead). max_folds=None -> sweep every available OOS month-pair
     (XGBoost-pipeline convention). Prints REAL/SHUFFLE/RANDOM per
@@ -136,6 +188,7 @@ def run(labeler, head_factory=None, seeds=(0, 1, 2), train_m=3, val_m=1, test_m=
     head_factory = head_factory or (lambda nc: XGBHead(nc))
     binary = labeler.n_classes == 2
     out = []
+    verdict = None              # set in the binary operating-point block below
     pool = {'REAL': ([], []), 'SHUFFLE': ([], []), 'RANDOM': ([], [])}
     proba_records = []
     val_records = []                   # (keys, proba) on VALIDATION — for thr select
@@ -235,16 +288,17 @@ def run(labeler, head_factory=None, seeds=(0, 1, 2), train_m=3, val_m=1, test_m=
             vl_R = labeler.evaluate(d['Kval'], head.predict(d['Xval']))
             tr_m = float(tr_R.mean()) if len(tr_R) else 0.0
             vl_m = float(vl_R.mean()) if len(vl_R) else 0.0
-            if tr_m - vl_m > OVERFIT_GAP_R:             # overfit to train → remediate
-                best_vm, best_head, best_tag = vl_m, head, None
+            if _overfit_trigger(tr_m, vl_m):            # overfit to train → remediate
+                cands = []                               # (cfg, val_meanR, head)
                 for cfg in REG_LADDER:
                     h = XGBHead(nc, **cfg).fit(Xtr, Ytr, seed)
                     vR = labeler.evaluate(d['Kval'], h.predict(d['Xval']))
                     vm = float(vR.mean()) if len(vR) else -1e9
-                    if vm > best_vm:
-                        best_vm, best_head, best_tag = vm, h, cfg
-                if best_head is not head:
-                    head, remediated = best_head, best_tag
+                    cands.append((cfg, vm, h))
+                best_cfg = _best_rung(vl_m, [(c, vm) for c, vm, _ in cands])
+                if best_cfg is not None:                 # a rung beat the default
+                    head = next(h for c, vm, h in cands if c is best_cfg)
+                    remediated = best_cfg
 
         p_real = head.predict(Xte)
         R = labeler.evaluate(Kte, p_real)               # fixed-TP baseline (final head)
@@ -521,27 +575,13 @@ def run(labeler, head_factory=None, seeds=(0, 1, 2), train_m=3, val_m=1, test_m=
                   if pool['RANDOM'][0] else 0.0)
         naive_m = (float(np.concatenate(pool['NAIVE'][0]).mean())
                    if pool.get('NAIVE', ([], []))[0] else 0.0)
-        checks = [
-            (t_at is not None and t_at['wr'] >= PASS_TARGET_WR
-             and t_at['n'] >= PASS_MIN_TRADES_AGG,
-             f"TEST@val-thr: WR≥{int(PASS_TARGET_WR*100)}% + trades≥"
-             f"{PASS_MIN_TRADES_AGG}"
-             + (f" (WR={100*t_at['wr']:.1f}%, n={t_at['n']})" if t_at else "")),
-            (real_m - shuf_m >= PASS_LIFT_MARGIN_R,
-             f"edge REAL−SHUFFLE ≥{PASS_LIFT_MARGIN_R}R (got {real_m-shuf_m:+.2f}R)"),
-            (real_m - rand_m >= PASS_LIFT_MARGIN_R,
-             f"edge REAL−RANDOM ≥{PASS_LIFT_MARGIN_R}R (got {real_m-rand_m:+.2f}R)"),
-            (real_m - naive_m >= PASS_LIFT_MARGIN_R,
-             f"edge REAL−NAIVE ≥{PASS_LIFT_MARGIN_R}R (got {real_m-naive_m:+.2f}R)"),
-            (gap is not None and gap <= GEN_GAP_TOL,
-             f"GENERALIZES: VAL→TEST gap ≤{GEN_GAP_TOL}R"
-             + (f" (got {gap:+.2f}R)" if gap is not None else " (no val/test)")),
-        ]
-        all_pass = all(ok for ok, _ in checks)
+        checks, all_pass, verdict = _operating_verdict(
+            v_at, t_at, gap, real_m, shuf_m, rand_m, naive_m,
+            thr=thr_star, records=out)
         print(f"\n   {'✅ PASS' if all_pass else '❌ FAIL'} — operating point:")
         for ok, msg in checks:
             print(f"     {'✓' if ok else '✗'} {msg}")
-    return out
+    return verdict if return_verdict else out
 
 
 # Degenerate-shuffle floors (ported from the original XGBoost pipeline's
