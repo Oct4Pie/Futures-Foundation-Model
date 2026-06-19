@@ -65,9 +65,15 @@ def test_active_source_env_override(monkeypatch):
 def _capture_embed(monkeypatch):
     captured = {}
 
-    def fake_embed(windows, batch=64):
+    def fake_embed(windows, batch=64, pool='mean', return_loc_scale=False):
         captured['windows'] = np.asarray(windows)
-        return np.zeros((len(windows), foundation.D_MODEL), np.float32)
+        captured['pool'] = pool
+        captured['return_loc_scale'] = return_loc_scale
+        dim = 2 * foundation.D_MODEL if pool == 'meanreg' else foundation.D_MODEL
+        E = np.zeros((len(windows), dim), np.float32)
+        if return_loc_scale:
+            return E, np.zeros((len(windows), 2), np.float32)
+        return E
 
     monkeypatch.setattr(foundation, 'embed', fake_embed)
     return captured
@@ -107,6 +113,50 @@ def test_embed_bars_empty_indices_short_circuits():
 def test_embed_empty_contexts_short_circuits():
     out = foundation.embed(np.zeros((0, 128), np.float32))
     assert out.shape == (0, foundation.D_MODEL)
+
+
+# ---------------------------------------------------------------------------
+# Tier-1 levers (torch-free surface): pooled_dim, empty-path shapes for each
+# pool mode + loc_scale, and embed_bars forwarding. Real pooling correctness is
+# in the gated framework tests (it needs the torch subprocess + model).
+# ---------------------------------------------------------------------------
+
+def test_pooled_dim_modes():
+    d = foundation.D_MODEL
+    assert foundation.pooled_dim('mean') == d
+    assert foundation.pooled_dim('reg') == d
+    assert foundation.pooled_dim('meanreg') == 2 * d
+
+
+def test_embed_empty_pool_modes_short_circuit():
+    d = foundation.D_MODEL
+    assert foundation.embed(np.zeros((0, 128), np.float32), pool='reg').shape == (0, d)
+    out = foundation.embed(np.zeros((0, 128), np.float32), pool='meanreg')
+    assert out.shape == (0, 2 * d)
+
+
+def test_embed_empty_return_loc_scale_short_circuit():
+    E, ls = foundation.embed(np.zeros((0, 128), np.float32),
+                             pool='meanreg', return_loc_scale=True)
+    assert E.shape == (0, 2 * foundation.D_MODEL)
+    assert ls.shape == (0, 2)
+
+
+def test_embed_bars_forwards_tier1_kwargs(monkeypatch):
+    captured = _capture_embed(monkeypatch)
+    close = np.arange(1, 301, dtype=np.float64)
+    out = foundation.embed_bars(close, [200], ctx=128, pool='meanreg',
+                                return_loc_scale=True)
+    assert captured['pool'] == 'meanreg'
+    assert captured['return_loc_scale'] is True
+    E, ls = out                                     # tuple when loc_scale requested
+    assert E.shape == (1, 2 * foundation.D_MODEL) and ls.shape == (1, 2)
+
+
+def test_embed_bars_empty_meanreg_loc_scale_shapes():
+    E, ls = foundation.embed_bars(np.arange(1, 301, dtype=float), [],
+                                  pool='meanreg', return_loc_scale=True)
+    assert E.shape == (0, 2 * foundation.D_MODEL) and ls.shape == (0, 2)
 
 
 def test_stamp_active_source_prints_frozen_tag(monkeypatch, capsys):

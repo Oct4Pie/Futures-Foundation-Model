@@ -34,6 +34,12 @@ _PRISTINE = None                       # cloned pretrained state_dict
 _ROOT = Path(__file__).resolve().parents[1]
 
 
+def pooled_dim(pool: str = 'mean') -> int:
+    """Width of embed()'s output for a pool mode (torch-free). 'meanreg'
+    concatenates mean + [REG] → 2*D_MODEL; 'mean'/'reg' → D_MODEL."""
+    return 2 * D_MODEL if pool == 'meanreg' else D_MODEL
+
+
 def active_source() -> str:
     """Resolve which Chronos checkpoint embed() will load. Parent-safe
     (no torch import). Returns the explicit CHRONOS_FT_CKPT path if set,
@@ -91,56 +97,74 @@ def stamp_active_source(context: str = '') -> str:
     return src
 
 
-def embed(contexts, batch=64):
+def embed(contexts, batch=64, pool='mean', return_loc_scale=False):
     """FROZEN batched embeddings, computed in an isolated subprocess so the
     torch-free parent can run XGBoost safely. Deterministic; no grad.
-    contexts: iterable of equal-length 1-D causal windows. -> float32
-    [N, D_MODEL]. Imports NO torch in the parent."""
+    contexts: iterable of equal-length 1-D causal windows. Imports NO torch in
+    the parent.
+
+    pool (Tier-1 lever): 'mean' (legacy, byte-identical) | 'reg' ([REG] token)
+      | 'meanreg' (concat → 2*D_MODEL).
+    return_loc_scale: also return [N,2] (loc, scale) = the window mean/std that
+      instance_norm strips from the embedding (Chronos's magnitude blind spot;
+      feed log(scale) to XGBoost as the volatility feature).
+    -> [N, D] (or ([N,D], [N,2]) if return_loc_scale).
+    """
     import sys
     import subprocess
     import tempfile
 
+    dim = 2 * D_MODEL if pool == 'meanreg' else D_MODEL
     X = np.asarray(contexts, dtype=np.float32)
     if len(X) == 0:
-        return np.zeros((0, D_MODEL), np.float32)
+        empty = np.zeros((0, dim), np.float32)
+        return (empty, np.zeros((0, 2), np.float32)) if return_loc_scale else empty
     with tempfile.TemporaryDirectory() as d:
         ip, op = os.path.join(d, 'in.npy'), os.path.join(d, 'out.npy')
+        ls = os.path.join(d, 'ls.npy') if return_loc_scale else None
         np.save(ip, X)
         env = dict(os.environ,
                    PYTHONPATH=str(_ROOT) + os.pathsep
                    + os.environ.get('PYTHONPATH', ''))
-        r = subprocess.run(
-            [sys.executable, '-m', 'futures_foundation._embed_worker',
-             ip, op, str(batch)],
-            cwd=str(_ROOT), env=env, capture_output=True, text=True)
+        cmd = [sys.executable, '-m', 'futures_foundation._embed_worker',
+               ip, op, str(batch), pool]
+        if ls:
+            cmd.append(ls)
+        r = subprocess.run(cmd, cwd=str(_ROOT), env=env,
+                           capture_output=True, text=True)
         if r.returncode != 0 or not os.path.exists(op):
             raise RuntimeError(
                 "chronos embed worker failed:\n" + r.stderr[-2000:])
-        return np.load(op)
+        E = np.load(op)
+        return (E, np.load(ls)) if return_loc_scale else E
 
 
-def embed_bars(close, indices, ctx: int = CTX, batch: int = 64):
+def embed_bars(close, indices, ctx: int = CTX, batch: int = 64,
+               pool='mean', return_loc_scale=False):
     """Foundation embeddings for decision bars in a close series.
 
     The canonical downstream entry-point: builds the log-close context
     window ending at each decision index (bars <= t — strictly causal) and
-    embeds them in one subprocess call.
+    embeds them in one subprocess call. `pool` / `return_loc_scale` are the
+    Tier-1 levers (see embed()). `ctx` can be raised (e.g. 512) for more history.
 
     close:   1-D array-like of close prices (chronological).
     indices: decision-bar integer positions; each must be >= ctx-1.
-    -> float32 [len(indices), D_MODEL]
+    -> float32 [len(indices), D] (or (E, loc_scale) if return_loc_scale).
     """
     c = np.asarray(close, dtype=np.float64)
     idx = np.asarray(indices, dtype=np.int64)
     if len(idx) == 0:
-        return np.zeros((0, D_MODEL), np.float32)
+        dim = 2 * D_MODEL if pool == 'meanreg' else D_MODEL
+        empty = np.zeros((0, dim), np.float32)
+        return (empty, np.zeros((0, 2), np.float32)) if return_loc_scale else empty
     if idx.min() < ctx - 1 or idx.max() >= len(c):
         raise ValueError(
             f"indices must lie in [{ctx - 1}, {len(c) - 1}] "
             f"(got [{idx.min()}, {idx.max()}])")
     lp = np.log(c)
     windows = np.stack([lp[i - ctx + 1:i + 1] for i in idx]).astype(np.float32)
-    return embed(windows, batch=batch)
+    return embed(windows, batch=batch, pool=pool, return_loc_scale=return_loc_scale)
 
 
 # ---------------------------------------------------------------------------

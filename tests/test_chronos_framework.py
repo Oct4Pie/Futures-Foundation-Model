@@ -190,6 +190,28 @@ def test_backbone_embed_is_frozen_deterministic():
     assert np.array_equal(e1, e2)                 # frozen -> deterministic
 
 
+@chronos_only
+def test_embed_tier1_pool_modes_and_loc_scale():
+    """Tier-1 levers through the real subprocess embed: [REG]/meanreg pooling,
+    loc_scale, and legacy 'mean' byte-identical. embed runs torch in a subprocess
+    so the parent stays torch-free (chronos_only, not torch_inproc)."""
+    from futures_foundation import foundation as backbone
+    C = np.random.default_rng(0).standard_normal((6, 128)).astype('float32').cumsum(1)
+    mean = backbone.embed(C, pool='mean')
+    reg = backbone.embed(C, pool='reg')
+    mr = backbone.embed(C, pool='meanreg')
+    assert mean.shape == (6, 256) and reg.shape == (6, 256) and mr.shape == (6, 512)
+    # legacy default == 'mean' (live path byte-identical)
+    assert np.array_equal(backbone.embed(C), mean)
+    # meanreg is exactly concat(mean, reg); reg differs from mean (real token)
+    np.testing.assert_allclose(mr, np.hstack([mean, reg]), rtol=1e-5, atol=1e-5)
+    assert not np.allclose(reg, mean)
+    # loc_scale: [N,2] (window mean, std), returned alongside the embedding
+    E, ls = backbone.embed(C, pool='meanreg', return_loc_scale=True)
+    assert E.shape == (6, 512) and ls.shape == (6, 2)
+    assert np.all(ls[:, 1] > 0)                   # std positive
+
+
 @iso_only
 @chronos_only
 def test_evaluate_run_orchestrates_honest_ruler():
