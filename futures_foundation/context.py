@@ -46,18 +46,16 @@ GATE_REG_PEARSON = 0.05
 GATE_CLF_AUC = 0.55
 
 #: (name, kind) — kind: 'reg' | 'clf'. Feature name downstream = 'ctx_<name>'.
-#: FFM 2.1 enriched set (user-approved prune, 2026-06-10 FF68 probe).
-#: fwd_return is the weakest seat (r .099, first time past gate) —
-#: flagged marginal. range_pos REMOVED (never beat trivial); trend_start
-#: REMOVED (dead in all arms).
+#: The FOUR context concepts downstream models consume (designed set, not the
+#: probe's measurement-driven list): market regime, market structure, range,
+#: volatility. Pruned 2026-06-18: fwd_return (ties trivial — no skill beyond
+#: cheap features, unused downstream), quiet_persist + trendiness (not needed
+#: for context). range_pos/trend_start were removed earlier (never beat trivial).
 HEAD_SPECS = [
-    ('fwd_return', 'reg'),
-    ('vol_expansion', 'clf'),
-    ('volatility', 'reg'),
-    ('structure', 'clf'),
-    ('quiet_persist', 'clf'),
-    ('trendiness', 'reg'),       # trend vs chop: fwd 20-bar efficiency ratio
-    ('range_bound', 'clf'),      # ranging: fwd 10-bar closes stay in range
+    ('vol_expansion', 'clf'),    # market regime: fwd 20-bar vol > 1.5x median
+    ('structure', 'clf'),        # market structure: HH/HL vs LL/LH
+    ('range_bound', 'clf'),      # range: fwd 10-bar closes stay in range
+    ('volatility', 'reg'),       # volatility: fwd 10-bar realized-vol percentile
 ]
 
 #: Candidate heads under probe evaluation — promoted into HEAD_SPECS only
@@ -74,27 +72,20 @@ def compute_context_labels(close: pd.Series) -> pd.DataFrame:
     """All seven forward-looking labels from a close series. NaN where a
     trailing or forward window is unavailable — never filled.
 
-      fwd_return     reg  20-bar fwd log-return / trailing 200-bar std of
-                          20-bar returns, clipped +/-4
-      vol_expansion  clf  fwd 20-bar realized vol > 1.5x trailing 200-bar
-                          median of 20-bar realized vol
-      volatility     reg  fwd 10-bar realized-vol percentile vs trailing
-                          100 bars' 10-bar vols, continuous [0,1]
-      structure      clf  fwd 20-bar close max/min vs trailing 12-bar close
-                          max/min: both higher = 1, both lower = 0, mixed NaN
-      trendiness     reg  fwd 20-bar efficiency ratio (|net|/path), [0,1]
-      range_bound    clf  fwd 10-bar closes stay in trailing 20-bar range
-      quiet_persist  clf  on currently-quiet bars only: quiet persists
-                          (fwd vol <= 1.25x trailing median); else NaN
+    The four shipped context concepts (HEAD_SPECS):
+      vol_expansion  clf  MARKET REGIME: fwd 20-bar realized vol > 1.5x
+                          trailing 200-bar median of 20-bar realized vol
+      structure      clf  MARKET STRUCTURE: fwd 20-bar close max/min vs
+                          trailing 12-bar: both higher = 1, both lower = 0,
+                          mixed NaN
+      range_bound    clf  RANGE: fwd 10-bar closes stay in trailing 20-bar range
+      volatility     reg  VOLATILITY: fwd 10-bar realized-vol percentile vs
+                          trailing 100 bars' 10-bar vols, continuous [0,1]
     """
     lc = np.log(close)
     r1 = lc.diff()
 
     out = pd.DataFrame(index=close.index)
-
-    fwd20 = lc.shift(-20) - lc
-    sigma20 = lc.diff(20).rolling(200, min_periods=50).std()
-    out['fwd_return'] = (fwd20 / sigma20.replace(0, np.nan)).clip(-4, 4)
 
     v10 = r1.rolling(10).std()
     v20 = r1.rolling(20).std()
@@ -133,12 +124,6 @@ def compute_context_labels(close: pd.Series) -> pd.DataFrame:
     rh = close.rolling(20).max()
     rl = close.rolling(20).min()
 
-    # trendiness: efficiency ratio of the NEXT 20 bars — |net move| over
-    # path length. 1 = clean trend (either direction), ~0 = chop.
-    net = (lc.shift(-20) - lc).abs()
-    path = r1.abs().rolling(20).sum().shift(-20)      # covers t+1..t+20
-    out['trendiness'] = (net / path.replace(0, np.nan)).clip(0, 1)
-
     # range_bound: next 10 bars' closes stay inside the current 20-bar
     # close range (the "ranging" state, direction-agnostic).
     fwd_hi10 = close.rolling(10).max().shift(-10)
@@ -146,17 +131,6 @@ def compute_context_labels(close: pd.Series) -> pd.DataFrame:
     rb = ((fwd_hi10 <= rh) & (fwd_lo10 >= rl)).astype(float)
     rb[fwd_hi10.isna() | fwd_lo10.isna() | rh.isna() | rl.isna()] = np.nan
     out['range_bound'] = rb
-
-    # quiet_persist: defined ONLY on currently-quiet bars (trailing 20-bar
-    # vol <= trailing median); does quiet persist — no meaningful expansion
-    # (fwd vol <= 1.25x median) — over the next 20 bars? The 1.25x buffer
-    # keeps the label clean inside a uniform quiet regime (vs comparing to
-    # the median itself, which flips ~half the bars by construction).
-    # Conditional label — non-quiet bars are NaN (dropped per-head).
-    quiet_now = v20 <= med_v20
-    qp = (fwd_v20 <= 1.25 * med_v20).astype(float)
-    qp[~quiet_now | fwd_v20.isna() | med_v20.isna() | v20.isna()] = np.nan
-    out['quiet_persist'] = qp
 
     return out
 

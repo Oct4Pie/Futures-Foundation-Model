@@ -34,22 +34,15 @@ def _synthetic_dataset(n=3000, d=24, informative=True):
     E = RNG.normal(0, 1, (n, d)).astype(np.float32)
     lab = pd.DataFrame()
     if informative:
-        lab['fwd_return'] = np.clip(E[:, 0] + RNG.normal(0, .3, n), -4, 4)
         lab['vol_expansion'] = (E[:, 1] + RNG.normal(0, .3, n) > 0).astype(float)
         lab['volatility'] = 1 / (1 + np.exp(-(E[:, 2] + RNG.normal(0, .3, n))))
         s = E[:, 3] + RNG.normal(0, .3, n)
         lab['structure'] = np.where(s > .5, 1.0, np.where(s < -.5, 0.0, np.nan))
-        q = E[:, 5] + RNG.normal(0, .3, n)          # conditional label: some NaN
-        lab['quiet_persist'] = np.where(q > 1.2, np.nan, (q > 0).astype(float))
-        lab['trendiness'] = 1 / (1 + np.exp(-(E[:, 4] + RNG.normal(0, .3, n))))
         lab['range_bound'] = (E[:, 6] + RNG.normal(0, .3, n) > 0).astype(float)
     else:
-        lab['fwd_return'] = RNG.normal(0, 1, n)
         lab['vol_expansion'] = (RNG.random(n) > .5).astype(float)
         lab['volatility'] = RNG.random(n)
         lab['structure'] = (RNG.random(n) > .5).astype(float)
-        lab['quiet_persist'] = (RNG.random(n) > .5).astype(float)
-        lab['trendiness'] = RNG.random(n)
         lab['range_bound'] = (RNG.random(n) > .5).astype(float)
     cut = int(n * .8)
     return E[:cut], lab.iloc[:cut], E[cut:], lab.iloc[cut:]
@@ -88,7 +81,7 @@ def test_transform_include_override_for_ablation(fitted_heads):
 
 
 def test_noise_labels_fail_gates_and_transform_is_empty():
-    # large n: with 4 clf heads, chance AUC > 0.55 must be ~impossible
+    # large n: with 3 clf heads, chance AUC > 0.55 must be ~impossible
     E_tr, lab_tr, E_va, lab_va = _synthetic_dataset(n=8000, informative=False)
     heads = ContextHeads(seed=0, n_estimators=40).fit(
         E_tr, lab_tr, E_va, lab_va, verbose=False)

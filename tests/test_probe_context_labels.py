@@ -39,31 +39,14 @@ def test_all_heads_present_and_tail_nan(random_close):
     # every probed head has a label column (order is not a contract)
     assert set(lab.columns) == {name for name, _ in probe.HEADS}
     # forward-looking: the last `horizon` rows must be NaN, never filled
-    assert lab['fwd_return'].iloc[-20:].isna().all()
     assert lab['vol_expansion'].iloc[-20:].isna().all()
     assert lab['volatility'].iloc[-10:].isna().all()
     assert lab['structure'].iloc[-20:].isna().all()
     assert lab['range_bound'].iloc[-10:].isna().all()
-    # head of series (trailing windows unavailable) also NaN
-    assert lab['fwd_return'].iloc[:49].isna().all()      # needs 50 obs of sigma
     # and there IS a populated middle
     mid = lab.iloc[250:350]
-    assert mid['fwd_return'].notna().all()
     assert mid['volatility'].notna().all()
-
-
-def test_fwd_return_known_answer():
-    """Steady exponential uptrend -> strongly positive z, clipped at +4."""
-    close = _series(100 * np.exp(0.001 * np.arange(N)))
-    z = probe.compute_labels(close)['fwd_return']
-    # constant log-growth: 20-bar fwd return is constant, trailing std ~ 0
-    # -> z hits the +4 clip wherever defined
-    assert (z.dropna() > 0).all()
-    assert z.dropna().max() <= 4.0 + 1e-9
-    down = probe.compute_labels(
-        _series(100 * np.exp(-0.001 * np.arange(N))))['fwd_return']
-    assert (down.dropna() < 0).all()
-    assert down.dropna().min() >= -4.0 - 1e-9
+    assert mid['vol_expansion'].notna().all()
 
 
 def test_vol_expansion_known_answer():
@@ -112,7 +95,7 @@ def test_labels_are_forward_looking_causality():
     pd.testing.assert_frame_equal(a.iloc[250:370], b.iloc[250:370])
     # labels whose forward window crosses the change: must differ somewhere
     cross = slice(390, 400)
-    assert not a['fwd_return'].iloc[cross].equals(b['fwd_return'].iloc[cross])
+    assert not a['volatility'].iloc[cross].equals(b['volatility'].iloc[cross])
 
 
 def test_trivial_features_are_strictly_trailing():
@@ -126,18 +109,8 @@ def test_trivial_features_are_strictly_trailing():
 
 
 # ---------------------------------------------------------------------------
-# Trend/range/chop heads (promoted 2026-06-10, FF68 arm) — known answers +
-# conditionality
+# Range head — known answer
 # ---------------------------------------------------------------------------
-
-def test_trendiness_known_answer():
-    """Monotonic line -> efficiency ratio ~1; alternating chop -> ~0."""
-    trend = probe.compute_labels(_series(np.arange(100, 100 + N)))
-    assert (trend['trendiness'].dropna() > 0.95).all()
-    osc = 100 + 0.5 * (np.arange(N) % 2)          # +/- alternating closes
-    chop = probe.compute_labels(_series(osc))
-    assert (chop['trendiness'].dropna() < 0.10).all()
-
 
 def test_range_bound_known_answer():
     """Oscillation inside a fixed band -> 1; strong trend -> 0."""
@@ -146,19 +119,3 @@ def test_range_bound_known_answer():
     assert (rb.dropna() == 1.0).all()
     trend = probe.compute_labels(_series(np.arange(100, 100 + N)))
     assert (trend['range_bound'].dropna() == 0.0).all()
-
-
-def test_quiet_persist_conditional_and_known_answer():
-    """Defined ONLY on currently-quiet bars; 1 when quiet persists,
-    0 just before a vol burst."""
-    quiet = RNG.normal(0, 0.0002, 500)
-    burst = RNG.normal(0, 0.01, 100)
-    close = _series(100 * np.exp(np.cumsum(np.r_[quiet, burst])))
-    qp = probe.compute_labels(close)['quiet_persist']
-    # uniform quiet: overwhelmingly 1 (the label is statistical — rare
-    # sampling-noise flips are inherent; discrimination is the probe's job)
-    assert qp.iloc[300:450].dropna().mean() > 0.85
-    # any bar defined just before the burst (fwd window inside it) must be 0
-    pre_burst = qp.iloc[478:500].dropna()
-    assert (pre_burst == 0.0).all()
-    assert qp.iloc[530:560].isna().all()               # not quiet -> NaN

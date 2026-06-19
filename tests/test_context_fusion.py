@@ -32,12 +32,9 @@ def _fake_embed(contexts, batch=64):
 def _heads(n=2000):
     E = RNG.normal(0, 1, (n, D)).astype(np.float32)
     lab = pd.DataFrame({
-        'fwd_return': np.clip(E[:, 0] + RNG.normal(0, .3, n), -4, 4),
         'vol_expansion': (E[:, 1] > 0).astype(float),
         'volatility': 1 / (1 + np.exp(-E[:, 2])),
         'structure': (E[:, 0] > 0).astype(float),
-        'quiet_persist': (E[:, 2] > 0).astype(float),
-        'trendiness': 1 / (1 + np.exp(-E[:, 1])),
         'range_bound': (E[:, 0] < 0).astype(float)})
     cut = int(n * .8)
     return ContextHeads(seed=0, n_estimators=40).fit(

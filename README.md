@@ -51,31 +51,31 @@ This architecture is **proven live**: a production selection model (frozen Bolt 
 
 ### What the foundation actually knows (measured)
 
-Every context target is probed with pre-registered gates, a shuffled-label control (leak detector), and a **trivial baseline** (8 trailing summary stats — "does the foundation know more than cheap features?"). Full pre-2023 corpus, 6 tickers × {3min, 5min}, ~236k decision bars. The decisive finding (FFM 2.1): the **enriched input recipe — `[Bolt embedding | 68-feature library]`** — beats both the embedding alone and the trivial adversary on every shipped head; close-only context was the binding constraint:
+Every context target is probed with pre-registered gates, a shuffled-label control (leak detector), and a **trivial baseline** (8 trailing summary stats — "does the foundation know more than cheap features?"), on the full pre-2023 corpus (6 tickers × {3min, 5min}, ~236k decision bars).
 
-| Forward target | Emb only | Trivial | **Emb + 68 features** | Verdict |
+The heads ship as **four context concepts** downstream models consume — **market regime, market structure, range, volatility** — each measured on the **enriched input `[Bolt embedding | 68-feature library]`** (which beats both embedding-alone and the trivial baseline; close-only context was the binding constraint):
+
+| Context concept | Head (forward target) | Emb only | Trivial | **Emb + 68 features** |
 |---|---|---|---|---|
-| Realized-vol percentile (10-bar fwd) | r .52 | .41 | **r .64** | ✅ ships |
-| Vol expansion >1.5× median (20-bar fwd) | AUC .78 | .70 | **AUC .82** | ✅ ships |
-| Quiet persists (on quiet bars, 20-bar) | AUC .69 | .59 | **AUC .74** | ✅ ships |
-| Structure: HH/HL vs LL/LH (20-bar fwd) | AUC .79 | .81 | **AUC .82** | ✅ ships (beats trivial only when enriched) |
-| Range-bound (10-bar fwd) | AUC .59 | .67 | **AUC .70** | ✅ ships |
-| Trendiness: fwd efficiency ratio | r .12 | .12 | **r .15** | ✅ ships (weak — a tilt, not a trigger) |
+| **market regime** | Vol expansion >1.5× median (20-bar) | AUC .78 | .70 | **AUC .82** |
+| **market structure** | HH/HL vs LL/LH (20-bar) | AUC .79 | .81 | **AUC .82** |
+| **range** | Range-bound (10-bar) | AUC .59 | .67 | **AUC .70** |
+| **volatility** | Realized-vol percentile (10-bar) | r .52 | .41 | **r .64** |
 
-The division of labor this implies is the design: the foundation understands **conditions** (volatility regime, expansion risk, structure, persistence); the strategy supplies the **edge** (signal selection, direction, sizing). Probe harness: `scripts/probe_context_heads.py` (`--ff68` for the input-arm comparison).
+Pruned 2026-06-18 (kept only what downstream needs): `fwd_return` (ties trivial — no skill beyond cheap features), `quiet_persist` and `trendiness` (not consumed downstream). The division of labor is the design: the foundation understands **conditions** (volatility, regime, structure, range); the strategy supplies the **edge** (signal selection, direction, sizing). Probe harness: `scripts/probe_context_heads.py`; walk-forward overfit-driven validation: `scripts/eval_context_heads.py`.
 
 ### Context Heads — the per-candle market readout (FFM 2.1)
 
-`futures_foundation.context.ContextHeads` packages that knowledge as **seven named, calibrated fields at any bar** — for entry confirmation, exit/management context, RL observations, or fusion into any downstream model:
+`futures_foundation.context.ContextHeads` packages that knowledge as **four named, calibrated fields at any bar** (market regime, structure, range, volatility) — for entry confirmation, exit/management context, RL observations, or fusion into any downstream model:
 
 ```python
 from futures_foundation.context import ContextHeads
 
 heads = ContextHeads.load('heads_<date>.joblib')        # or $CONTEXT_HEADS_BUNDLE
-ctx = heads.context_at(ohlcv_df, bar_indices, 'ES')     # DataFrame: 7 ctx_* columns
+ctx = heads.context_at(ohlcv_df, bar_indices, 'ES')     # DataFrame: 4 ctx_* columns
 ```
 
-Certified out-of-sample on 80,786 bars (2023–2026) the heads never saw: calibration is monotone — `ctx_vol_expansion` deciles run 1%→90% realized, `ctx_structure` 10%→92%, `ctx_quiet_persist` 58%→99% — and a 7-feature regime classifier scores 52.2% vs a 30.2% majority baseline OOS (`scripts/demo_regime_model.py`). Heads are trained once on pre-2023 data (`scripts/train_context_heads.py`), frozen, and leak-guarded: downstream training that consumes `ctx_*` is restricted to ≥ 2023 by the fusion seam.
+Certified out-of-sample on bars the heads never saw: calibration is monotone — `ctx_vol_expansion` deciles run 1%→90% realized, `ctx_structure` 10%→92% — and a regime classifier on the `ctx_*` fields beats its majority-class baseline OOS (`scripts/demo_regime_model.py`). Heads are trained once on pre-2023 data (`scripts/train_context_heads.py`), frozen, and leak-guarded (downstream consumers restricted to ≥ 2023). Validated the same overfit-driven, walk-forward way as the strategy heads (`scripts/eval_context_heads.py`).
 
 ### Why this architecture
 
@@ -260,7 +260,7 @@ data/
 
 ### Labels
 
-Two label sets live in the library. `futures_foundation.labels` — the original 4-task self-supervised generators (regime / volatility / structure / range), still produced by `prepare_data` for the XGBoost pipeline's parquet cache. `futures_foundation.context.compute_context_labels` — the forward-looking, close-only context-head targets (volatility, vol-expansion, quiet-persist, structure, range-bound, trendiness, fwd-return) that train the FFM 2.1 context heads.
+Two label sets live in the library. `futures_foundation.labels` — the original 4-task self-supervised generators (regime / volatility / structure / range), still produced by `prepare_data` for the XGBoost pipeline's parquet cache. `futures_foundation.context.compute_context_labels` — the forward-looking context-head targets; the shipped FFM 2.1 heads are the four downstream concepts: market regime (vol-expansion), market structure, range-bound, volatility.
 
 ---
 
@@ -276,7 +276,7 @@ Futures-Foundation-Model/
 │   ├── labels.py                 # Legacy forward-looking label generation
 │   ├── prepare.py                # prepare_data: raw CSVs → features+labels parquet
 │   ├── primitives/               # Indicators, barriers, rolling, session, detection
-│   ├── context.py                # ★ ContextHeads — 7 calibrated ctx_* fields per candle (FFM 2.1)
+│   ├── context.py                # ★ ContextHeads — 4 calibrated ctx_* fields per candle (FFM 2.1)
 │   ├── chronos/                  # ★ Foundation training/eval/deploy harness (see above)
 │   └── finetune/                 # Torch-free framework survivors
 │       ├── base.py               # StrategyLabeler ABC (final run() = TP≥SL triple barrier)
@@ -303,7 +303,7 @@ Futures-Foundation-Model/
 - [x] Chronos-Bolt as the foundation (seam promoted, torch stack retired, torch-free import contract)
 - [x] Capability probes — measured what the foundation knows, per input recipe (5 arms, gates + shuffle + trivial adversary)
 - [x] Bolt domain-adaptation fine-tune + A/B harness (verdict: vanilla wins for selection — stay frozen)
-- [x] **Context heads (FFM 2.1)** — 7 calibrated `ctx_*` fields per candle on the enriched `[emb | 68-feature]` recipe, OOS-certified
+- [x] **Context heads (FFM 2.1)** — 4 calibrated `ctx_*` fields per candle on the enriched `[emb | 68-feature]` recipe, OOS-certified
 - [ ] First ctx consumers, pre-registered A/Bs: RL exit observations; new strategies built with context from day one
 - [ ] Enriched HTF readout (1h/4h ctx for enriched bundles — emb-only bundles cover it today)
 - [ ] Single-file ONNX export (foundation + heads in one graph) for the bot
