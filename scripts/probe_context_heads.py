@@ -62,7 +62,7 @@ HEADS = HEAD_SPECS + CANDIDATE_HEAD_SPECS
 
 # unconditional labels every decision bar must have (conditional labels
 # like quiet_persist are NaN by design on most bars — never row-filtered).
-REQUIRED_LABELS = ['fwd_return', 'vol_expansion', 'volatility']
+REQUIRED_LABELS = ['vol_expansion', 'volatility']
 
 CTX = 128                    # bars per Bolt context (matches *_chronos labelers)
 VAL_START = pd.Timestamp('2022-11-01', tz='UTC')
