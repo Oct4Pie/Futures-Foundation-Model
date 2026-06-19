@@ -41,6 +41,7 @@ import pandas as pd
 
 from .data import walk_forward_folds
 from futures_foundation import foundation as backbone
+from futures_foundation import overfit as _of
 from . import context_fusion
 from .head_xgb import XGBHead
 
@@ -63,14 +64,10 @@ GEN_ACCEPT_MARGIN_R = 0.05
 
 
 def _gen_score(per_fold):
-    """Generalization-robust score: cross-fold mean penalized by instability.
+    """Generalization-robust score (shared overfit library, meanR penalty).
     A config consistent across folds beats one that spikes on a few and
     collapses on others (the overfit signature), even at equal mean."""
-    if not per_fold:
-        return -1.0
-    mean = float(np.mean(per_fold))
-    std = float(np.std(per_fold)) if len(per_fold) > 1 else 0.0
-    return mean - GEN_STD_PENALTY * std
+    return _of.gen_score(per_fold, GEN_STD_PENALTY)
 
 
 def _suggest(trial):
@@ -179,7 +176,8 @@ def tune_head(labeler, *, n_trials=80, seed=42, max_folds=14,
             trial.report(running, k)
             if trial.should_prune():
                 raise optuna.TrialPruned()
-        return _gen_score(per_fold)                 # generalization-robust score
+        score = _gen_score(per_fold)                # generalization-robust score
+        return score if score != float('-inf') else -1.0   # finite floor for TPE
 
     study = optuna.create_study(
         direction='maximize',
@@ -210,7 +208,10 @@ def tune_head(labeler, *, n_trials=80, seed=42, max_folds=14,
     # on the untouched GUARD set by a real margin. Otherwise the search overfit
     # the tune folds (won TUNE, lost GUARD) → auto-fall-back to defaults. We
     # return what should ACTUALLY be used, not the raw Optuna winner.
-    generalizes = lift_guard >= GEN_ACCEPT_MARGIN_R
+    # accept tuned only if it beats default on the held-out GUARD by the margin
+    # (shared overfit library — same selection logic as the reg-ladder rungs).
+    generalizes = _of.best_config(
+        b_guard, [(best, t_guard)], accept_margin=GEN_ACCEPT_MARGIN_R) is not None
     if generalizes:
         chosen, chosen_name = best, 'tuned'
         print(f"\n  ✅ ACCEPT tuned — generalizes (GUARD lift "

@@ -28,7 +28,8 @@ def test_gen_score_penalty_is_mean_minus_penalty_times_std():
 
 
 def test_gen_score_empty_is_floor():
-    assert TH._gen_score([]) == -1.0
+    # delegates to the shared library, whose empty floor is -inf
+    assert TH._gen_score([]) == float('-inf')
 
 
 # ---- accept / auto-fallback decision --------------------------------------

@@ -14,6 +14,7 @@ import pandas as pd
 
 from .data import walk_forward_folds
 from futures_foundation import foundation as backbone
+from futures_foundation import overfit as _of
 from . import context_fusion
 from .head_xgb import XGBHead, XGBRiskHead
 
@@ -65,20 +66,15 @@ def _should_loop(loop, binary, default_head):
 
 
 def _overfit_trigger(train_meanR, val_meanR):
-    """True if the head overfit TRAIN relative to VALIDATION by more than
-    OVERFIT_GAP_R → the auto-regularize remediation should fire."""
-    return (train_meanR - val_meanR) > OVERFIT_GAP_R
+    """Auto-regularize trigger: head overfit TRAIN vs VAL by > OVERFIT_GAP_R.
+    Thin wrapper over the shared overfit library (meanR tolerance)."""
+    return _of.overfit_trigger(train_meanR, val_meanR, OVERFIT_GAP_R)
 
 
 def _best_rung(default_val_meanR, rung_val_means):
-    """Pick the regularization rung with the best VALIDATION meanR, but only if
-    it beats the default head's validation meanR; otherwise None (keep default).
-    rung_val_means: iterable of (cfg, val_meanR). Selection never sees TEST."""
-    best_vm, best_cfg = default_val_meanR, None
-    for cfg, vm in rung_val_means:
-        if vm > best_vm:
-            best_vm, best_cfg = vm, cfg
-    return best_cfg
+    """Pick the regularization rung with the best VALIDATION meanR (only if it
+    beats the default; else None = keep default). Shared overfit library."""
+    return _of.best_config(default_val_meanR, rung_val_means, accept_margin=0.0)
 
 
 def _pooled_auc(proba_records):
