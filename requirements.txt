@@ -1,5 +1,6 @@
 torch>=2.0
 transformers>=4.30
+peft>=0.10             # bolt_finetune --lora: parameter-efficient Chronos-Bolt fine-tune
 datasets>=2.14
 safetensors>=0.3
 pandas>=2.0

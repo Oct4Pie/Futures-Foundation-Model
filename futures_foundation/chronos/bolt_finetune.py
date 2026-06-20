@@ -29,14 +29,13 @@ exactly) — so the encoder adapts to precisely what we later embed.
 Torch/chronos are imported INSIDE run() (lazy) — never at module top — mirroring
 backbone.py so the package stays import-safe in torch-free contexts.
 
-CLI:
-    python3 -m futures_foundation.chronos.bolt_finetune                 # 6tk, 3m+5m, 20k steps
+CLI (Tier-2 defaults: 9 tickers, 1m+3m+5m, lr 1e-6, linear sched + warmup):
+    python3 -m futures_foundation.chronos.bolt_finetune                 # full-FT Tier-2
+    python3 -m futures_foundation.chronos.bolt_finetune --lora          # LoRA (lr auto 1e-4)
     python3 -m futures_foundation.chronos.bolt_finetune --smoke         # 2-step sanity
-    python3 -m futures_foundation.chronos.bolt_finetune \
-        --tickers ES,NQ,RTY,YM,GC,SI,CL,ZB,ZN --tfs 3min,5min  # widest domain
 Then (per the wiring gap — NOT auto-applied — see backbone.stamp_active_source):
-    export CHRONOS_FT_CKPT=<printed path>
-    python3 colabs/supertrend_chronos.py                       # A/B vs vanilla
+    python3 -m futures_foundation.chronos.bolt_ab \
+        --strategy colabs/supertrend_chronos.py --ckpt <printed path>   # A/B vs vanilla
 """
 import argparse
 from pathlib import Path
@@ -50,9 +49,11 @@ DATA_DIR = _ROOT / 'data'
 OUT_DIR = _ROOT / 'temp' / 'chronos_bolt_ft'
 MODEL_ID = 'amazon/chronos-bolt-tiny'
 
-# Downstream signal models run on these 6 (equity + metal). data/ also has
-# CL/ZB/ZN (5min-only) — pass them via --tickers for wider domain coverage.
+# Downstream signal models run on these 6 (equity + metal).
 TICKERS = ['ES', 'NQ', 'RTY', 'YM', 'GC', 'SI']
+# Widest domain coverage for the backbone (CL/ZB/ZN add 1min+5min). Tier-2
+# default: adapt on the broadest futures corpus available.
+ALL_TICKERS = ['ES', 'NQ', 'RTY', 'YM', 'GC', 'SI', 'CL', 'ZB', 'ZN']
 
 
 def _build_windows(context_length, prediction_length, stride, tfs, tickers,
@@ -95,10 +96,17 @@ def _build_windows(context_length, prediction_length, stride, tfs, tickers,
 
 
 def run(steps=20000, context_length=128, prediction_length=64, stride=32,
-        tfs=('3min', '5min'), tickers=TICKERS, months=0, lr=1e-3,
-        batch_size=32, save_steps=None, smoke=False):
+        tfs=('1min', '3min', '5min'), tickers=ALL_TICKERS, months=0, lr=1e-6,
+        batch_size=32, save_steps=None, smoke=False,
+        warmup_ratio=0.1, lr_scheduler='linear', optim='adamw_torch',
+        lora=False, lora_r=16, lora_alpha=32, lora_dropout=0.05):
     """Domain-adapt bolt-tiny on the given futures bars; save checkpoint.
-    Returns the checkpoint Path (HF format — backbone.embed loads it directly)."""
+    Returns the checkpoint Path (HF format — backbone.embed loads it directly).
+
+    Tier-2 recipe (defaults): lr=1e-6 (official Chronos-2 fit rate; the prior
+    run's high lr is the prime suspect for the flat A/B), linear scheduler +
+    warmup_ratio=0.1, adamw_torch. lora=True wraps the encoder with LoRA adapters
+    (peft) — parameter-efficient, less overfit; pass a LoRA-appropriate lr (~1e-4)."""
     import torch
     from torch.utils.data import Dataset
     from transformers import Trainer, TrainingArguments
@@ -117,7 +125,19 @@ def run(steps=20000, context_length=128, prediction_length=64, stride=32,
 
     pipe = BaseChronosPipeline.from_pretrained(MODEL_ID)
     model = pipe.model                       # ChronosBoltModelForForecasting
-    cfg_pred = model.chronos_config.prediction_length
+    print(f"  recipe: lr={lr:g} sched={lr_scheduler} warmup={warmup_ratio} "
+          f"optim={optim} lora={lora}"
+          + (f"(r={lora_r},a={lora_alpha},drop={lora_dropout})" if lora else ""))
+    if lora:
+        from peft import LoraConfig, get_peft_model
+        # T5-stack attention projections (Bolt's encoder is a T5 encoder).
+        lc = LoraConfig(r=lora_r, lora_alpha=lora_alpha,
+                        lora_dropout=lora_dropout, bias='none',
+                        target_modules=['q', 'v', 'k', 'o'])
+        model = get_peft_model(model, lc)
+        model.print_trainable_parameters()
+    cfg_pred = model.chronos_config.prediction_length if not lora \
+        else model.base_model.model.chronos_config.prediction_length
     if prediction_length > cfg_pred:
         print(f"  ⚠ requested pred={prediction_length} > model native "
               f"{cfg_pred}; clamping to {cfg_pred}")
@@ -152,6 +172,9 @@ def run(steps=20000, context_length=128, prediction_length=64, stride=32,
         save_steps=save_steps,
         save_total_limit=1,
         logging_steps=max(1, steps // 100),
+        lr_scheduler_type=lr_scheduler,      # Tier-2: linear decay
+        warmup_ratio=warmup_ratio,           # Tier-2: warmup
+        optim=optim,                         # Tier-2: adamw_torch
         report_to=[],
         dataloader_num_workers=0,
         remove_unused_columns=False,         # keep 'context'/'target' keys
@@ -163,6 +186,9 @@ def run(steps=20000, context_length=128, prediction_length=64, stride=32,
     print(f"  device={device} | training {steps} steps ...")
     trainer.train()
 
+    if lora:
+        # Fold adapters into base weights so backbone.embed loads a plain ckpt.
+        model = model.merge_and_unload()
     final = OUT_DIR / 'checkpoint-final'
     model.save_pretrained(str(final))
     print(f"\nDONE — domain-adapted Bolt checkpoint: {final}")
@@ -181,17 +207,32 @@ def main():
                     help='must match downstream embed CTX (128) for cleanest transfer')
     ap.add_argument('--prediction-length', type=int, default=64)
     ap.add_argument('--stride', type=int, default=32, help='bars between windows')
-    ap.add_argument('--tfs', default='3min,5min')
-    ap.add_argument('--tickers', default=','.join(TICKERS))
+    ap.add_argument('--tfs', default='1min,3min,5min',
+                    help='Tier-2 default spans 1/3/5min')
+    ap.add_argument('--tickers', default=','.join(ALL_TICKERS),
+                    help='Tier-2 default = all 9 futures')
     ap.add_argument('--months', type=int, default=0, help='0 = all available')
-    ap.add_argument('--lr', type=float, default=1e-3)
+    ap.add_argument('--lr', type=float, default=None,
+                    help='default 1e-6 (full FT, Tier-2) or 1e-4 if --lora')
     ap.add_argument('--batch-size', type=int, default=32)
+    ap.add_argument('--warmup-ratio', type=float, default=0.1)
+    ap.add_argument('--lr-scheduler', default='linear')
+    ap.add_argument('--optim', default='adamw_torch')
+    ap.add_argument('--lora', action='store_true',
+                    help='parameter-efficient LoRA fine-tune (peft)')
+    ap.add_argument('--lora-r', type=int, default=16)
+    ap.add_argument('--lora-alpha', type=int, default=32)
+    ap.add_argument('--lora-dropout', type=float, default=0.05)
     ap.add_argument('--smoke', action='store_true')
     a = ap.parse_args()
+    lr = a.lr if a.lr is not None else (1e-4 if a.lora else 1e-6)
     run(steps=a.steps, context_length=a.context_length,
         prediction_length=a.prediction_length, stride=a.stride,
         tfs=tuple(a.tfs.split(',')), tickers=tuple(a.tickers.split(',')),
-        months=a.months, lr=a.lr, batch_size=a.batch_size, smoke=a.smoke)
+        months=a.months, lr=lr, batch_size=a.batch_size, smoke=a.smoke,
+        warmup_ratio=a.warmup_ratio, lr_scheduler=a.lr_scheduler, optim=a.optim,
+        lora=a.lora, lora_r=a.lora_r, lora_alpha=a.lora_alpha,
+        lora_dropout=a.lora_dropout)
 
 
 if __name__ == '__main__':
