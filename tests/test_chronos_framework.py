@@ -231,6 +231,29 @@ def test_evaluate_run_fuses_optional_features():
     assert isinstance(res[0]['REAL'], np.ndarray)
 
 
+def test_evaluate_run_tier1_embed_cache_guard():
+    """Tier-1 + embed_cache is incompatible (cache is mean-pooled, no loc_scale).
+    The guard fires in Phase 2 BEFORE any embed → torch-free, runs in the suite."""
+    with pytest.raises(ValueError):
+        evaluate.run(_DummyLabeler(), seeds=(0,), max_folds=1,
+                     embed_cache={'A': {}, 'B': {}}, pool_mode='meanreg')
+    with pytest.raises(ValueError):
+        evaluate.run(_DummyLabeler(), seeds=(0,), max_folds=1,
+                     embed_cache={'A': {}, 'B': {}}, use_loc_scale=True)
+
+
+@iso_only
+@chronos_only
+def test_evaluate_run_tier1_meanreg_loc_scale():
+    """Tier-1 path end-to-end through ev.run: meanreg pooling + loc_scale append
+    (the merged wiring — per-fold slicing + log(std) feature) must run and
+    produce the honest-ruler records without dim mismatch."""
+    res = evaluate.run(_DummyLabeler(), seeds=(0,), max_folds=1,
+                       pool_mode='meanreg', use_loc_scale=True)
+    assert len(res) == 1
+    assert isinstance(res[0]['REAL'], np.ndarray)
+
+
 def test_legacy_pipelines_chronos_pickle_compat(tmp_path):
     """Production bundles trained pre-consolidation reference classes under
     'pipelines.chronos.*'. Importing futures_foundation.chronos installs a

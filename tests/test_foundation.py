@@ -159,6 +159,14 @@ def test_embed_bars_empty_meanreg_loc_scale_shapes():
     assert E.shape == (0, 2 * foundation.D_MODEL) and ls.shape == (0, 2)
 
 
+def test_embed_rejects_bad_pool():
+    # fail-fast in the torch-free parent, not a cryptic worker RuntimeError
+    with pytest.raises(ValueError):
+        foundation.embed(np.zeros((2, 128), np.float32), pool='bogus')
+    with pytest.raises(ValueError):
+        foundation.embed_bars(np.arange(1, 301, dtype=float), [200], pool='nope')
+
+
 def test_stamp_active_source_prints_frozen_tag(monkeypatch, capsys):
     monkeypatch.delenv('CHRONOS_FT_CKPT', raising=False)
     src = foundation.stamp_active_source(context='unit test')

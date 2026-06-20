@@ -114,6 +114,8 @@ def embed(contexts, batch=64, pool='mean', return_loc_scale=False):
     import subprocess
     import tempfile
 
+    if pool not in ('mean', 'reg', 'meanreg'):
+        raise ValueError(f"pool must be 'mean'|'reg'|'meanreg', got {pool!r}")
     dim = 2 * D_MODEL if pool == 'meanreg' else D_MODEL
     X = np.asarray(contexts, dtype=np.float32)
     if len(X) == 0:
