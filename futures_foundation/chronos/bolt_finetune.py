@@ -95,18 +95,22 @@ def _build_windows(context_length, prediction_length, stride, tfs, tickers,
     return np.asarray(ctxs, np.float32), np.asarray(tgts, np.float32)
 
 
-def run(steps=20000, context_length=128, prediction_length=64, stride=32,
+def run(steps=1000, context_length=128, prediction_length=64, stride=32,
         tfs=('1min', '3min', '5min'), tickers=ALL_TICKERS, months=0, lr=1e-6,
-        batch_size=32, save_steps=None, smoke=False,
-        warmup_ratio=0.1, lr_scheduler='linear', optim='adamw_torch',
-        lora=False, lora_r=16, lora_alpha=32, lora_dropout=0.05):
+        batch_size=256, smoke=False,
+        warmup_ratio=0.0, lr_scheduler='linear', optim=None,
+        lora=False, lora_r=8, lora_alpha=16, lora_dropout=0.0):
     """Domain-adapt bolt-tiny on the given futures bars; save checkpoint.
     Returns the checkpoint Path (HF format — backbone.embed loads it directly).
 
-    Tier-2 recipe (defaults): lr=1e-6 (official Chronos-2 fit rate; the prior
-    run's high lr is the prime suspect for the flat A/B), linear scheduler +
-    warmup_ratio=0.1, adamw_torch. lora=True wraps the encoder with LoRA adapters
-    (peft) — parameter-efficient, less overfit; pass a LoRA-appropriate lr (~1e-4)."""
+    DEFAULTS = the OFFICIAL Chronos-2 `fit()` recipe (chronos2/pipeline.py),
+    replicated for bolt-tiny (which has no fit()): lr=1e-6, max_steps=1000,
+    batch_size=256, lr_scheduler='linear', warmup_ratio=0.0,
+    optim='adamw_torch_fused' (auto→'adamw_torch' off-CUDA, e.g. MPS),
+    LoRA r=8/alpha=16 on self-attention q/v/k/o + output_patch_embedding.output_layer.
+    Two unavoidable bridges vs the Chronos-2 recipe: (1) fused AdamW is CUDA-only
+    so MPS uses plain adamw_torch (same math); (2) LoRA target names mapped to
+    bolt's module names. Everything else is the documented recipe — no deviation."""
     import torch
     from torch.utils.data import Dataset
     from transformers import Trainer, TrainingArguments
@@ -114,7 +118,6 @@ def run(steps=20000, context_length=128, prediction_length=64, stride=32,
 
     if smoke:
         steps, months, stride = 2, 1, 256
-    save_steps = save_steps or steps
 
     print("=== Chronos-Bolt domain-adapt (futures, self-supervised) ===")
     print(f"  base model   : {MODEL_ID}")
@@ -123,17 +126,26 @@ def run(steps=20000, context_length=128, prediction_length=64, stride=32,
     print(f"  tickers={list(tickers)}  tfs={list(tfs)}  "
           f"months={months or 'ALL'}  steps={steps}")
 
+    # Official optim is adamw_torch_fused (CUDA-only); fall back to adamw_torch
+    # on MPS/CPU — same AdamW, no fused kernel.
+    if optim is None:
+        optim = ('adamw_torch_fused' if torch.cuda.is_available()
+                 else 'adamw_torch')
+
     pipe = BaseChronosPipeline.from_pretrained(MODEL_ID)
     model = pipe.model                       # ChronosBoltModelForForecasting
-    print(f"  recipe: lr={lr:g} sched={lr_scheduler} warmup={warmup_ratio} "
-          f"optim={optim} lora={lora}"
-          + (f"(r={lora_r},a={lora_alpha},drop={lora_dropout})" if lora else ""))
+    print(f"  recipe (OFFICIAL fit): lr={lr:g} steps={steps} batch={batch_size} "
+          f"sched={lr_scheduler} warmup={warmup_ratio} optim={optim} lora={lora}"
+          + (f" (r={lora_r},a={lora_alpha},drop={lora_dropout})" if lora else ""))
     if lora:
         from peft import LoraConfig, get_peft_model
-        # T5-stack attention projections (Bolt's encoder is a T5 encoder).
+        # Official Chronos-2 LoRA targets, mapped to bolt's module names:
+        # self-attention q/v/k/o + the output projection head (same name in bolt).
         lc = LoraConfig(r=lora_r, lora_alpha=lora_alpha,
                         lora_dropout=lora_dropout, bias='none',
-                        target_modules=['q', 'v', 'k', 'o'])
+                        target_modules=['SelfAttention.q', 'SelfAttention.v',
+                                        'SelfAttention.k', 'SelfAttention.o',
+                                        'output_patch_embedding.output_layer'])
         model = get_peft_model(model, lc)
         model.print_trainable_parameters()
     cfg_pred = model.chronos_config.prediction_length if not lora \
@@ -164,22 +176,22 @@ def run(steps=20000, context_length=128, prediction_length=64, stride=32,
     device = ('cuda' if torch.cuda.is_available()
               else 'mps' if torch.backends.mps.is_available() else 'cpu')
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    args = TrainingArguments(
+    args = TrainingArguments(                 # mirrors official Chronos-2 fit()
         output_dir=str(OUT_DIR / 'out'),
         max_steps=steps,
         per_device_train_batch_size=batch_size,
         learning_rate=lr,
-        save_steps=save_steps,
-        save_total_limit=1,
-        logging_steps=max(1, steps // 100),
-        lr_scheduler_type=lr_scheduler,      # Tier-2: linear decay
-        warmup_ratio=warmup_ratio,           # Tier-2: warmup
-        optim=optim,                         # Tier-2: adamw_torch
-        report_to=[],
+        lr_scheduler_type=lr_scheduler,      # official: linear
+        warmup_ratio=warmup_ratio,           # official: 0.0
+        optim=optim,                         # official: adamw_torch_fused (→torch off-CUDA)
+        gradient_accumulation_steps=1,       # official
+        logging_strategy='steps', logging_steps=100,   # official
+        save_strategy='no',                  # official: save only at end (save_pretrained)
+        report_to='none',
         dataloader_num_workers=0,
         remove_unused_columns=False,         # keep 'context'/'target' keys
         use_cpu=(device == 'cpu'),
-        fp16=False, bf16=False,
+        fp16=False, bf16=False,              # MPS/CPU → fp32 (official bf16 is CUDA-sm80 only)
     )
     trainer = Trainer(model=model, args=args,
                       train_dataset=WinDS(), data_collator=collate)
@@ -202,30 +214,30 @@ def run(steps=20000, context_length=128, prediction_length=64, stride=32,
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--steps', type=int, default=20000)
+    ap.add_argument('--steps', type=int, default=1000, help='official: 1000')
     ap.add_argument('--context-length', type=int, default=128,
                     help='must match downstream embed CTX (128) for cleanest transfer')
     ap.add_argument('--prediction-length', type=int, default=64)
     ap.add_argument('--stride', type=int, default=32, help='bars between windows')
-    ap.add_argument('--tfs', default='1min,3min,5min',
-                    help='Tier-2 default spans 1/3/5min')
+    ap.add_argument('--tfs', default='1min,3min,5min')
     ap.add_argument('--tickers', default=','.join(ALL_TICKERS),
-                    help='Tier-2 default = all 9 futures')
+                    help='default = all 9 futures')
     ap.add_argument('--months', type=int, default=0, help='0 = all available')
     ap.add_argument('--lr', type=float, default=None,
-                    help='default 1e-6 (full FT, Tier-2) or 1e-4 if --lora')
-    ap.add_argument('--batch-size', type=int, default=32)
-    ap.add_argument('--warmup-ratio', type=float, default=0.1)
-    ap.add_argument('--lr-scheduler', default='linear')
-    ap.add_argument('--optim', default='adamw_torch')
+                    help='official: 1e-6 (both full and lora)')
+    ap.add_argument('--batch-size', type=int, default=256, help='official: 256')
+    ap.add_argument('--warmup-ratio', type=float, default=0.0, help='official: 0.0')
+    ap.add_argument('--lr-scheduler', default='linear', help='official: linear')
+    ap.add_argument('--optim', default=None,
+                    help='official: adamw_torch_fused (auto→adamw_torch off-CUDA)')
     ap.add_argument('--lora', action='store_true',
                     help='parameter-efficient LoRA fine-tune (peft)')
-    ap.add_argument('--lora-r', type=int, default=16)
-    ap.add_argument('--lora-alpha', type=int, default=32)
-    ap.add_argument('--lora-dropout', type=float, default=0.05)
+    ap.add_argument('--lora-r', type=int, default=8, help='official: 8')
+    ap.add_argument('--lora-alpha', type=int, default=16, help='official: 16')
+    ap.add_argument('--lora-dropout', type=float, default=0.0, help='official: 0.0')
     ap.add_argument('--smoke', action='store_true')
     a = ap.parse_args()
-    lr = a.lr if a.lr is not None else (1e-4 if a.lora else 1e-6)
+    lr = a.lr if a.lr is not None else 1e-6     # official: 1e-6 for both modes
     run(steps=a.steps, context_length=a.context_length,
         prediction_length=a.prediction_length, stride=a.stride,
         tfs=tuple(a.tfs.split(',')), tickers=tuple(a.tickers.split(',')),
