@@ -18,7 +18,7 @@ Contract (all implementations MUST honour):
 
 Optional: a labeler MAY also expose `features(decision_keys) -> 2-D float
 array` (one row per key, aligned to build()'s order). The harness fuses it
-with the frozen Chronos embedding (hstack) before the head. Omit it for an
+with the frozen foundation embedding (hstack) before the head. Omit it for an
 embedding-only model. Keep features causal and reproducible as plain tensor
 ops (the deployed single-ONNX export folds them in).
 """

@@ -1,6 +1,6 @@
 """Generic XGBoost classifier head — the trained component.
 
-Strategy-agnostic: consumes a feature matrix X (frozen Chronos embedding,
+Strategy-agnostic: consumes a feature matrix X (frozen foundation embedding,
 optionally fused with the strategy's own features) and integer labels;
 emits a class per row plus class probabilities (the conviction signal a
 downstream gate / account layer consumes). Deterministic given `seed`

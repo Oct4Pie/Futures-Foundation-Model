@@ -7,7 +7,7 @@ import types
 
 import pytest
 
-from futures_foundation.chronos import tune_head as TH
+from futures_foundation.pipeline import tune_head as TH
 
 
 # ---- generalization-robust objective --------------------------------------

@@ -16,8 +16,8 @@ Bundle contents (joblib):
   signal_head         XGBHead — predict_proba(X) -> [P(skip), P(take)]
   risk_head           XGBRiskHead (binary labelers only) — peak-R̂ regression
   feat_dim            X.shape[1] sanity at inference
-  ctx_window          Chronos context length (128)
-  d_model             Chronos embedding dim (256)
+  ctx_window          foundation context length (128)
+  d_model             foundation embedding dim (256)
   chronos_ckpt        backbone identifier the bot must load identically
   labeler_name        class name (e.g. 'SuperTrendChronos')
   labeler_config      labeler.config_dict() — strategy params (SL/RR/VERT/...)
@@ -89,7 +89,7 @@ def train(labeler, *, holdout_months: int = 1, seed: int = 0,
     binary = (nc == 2)
 
     if verbose:
-        print(f"=== Chronos production train | "
+        print(f"=== production train | "
               f"labeler={type(labeler).__name__} ===")
         print(f"  data span : {cal_min}  →  {cal_max}")
         print(f"  train     : {cal_min}  →  {holdout_start}  "
@@ -118,7 +118,7 @@ def train(labeler, *, holdout_months: int = 1, seed: int = 0,
     # ---- Stage 2: batch-embed ----
     t0 = time.time()
     if verbose:
-        print(f"\n[embed] {len(Ctr):,} contexts → Chronos backbone ...")
+        print(f"\n[embed] {len(Ctr):,} contexts → foundation backbone ...")
     Etr = backbone.embed(Ctr)
     if verbose:
         print(f"[embed] done. shape={Etr.shape}  ({time.time()-t0:.1f}s)")

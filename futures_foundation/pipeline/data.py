@@ -1,6 +1,6 @@
-"""Step 1 — give Chronos all our futures data, leak-free.
+"""Step 1 — assemble our futures data, leak-free.
 
-Assembles the 6-ticker bars into the long format Chronos/AutoGluon fine-tune
+Assembles the 6-ticker bars into the long format the foundation/AutoGluon fine-tune
 expects (item_id, timestamp, target) and yields rolling, strictly-causal
 walk-forward folds. Pure pandas/numpy (no torch/chronos import) so the data
 contract + leak-freeness are testable before any model exists.
@@ -9,7 +9,7 @@ target options:
   'logret' (default) — log return of close. Stationary + instrument-
       comparable, so all 6 tickers pool cleanly and a trend-following
       decision is just the sign of the cumulative forecast.
-  'close'            — raw close (Chronos scales internally). Kept for
+  'close'            — raw close (the backbone scales internally). Kept for
       comparison; non-stationary, not pooled-comparable.
 """
 import os

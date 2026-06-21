@@ -1,6 +1,6 @@
 """Honest-ruler evaluation — strategy- and head-agnostic.
 
-Frozen Chronos embedding (+ optional strategy features) -> a pluggable
+Frozen foundation embedding (+ optional strategy features) -> a pluggable
 head, scored leak-free over walk-forward x {REAL, SHUFFLE, RANDOM} x seeds.
 A number is believed ONLY if REAL clearly beats SHUFFLE and RANDOM on
 realized R (cost lives inside the strategy's evaluate()). No strategy or
@@ -140,7 +140,7 @@ def _stats(R):
 
 
 def _featurize(labeler, contexts, keys):
-    """Frozen Chronos embedding, fused with the strategy's own features if
+    """Frozen foundation embedding, fused with the strategy's own features if
     the labeler exposes an optional features(keys) hook."""
     X = backbone.embed(contexts)
     feats = getattr(labeler, 'features', None)
@@ -269,7 +269,7 @@ def run(labeler, head_factory=None, seeds=(0, 1, 2), train_m=3, val_m=1, test_m=
     if not fold_data:
         print("No productive folds — nothing to evaluate.")
         return out
-    # Phase 2 — ONE batched Chronos embed across all productive folds.
+    # Phase 2 — ONE batched foundation embed across all productive folds.
     # Replaces ~2*N_folds subprocess loads with 1. Major speedup on long
     # walk-forwards; numpy/torch parallelize the single big inference call.
     flat_contexts, flat_keys = [], []

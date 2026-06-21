@@ -3,7 +3,7 @@
 Validated the SAME WAY as the strategy selection heads, reusing the shared
 machinery instead of reinventing it:
 
-  - futures_foundation.chronos.data.walk_forward_folds  → rolling train/val/test
+  - futures_foundation.pipeline.data.walk_forward_folds  → rolling train/val/test
     windows across ALL data (not a single fixed 2023+ split) — so each head is
     judged in EVERY regime, the analog of the strategies' per-OOS-month gate.
   - futures_foundation.overfit.regularized_fit          → the auto-regularize
@@ -21,7 +21,7 @@ import pandas as pd
 
 from futures_foundation import overfit as _of
 from futures_foundation.context import HEAD_SPECS, GATE_REG_PEARSON, GATE_CLF_AUC
-from futures_foundation.chronos.data import walk_forward_folds
+from futures_foundation.pipeline.data import walk_forward_folds
 
 # Per-metric tolerances (Pearson r and ROC-AUC live on different scales).
 REG_OVERFIT_GAP = 0.10        # train→val Pearson-r gap that means "memorized"

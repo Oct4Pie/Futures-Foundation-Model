@@ -29,7 +29,7 @@ the chosen params are run straight through the full 3-way walk-forward, whose
 VAL->TEST gate is the final independent generalization check.
 
 CLI:
-    python -m futures_foundation.chronos.tune_head \
+    python -m futures_foundation.pipeline.tune_head \
         --labeler colabs.kalman_nw_chronos2:KalmanNWChronos2 \
         --trials 80 --max-folds 14
 """

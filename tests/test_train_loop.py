@@ -7,7 +7,7 @@ heavy embed/XGBoost compute. The contract under test is exactly the process:
   default WF -> generalizes? keep defaults -> else Optuna -> rerun -> loop
   until it passes -> final full walk-forward.
 """
-from futures_foundation.chronos import train_loop as TL
+from futures_foundation.pipeline import train_loop as TL
 
 
 class FakeLab:

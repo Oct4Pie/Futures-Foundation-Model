@@ -17,9 +17,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from futures_foundation.chronos import finetune as ft  # torch is lazy inside it
-from futures_foundation.chronos import evaluate, strategy
-from futures_foundation.chronos.head_xgb import XGBHead, XGBRiskHead
+from futures_foundation.extractors.chronos import finetune as ft  # torch is lazy inside it
+from futures_foundation.pipeline import evaluate, strategy
+from futures_foundation.pipeline.head_xgb import XGBHead, XGBRiskHead
 
 # find_spec does NOT import the module -> pytest process stays torch-free.
 _CHRONOS = (importlib.util.find_spec('chronos') is not None

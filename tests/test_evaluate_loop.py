@@ -2,8 +2,8 @@
 overfit-driven training loop, and the single-pass primitive stays the default
 (so A/B harnesses and train_loop's own single passes are unaffected).
 """
-from futures_foundation.chronos import evaluate as ev
-from futures_foundation.chronos import train_loop as TLmod
+from futures_foundation.pipeline import evaluate as ev
+from futures_foundation.pipeline import train_loop as TLmod
 
 
 # ---- _should_loop gate -----------------------------------------------------

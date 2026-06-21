@@ -23,7 +23,7 @@ The loop iterations use a subsampled walk-forward (loop_max_folds) for speed; th
 final confirmation (step 6) uses every fold.
 
 CLI:
-    python -m futures_foundation.chronos.train_loop \
+    python -m futures_foundation.pipeline.train_loop \
         --labeler colabs.supertrend_chronos:SuperTrendChronos
 """
 import argparse

@@ -24,8 +24,8 @@ torch+xgboost OpenMP collision (macOS): the orchestrator parent imports
 neither — each export stage runs in its own subprocess.
 
 Usage:
-    python3 -m futures_foundation.chronos.export_onnx chronos_supertrendchronos_production_20260519.joblib
-    python3 -m futures_foundation.chronos.export_onnx <bundle.joblib> --out-dir models/
+    python3 -m futures_foundation.pipeline.export_onnx chronos_supertrendchronos_production_20260519.joblib
+    python3 -m futures_foundation.pipeline.export_onnx <bundle.joblib> --out-dir models/
 """
 import argparse
 import json

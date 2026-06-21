@@ -29,10 +29,10 @@ from .extractors.chronos import backbone as foundation
 # NOTE: the `chronos` SUBPACKAGE itself is torch/xgboost-free to import
 # (its __init__ is docstring-only; head_xgb/finetune/bolt_* lazy-load
 # xgboost/torch inside functions), but its pipeline modules are NOT
-# re-imported here — users import `futures_foundation.chronos.<mod>`
+# re-imported here — users import `futures_foundation.pipeline.<mod>`
 # explicitly. This keeps `import futures_foundation` lean and guarantees
 # the package stays importable without xgboost installed.
-from . import chronos
+from . import pipeline
 from .extractors.chronos.backbone import embed_bars, stamp_active_source, D_MODEL
 from .features import derive_features, get_model_feature_columns, INSTRUMENT_MAP
 from .labels import (

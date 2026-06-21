@@ -6,7 +6,7 @@
 These are the pure decision units the production walk-forward (`run`) now calls,
 so testing them tests the real training path.
 """
-from futures_foundation.chronos import evaluate as ev
+from futures_foundation.pipeline import evaluate as ev
 
 
 # ---- _overfit_trigger ------------------------------------------------------

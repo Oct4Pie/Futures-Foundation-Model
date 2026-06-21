@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from futures_foundation.chronos.data import load_long, walk_forward_folds, TICKERS
+from futures_foundation.pipeline.data import load_long, walk_forward_folds, TICKERS
 
 _HAS = (Path(__file__).parent.parent / 'data' / 'ES_3min.csv').exists()
 

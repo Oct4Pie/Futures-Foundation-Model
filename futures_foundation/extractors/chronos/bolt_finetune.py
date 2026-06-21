@@ -28,11 +28,11 @@ Torch/chronos are imported INSIDE run() (lazy) — never at module top — mirro
 backbone.py so the package stays import-safe in torch-free contexts.
 
 CLI (Tier-2 defaults: 9 tickers, 1m+3m+5m, lr 1e-6, linear sched + warmup):
-    python3 -m futures_foundation.chronos.bolt_finetune                 # full-FT Tier-2
-    python3 -m futures_foundation.chronos.bolt_finetune --lora          # LoRA (lr auto 1e-4)
-    python3 -m futures_foundation.chronos.bolt_finetune --smoke         # 2-step sanity
+    python3 -m futures_foundation.extractors.chronos.bolt_finetune                 # full-FT Tier-2
+    python3 -m futures_foundation.extractors.chronos.bolt_finetune --lora          # LoRA (lr auto 1e-4)
+    python3 -m futures_foundation.extractors.chronos.bolt_finetune --smoke         # 2-step sanity
 Then (per the wiring gap — NOT auto-applied — see backbone.stamp_active_source):
-    python3 -m futures_foundation.chronos.bolt_ab \
+    python3 -m futures_foundation.extractors.chronos.bolt_ab \
         --strategy colabs/supertrend_chronos.py --ckpt <printed path>   # A/B vs vanilla
 """
 import argparse
@@ -42,7 +42,7 @@ import numpy as np
 import pandas as pd
 
 # futures_foundation/chronos/bolt_finetune.py -> parents: [chronos, futures_foundation, REPO_ROOT]
-_ROOT = Path(__file__).resolve().parents[2]
+_ROOT = Path(__file__).resolve().parents[3]
 DATA_DIR = _ROOT / 'data'
 OUT_DIR = _ROOT / 'temp' / 'chronos_bolt_ft'
 MODEL_ID = 'amazon/chronos-bolt-tiny'

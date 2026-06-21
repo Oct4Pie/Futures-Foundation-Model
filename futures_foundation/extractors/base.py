@@ -50,8 +50,8 @@ def evaluate_with_extractor(labeler, extractor=None, *, seeds=(0, 1, 2),
     injects them via ev.run's embed_cache. Default extractor = Chronos
     (byte-identical to the standard path). Returns ev.run's verdict dict."""
     from .chronos import ChronosExtractor
-    from ..chronos import evaluate as ev
-    from ..chronos.data import walk_forward_folds
+    from ..pipeline import evaluate as ev
+    from ..pipeline.data import walk_forward_folds
     extractor = extractor or ChronosExtractor()
 
     cal = labeler.calendar()

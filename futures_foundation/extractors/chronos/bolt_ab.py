@@ -20,7 +20,7 @@ Each arm runs in its OWN subprocess (so the env var + torch isolation are
 clean per arm). The strategy is loaded from a colabs/*.py file by path.
 
 Usage:
-    python3 -m futures_foundation.chronos.bolt_ab \
+    python3 -m futures_foundation.extractors.chronos.bolt_ab \
         --strategy colabs/supertrend_chronos.py \
         --ckpt temp/chronos_bolt_ft/checkpoint-final \
         --seeds 0,1,2 [--max-folds N]
@@ -33,7 +33,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-_ROOT = Path(__file__).resolve().parents[2]
+_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _run_arm(strategy_path, ckpt, seeds, max_folds, label):

@@ -9,8 +9,8 @@ import pandas as pd
 import pytest
 
 from futures_foundation.context import ContextHeads, HEADS_CUTOFF
-from futures_foundation.chronos import context_fusion as cf
-from futures_foundation.chronos import evaluate as ev
+from futures_foundation.pipeline import context_fusion as cf
+from futures_foundation.pipeline import evaluate as ev
 from futures_foundation.extractors.chronos import backbone
 
 RNG = np.random.default_rng(3)
