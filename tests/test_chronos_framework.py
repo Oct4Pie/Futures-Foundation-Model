@@ -76,7 +76,7 @@ def test_strategy_protocol_is_duck_typed():
 @chronos_only
 def test_backbone_loads_pools_and_resets():
     import torch
-    from futures_foundation import foundation as backbone
+    from futures_foundation.extractors.chronos import backbone
     assert backbone.d_model() == 256
     m = backbone.fresh_model()
     ctx = torch.tensor(np.random.default_rng(0).standard_normal(
@@ -181,7 +181,7 @@ def test_xgbhead_deterministic_and_bounded(nc):
 
 @chronos_only
 def test_backbone_embed_is_frozen_deterministic():
-    from futures_foundation import foundation as backbone
+    from futures_foundation.extractors.chronos import backbone
     C = [np.random.default_rng(k).standard_normal(48).astype('float32')
          for k in range(10)]
     e1 = backbone.embed(C)
@@ -195,7 +195,7 @@ def test_embed_tier1_pool_modes_and_loc_scale():
     """Tier-1 levers through the real subprocess embed: [REG]/meanreg pooling,
     loc_scale, and legacy 'mean' byte-identical. embed runs torch in a subprocess
     so the parent stays torch-free (chronos_only, not torch_inproc)."""
-    from futures_foundation import foundation as backbone
+    from futures_foundation.extractors.chronos import backbone
     C = np.random.default_rng(0).standard_normal((6, 128)).astype('float32').cumsum(1)
     mean = backbone.embed(C, pool='mean')
     reg = backbone.embed(C, pool='reg')

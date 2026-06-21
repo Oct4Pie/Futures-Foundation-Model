@@ -213,7 +213,7 @@ def verify(bundle_path: Path, chronos_onnx: Path, signal_onnx: Path,
 
     # --- Path A (joblib): backbone.embed (subprocess-isolated torch)
     #     + XGB heads in parent (xgboost; no torch). No collision.
-    from futures_foundation import foundation as backbone
+    from futures_foundation.extractors.chronos import backbone
     print(f"\n  Path A (joblib): backbone.embed + signal/risk heads")
     emb_jl = backbone.embed(contexts)
     X_jl = np.hstack([emb_jl, hand]).astype(np.float32)

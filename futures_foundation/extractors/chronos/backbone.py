@@ -31,7 +31,7 @@ _PIPE = None
 _PRISTINE = None                       # cloned pretrained state_dict
 
 # Repo root when running from a checkout (temp/ scan, worker cwd).
-_ROOT = Path(__file__).resolve().parents[1]
+_ROOT = Path(__file__).resolve().parents[3]   # extractors/chronos/backbone.py -> repo root
 
 
 def pooled_dim(pool: str = 'mean') -> int:
@@ -128,7 +128,8 @@ def embed(contexts, batch=64, pool='mean', return_loc_scale=False):
         env = dict(os.environ,
                    PYTHONPATH=str(_ROOT) + os.pathsep
                    + os.environ.get('PYTHONPATH', ''))
-        cmd = [sys.executable, '-m', 'futures_foundation._embed_worker',
+        cmd = [sys.executable, '-m',
+               'futures_foundation.extractors.chronos._worker',
                ip, op, str(batch), pool]
         if ls:
             cmd.append(ls)

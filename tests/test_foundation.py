@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 
 import futures_foundation as ffm
-from futures_foundation import foundation
+from futures_foundation.extractors.chronos import backbone as foundation
 
 
 # ---------------------------------------------------------------------------

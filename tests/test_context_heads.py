@@ -135,7 +135,7 @@ def test_context_at_enriched_hstacks_embedding_and_features(monkeypatch):
     """Enriched bundle: X = [embed_bars | context_features[indices]] —
     monkeypatched embed + features (no subprocess, no heavy
     derive_features)."""
-    from futures_foundation import foundation
+    from futures_foundation.extractors.chronos import backbone as foundation
     E_tr, lab_tr, E_va, lab_va = _synthetic_dataset(d=D_EMB + K_FF)
     heads = ContextHeads(seed=0, n_estimators=40).fit(
         E_tr, lab_tr, E_va, lab_va, verbose=False)
@@ -162,7 +162,7 @@ def test_context_at_emb_only_backcompat_skips_features(monkeypatch,
                                                        fitted_heads):
     """Old emb-only bundle (no meta inputs): embedding alone, the feature
     library must never be touched."""
-    from futures_foundation import foundation
+    from futures_foundation.extractors.chronos import backbone as foundation
     heads, _ = fitted_heads
     monkeypatch.setattr(foundation, 'embed_bars', _fake_embed_bars(24))
 

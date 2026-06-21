@@ -31,7 +31,7 @@ sys.path.insert(0, str(ROOT))
 
 from futures_foundation.context import ContextHeads, HEADS_CUTOFF  # noqa: E402
 from futures_foundation.features import get_model_feature_columns  # noqa: E402
-from futures_foundation import foundation  # noqa: E402
+from futures_foundation.extractors.chronos import backbone as foundation  # noqa: E402
 
 _spec = importlib.util.spec_from_file_location(
     'probe_context_heads', Path(__file__).parent / 'probe_context_heads.py')

@@ -30,7 +30,7 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from futures_foundation import foundation                      # noqa: E402
+from futures_foundation.extractors.chronos import backbone as foundation                      # noqa: E402
 from futures_foundation.context import (                       # noqa: E402
     ContextHeads, compute_context_labels, HEADS_CUTOFF)
 

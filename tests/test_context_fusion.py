@@ -11,7 +11,7 @@ import pytest
 from futures_foundation.context import ContextHeads, HEADS_CUTOFF
 from futures_foundation.chronos import context_fusion as cf
 from futures_foundation.chronos import evaluate as ev
-from futures_foundation import foundation as backbone
+from futures_foundation.extractors.chronos import backbone
 
 RNG = np.random.default_rng(3)
 D = backbone.D_MODEL
@@ -220,7 +220,7 @@ def test_evaluate_run_default_off_unchanged(monkeypatch, capsys):
 # ---------------------------------------------------------------------------
 
 def test_context_at_per_candle_readout(monkeypatch, heads):
-    from futures_foundation import foundation
+    from futures_foundation.extractors.chronos import backbone as foundation
     monkeypatch.setattr(foundation, 'embed', _fake_embed)
     n = 500
     close = 100 * np.exp(np.cumsum(RNG.normal(0, .002, n)))
@@ -248,7 +248,7 @@ def _base_series(n_days=12, freq='5min'):
 
 
 def test_htf_context_columns_and_nan_warmup(monkeypatch, heads):
-    from futures_foundation import foundation
+    from futures_foundation.extractors.chronos import backbone as foundation
     monkeypatch.setattr(foundation, 'embed', _fake_embed)
     ts, close = _base_series()
     idx = [10, 1500, 3000]                      # 10: far too little HTF history
@@ -261,7 +261,7 @@ def test_htf_context_columns_and_nan_warmup(monkeypatch, heads):
 def test_htf_context_is_strictly_causal(monkeypatch, heads):
     """Changing base bars at/after the decision bar — INCLUDING the
     still-forming HTF bucket — must not change the HTF readout."""
-    from futures_foundation import foundation
+    from futures_foundation.extractors.chronos import backbone as foundation
     monkeypatch.setattr(foundation, 'embed', _fake_embed)
     ts, close = _base_series()
     i = 3000                                    # mid-series decision bar
@@ -276,7 +276,7 @@ def test_htf_context_is_strictly_causal(monkeypatch, heads):
 
 def test_htf_context_sees_completed_buckets(monkeypatch, heads):
     """Changing a COMPLETED prior HTF bucket must change the readout."""
-    from futures_foundation import foundation
+    from futures_foundation.extractors.chronos import backbone as foundation
     monkeypatch.setattr(foundation, 'embed', _fake_embed)
     ts, close = _base_series()
     i = 3000

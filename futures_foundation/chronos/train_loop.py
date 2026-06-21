@@ -32,7 +32,7 @@ import importlib
 from . import evaluate as ev
 from . import tune_head as TH
 from .head_xgb import XGBHead
-from futures_foundation import foundation as backbone
+from futures_foundation.extractors.chronos import backbone
 
 
 def _walk_forward(labeler, params, *, seeds, max_folds, tag):

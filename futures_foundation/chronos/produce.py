@@ -35,7 +35,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-from futures_foundation import foundation as backbone
+from futures_foundation.extractors.chronos import backbone
 from . import context_fusion
 from .head_xgb import XGBHead, XGBRiskHead
 

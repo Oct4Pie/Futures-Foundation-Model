@@ -339,7 +339,7 @@ class ContextHeads:
 
         -> DataFrame indexed by `indices`, columns = active_names.
         """
-        from .foundation import embed_bars
+        from .extractors.chronos.backbone import embed_bars
         idx = np.asarray(indices)
         E = embed_bars(df['close'].to_numpy(), idx, ctx=ctx, batch=batch)
         if self.meta.get('inputs') == 'emb+ff68':
@@ -405,7 +405,7 @@ class ContextHeads:
                 np.float32)
             # dedupe identical windows (many base bars share an HTF state)
             uniq, inv = np.unique(windows, axis=0, return_inverse=True)
-            from .foundation import embed
+            from .extractors.chronos.backbone import embed
             E = embed(uniq, batch=batch)
             out.loc[ok] = self.transform(E, include=include)[inv]
         return out

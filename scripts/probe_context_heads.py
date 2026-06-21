@@ -49,7 +49,7 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from futures_foundation import foundation as backbone  # noqa: E402  (torch-free parent)
+from futures_foundation.extractors.chronos import backbone  # noqa: E402  (torch-free parent)
 from futures_foundation.context import (  # noqa: E402
     compute_context_labels as compute_labels,
     HEAD_SPECS, CANDIDATE_HEAD_SPECS,

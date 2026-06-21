@@ -26,7 +26,7 @@ def main(inp, outp, batch, pool='mean', locscale_out=None):
 
     from chronos import BaseChronosPipeline
 
-    from . import foundation
+    from . import backbone as foundation
     src = foundation.active_source()
     is_local = os.path.isabs(src) or os.path.exists(src)
     tag = 'FINE-TUNED' if is_local else 'FROZEN-VANILLA'

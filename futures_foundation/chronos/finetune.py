@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from futures_foundation import foundation as backbone
+from futures_foundation.extractors.chronos import backbone
 
 
 @dataclass
