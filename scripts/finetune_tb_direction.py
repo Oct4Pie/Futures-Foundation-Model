@@ -151,6 +151,7 @@ def main():
     tds = DataLoader(TensorDataset(Xt[tr_ix], yt[tr_ix]),
                      batch_size=args.batch_size, shuffle=True)
     step = 0; t0 = time.time()
+    best_val, best_ep = -1.0, -1                          # overfit guard: keep best-val epoch
     for ep in range(int(np.ceil(args.epochs))):
         model.train(); head.train()
         for xb, yb in tds:
@@ -169,19 +170,44 @@ def main():
                 xb = Xt[va_ix[s:s+512]].to(dev)
                 pred = head(_pool(model, xb)).argmax(1).cpu()
                 cor += (pred == yt[va_ix[s:s+512]]).sum().item(); tot += len(xb)
-        print(f"[FT] ep{ep}: val acc={cor/tot:.4f}  (probe {probe_acc:.4f})", flush=True)
+        va = cor / tot
+        print(f"[FT] ep{ep}: val acc={va:.4f}  (frozen baseline {probe_acc:.4f})", flush=True)
+        # OVERFIT GUARD — keep the BEST-val epoch (early stopping), not the last
+        if va > best_val and args.lora:
+            best_val, best_ep = va, ep
+            model.save_pretrained(args.out + '_adapter')
+            torch.save(head.state_dict(), Path(args.out + '_adapter') / 'tb_head.pt')
+            print(f"    ↑ new best val {best_val:.4f} (ep{ep}) — adapter snapshot saved")
+        elif va > best_val:
+            best_val, best_ep = va, ep
         if step >= total_steps:
             break
 
-    # ── SAVE (LoRA-merged backbone for the extractor) ─────────────────────────
+    # ── GEN-GATE — promote ONLY if the FT meaningfully beats frozen on held-out
+    # val (analog of the strategies' gen-gate). Otherwise keep vanilla. ──────────
+    GEN_MARGIN = 0.01
+    print(f"\n{'='*60}\nGEN-GATE: best val {best_val:.4f} (ep{best_ep}) vs frozen "
+          f"{probe_acc:.4f}  → lift {best_val - probe_acc:+.4f}")
+    if best_val <= probe_acc + GEN_MARGIN:
+        print(f"❌ NO generalizing lift (≤ frozen + {GEN_MARGIN}). Direction not "
+              f"learnable here on held-out time — KEEP VANILLA, NOT promoting. "
+              f"(no merged save)")
+        return
+    print(f"✅ LIFT +{best_val - probe_acc:.4f} — merging best adapter (ep{best_ep}) → {args.out}")
     os.makedirs(args.out, exist_ok=True)
-    save_model = model.merge_and_unload() if args.lora else model
-    save_model.save_pretrained(args.out)
-    pipe.tokenizer.save_pretrained(args.out) if hasattr(pipe, 'tokenizer') else None
+    if args.lora:
+        from peft import PeftModel
+        base = __import__('chronos').BaseChronosPipeline.from_pretrained(MODEL_ID).model.to(dev)
+        merged = PeftModel.from_pretrained(base, args.out + '_adapter').merge_and_unload()
+    else:
+        merged = model
+    merged.save_pretrained(args.out)
+    if hasattr(pipe, 'tokenizer'):
+        pipe.tokenizer.save_pretrained(args.out)
     torch.save(head.state_dict(), Path(args.out) / 'tb_head.pt')
-    print(f"\n✅ saved FT'd backbone → {args.out}  (set CHRONOS_FT_CKPT to use it)")
-    print(f"   PROBE acc {probe_acc:.4f} → FT final acc {cor/tot:.4f}  "
-          f"(lift = what the FT taught the encoder)")
+    print(f"\n✅ saved FT'd backbone (best ep{best_ep}, val {best_val:.4f}) → {args.out}")
+    print(f"   NEXT: set CHRONOS_FT_CKPT + run the downstream A/B (FT vs vanilla on "
+          f"the strategies, held-out ≥test_cutoff) — must beat vanilla ≥+0.10R to promote.")
 
 
 if __name__ == '__main__':
