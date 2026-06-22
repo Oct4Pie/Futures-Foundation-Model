@@ -45,11 +45,12 @@ def _pool(model, ctx):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--epochs', type=float, default=3.0, help='full-FT epochs (bolt-tiny needs >documented 1000 steps)')
-    ap.add_argument('--lr', type=float, default=1e-6, help='Tier-2 encoder/FT lr')
+    ap.add_argument('--lr', type=float, default=1e-5, help='LoRA encoder lr — Amazon fit() docstring: "When finetune_mode=lora, we recommend a higher learning rate, such as 1e-5"')
+    ap.add_argument('--head-lr', type=float, default=1e-3, help='fresh classification-head lr (higher than encoder)')
     ap.add_argument('--probe-epochs', type=float, default=2.0)
     ap.add_argument('--probe-lr', type=float, default=1e-3)
     ap.add_argument('--batch-size', type=int, default=256, help='Tier-2 batch')
-    ap.add_argument('--warmup', type=float, default=0.05, help='linear-warmup ratio')
+    ap.add_argument('--warmup', type=float, default=0.0, help='linear-warmup ratio (Amazon fit(): warmup_steps=0)')
     ap.add_argument('--lora', action='store_true', default=True)
     ap.add_argument('--full-ft', dest='lora', action='store_false', help='full backbone FT instead of LoRA')
     ap.add_argument('--out', default='temp/chronos_bolt_tb_ft')
@@ -125,7 +126,7 @@ def main():
     # ── STAGE 2: FULL FT (LoRA encoder + head, Tier-2) ────────────────────────
     if args.lora:
         from peft import LoraConfig, get_peft_model
-        lc = LoraConfig(r=8, lora_alpha=8, lora_dropout=0.05,
+        lc = LoraConfig(r=8, lora_alpha=16, lora_dropout=0.0,   # Amazon Chronos-2 fit() defaults
                         target_modules=['SelfAttention.q', 'SelfAttention.v',
                                         'SelfAttention.k', 'SelfAttention.o',
                                         'output_patch_embedding.output_layer'])
@@ -136,11 +137,14 @@ def main():
             p.requires_grad_(True)
     model.to(dev)
     head = nn.Linear(D_MODEL, N_CLS).to(dev)            # fresh head for the FT
-    params = [p for p in model.parameters() if p.requires_grad] + list(head.parameters())
+    # differential LRs: LoRA encoder at args.lr (Amazon LoRA rec ~1e-5), fresh
+    # head at the higher args.head_lr (random-init, must learn the mapping fast)
+    groups = [{'params': [p for p in model.parameters() if p.requires_grad], 'lr': args.lr},
+              {'params': list(head.parameters()), 'lr': args.head_lr}]
     try:
-        opt = torch.optim.AdamW(params, lr=args.lr, fused=True)
+        opt = torch.optim.AdamW(groups, fused=True)
     except Exception:
-        opt = torch.optim.AdamW(params, lr=args.lr)
+        opt = torch.optim.AdamW(groups)
     steps_per_ep = (len(tr_ix) + args.batch_size - 1) // args.batch_size
     total_steps = int(steps_per_ep * args.epochs)
     warm = int(args.warmup * total_steps)
