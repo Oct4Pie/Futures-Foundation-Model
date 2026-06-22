@@ -60,15 +60,24 @@ def main():
     print(f"device={dev} | recipe: lr={args.lr} batch={args.batch_size} "
           f"warmup={args.warmup} mode={'LoRA' if args.lora else 'full-FT'} epochs={args.epochs}")
 
+    import pandas as pd
     X = np.load(f'{CORPUS}/X.npy')
     y = np.load(f'{CORPUS}/y.npy').astype(np.int64)
+    ts = np.load(f'{CORPUS}/ts.npy')                       # per-window bar time (ns)
     n = len(X)
-    rng = np.random.RandomState(0)
-    perm = rng.permutation(n)
-    ntr = int(0.9 * n)
-    tr_ix, va_ix = perm[:ntr], perm[ntr:]
-    print(f"corpus: {n:,} | train {len(tr_ix):,} val {len(va_ix):,} | "
-          f"y dist {np.bincount(y, minlength=3).tolist()}")
+    # TEMPORAL split — NO random leak. train < T1, val [T1,T2), TEST >= T2 is held
+    # OUT of the FT entirely (the downstream honest-ruler A/B runs on >= T2 so the
+    # backbone is OOS). 1-day embargo at boundaries so context/label windows (CTX
+    # back, H fwd) don't straddle a split.
+    T1, T2 = (int(q) for q in np.quantile(ts, [0.70, 0.85]))
+    EMB = 24 * 3600 * 1_000_000_000                        # 1-day embargo (ns)
+    tr_ix = np.where(ts < T1 - EMB)[0]
+    va_ix = np.where((ts >= T1) & (ts < T2 - EMB))[0]
+    n_test = int((ts >= T2).sum())
+    np.save(f'{CORPUS}/test_cutoff_ns.npy', np.array([T2], np.int64))  # boundary for the A/B
+    print(f"corpus: {n:,} | TEMPORAL: train<{pd.Timestamp(T1)} | "
+          f"val..{pd.Timestamp(T2)} | TEST>={pd.Timestamp(T2)} (held out, {n_test:,})")
+    print(f"  train {len(tr_ix):,} | val {len(va_ix):,} | y dist {np.bincount(y, minlength=3).tolist()}")
     Xt, yt = torch.tensor(X), torch.tensor(y)
 
     pipe = __import__('chronos').BaseChronosPipeline.from_pretrained(MODEL_ID)
