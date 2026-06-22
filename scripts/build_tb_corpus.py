@@ -5,7 +5,7 @@ import sys, os, time; sys.path.insert(0, '.')
 import numpy as np, pandas as pd
 from futures_foundation.chronos._primitives import compute_atr
 TICKERS = ['ES','NQ','RTY','YM','GC','SI','CL','ZB','ZN']
-TFS = ['1min','3min','5min']
+TFS = ['1min','3min','5min','15min']
 CTX, ATR_P, K, H, STRIDE = 128, 20, 1.0, 60, 16
 Xs, ys = [], []
 t0 = time.time()
