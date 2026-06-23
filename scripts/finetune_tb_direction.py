@@ -34,12 +34,28 @@ D_MODEL, N_CLS = 256, 3
 CORPUS = 'temp/tb_corpus'
 
 
+def _locscale_on():
+    return os.environ.get('CHRONOS_POOL_LOCSCALE') == '1'
+
+
 def _pool(model, ctx):
     """Masked-mean pool of encoder hidden states (differentiable). Mirrors
-    backbone.pool so FT == inference embedding."""
-    h, _ls, _emb, mask = model.encode(context=ctx)
+    backbone.pool so FT == inference embedding. With CHRONOS_POOL_LOCSCALE=1,
+    appends bolt's own loc+scale (the instance-norm de-norm terms it otherwise
+    DISCARDS) → dim 256→258, restoring level/vol for direction."""
+    h, ls, _emb, mask = model.encode(context=ctx)
     w = mask.unsqueeze(-1).to(h.dtype)
-    return (h * w).sum(1) / w.sum(1).clamp(min=1.0)
+    pooled = (h * w).sum(1) / w.sum(1).clamp(min=1.0)
+    if _locscale_on():
+        loc, scale = ls
+        pooled = torch.cat([pooled,
+                            loc.reshape(loc.shape[0], -1).to(pooled.dtype),
+                            scale.reshape(scale.shape[0], -1).to(pooled.dtype)], dim=1)
+    return pooled
+
+
+def _pool_dim():
+    return D_MODEL + (2 if _locscale_on() else 0)
 
 
 def main():
@@ -83,7 +99,7 @@ def main():
 
     pipe = __import__('chronos').BaseChronosPipeline.from_pretrained(MODEL_ID)
     model = pipe.model.to(dev)
-    head = nn.Linear(D_MODEL, N_CLS).to(dev)
+    head = nn.Linear(_pool_dim(), N_CLS).to(dev)
     ce = nn.CrossEntropyLoss()
 
     def embed_all(ix, bs=512):
@@ -136,7 +152,7 @@ def main():
         for p in model.parameters():
             p.requires_grad_(True)
     model.to(dev)
-    head = nn.Linear(D_MODEL, N_CLS).to(dev)            # fresh head for the FT
+    head = nn.Linear(_pool_dim(), N_CLS).to(dev)            # fresh head for the FT
     # differential LRs: LoRA encoder at args.lr (Amazon LoRA rec ~1e-5), fresh
     # head at the higher args.head_lr (random-init, must learn the mapping fast)
     groups = [{'params': [p for p in model.parameters() if p.requires_grad], 'lr': args.lr},

@@ -47,6 +47,15 @@ def main(inp, outp, batch, pool='mean', locscale_out=None):
                 v = torch.cat([emb.mean(1), emb[:, -1, :]], dim=-1)
             else:
                 raise ValueError(f"pool {pool!r} not in mean|reg|meanreg")
+            if os.environ.get('CHRONOS_POOL_LOCSCALE') == '1':
+                # append bolt's own loc+scale (instance-norm de-norm terms) ->
+                # +2 dims, restoring level/vol. Must match the FT pool.
+                if isinstance(ls, (tuple, list)):
+                    loc, scale = ls
+                    lsv = torch.stack([loc.reshape(-1), scale.reshape(-1)], dim=-1)
+                else:
+                    lsv = torch.as_tensor(ls).reshape(len(v), -1)
+                v = torch.cat([v, lsv.to(v.dtype)], dim=-1)
             out.append(v.cpu().numpy())
             if locscale_out:
                 if isinstance(ls, (tuple, list)):

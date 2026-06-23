@@ -37,7 +37,8 @@ _ROOT = Path(__file__).resolve().parents[3]   # extractors/chronos/backbone.py -
 def pooled_dim(pool: str = 'mean') -> int:
     """Width of embed()'s output for a pool mode (torch-free). 'meanreg'
     concatenates mean + [REG] → 2*D_MODEL; 'mean'/'reg' → D_MODEL."""
-    return 2 * D_MODEL if pool == 'meanreg' else D_MODEL
+    base = 2 * D_MODEL if pool == 'meanreg' else D_MODEL
+    return base + (2 if os.environ.get('CHRONOS_POOL_LOCSCALE') == '1' else 0)
 
 
 def active_source() -> str:
@@ -158,7 +159,7 @@ def embed_bars(close, indices, ctx: int = CTX, batch: int = 64,
     c = np.asarray(close, dtype=np.float64)
     idx = np.asarray(indices, dtype=np.int64)
     if len(idx) == 0:
-        dim = 2 * D_MODEL if pool == 'meanreg' else D_MODEL
+        dim = pooled_dim(pool)
         empty = np.zeros((0, dim), np.float32)
         return (empty, np.zeros((0, 2), np.float32)) if return_loc_scale else empty
     if idx.min() < ctx - 1 or idx.max() >= len(c):
@@ -208,7 +209,18 @@ def fresh_model():
 
 def pool(m, ctx):
     """Masked-mean pool of the encoder hidden states. ctx: [B,L] tensor of
-    causal log-price context (bars <= decision t — the caller's contract)."""
-    h, _ls, _emb, mask = m.encode(context=ctx)
+    causal log-price context (bars <= decision t — the caller's contract).
+
+    With CHRONOS_POOL_LOCSCALE=1, appends bolt's own loc+scale (instance-norm
+    de-norm terms it otherwise discards) → dim 256→258. Default off =
+    byte-identical 256-d (live/vanilla untouched). Must match the FT pool."""
+    h, ls, _emb, mask = m.encode(context=ctx)
     w = mask.unsqueeze(-1).to(h.dtype)
-    return (h * w).sum(1) / w.sum(1).clamp(min=1.0)
+    pooled = (h * w).sum(1) / w.sum(1).clamp(min=1.0)
+    if os.environ.get('CHRONOS_POOL_LOCSCALE') == '1':
+        import torch
+        loc, scale = ls
+        pooled = torch.cat([pooled,
+                            loc.reshape(loc.shape[0], -1).to(pooled.dtype),
+                            scale.reshape(scale.shape[0], -1).to(pooled.dtype)], dim=1)
+    return pooled
