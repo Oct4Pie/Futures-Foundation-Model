@@ -309,7 +309,7 @@ def train(labeler, *, holdout_months: int = 1, seed: int = 0,
     # FFM_EXPORT_ONNX=1 env (universal switch, no per-script wiring needed).
     onnx_results = None
     if export_onnx or os.environ.get('FFM_EXPORT_ONNX') == '1':
-        from . import onnx_export
+        from ..extractors.chronos import onnx_export   # Chronos-specific (encoder export)
         onnx_results = onnx_export.export_bundle_onnx(bundle, output_path,
                                                       verbose=verbose)
 

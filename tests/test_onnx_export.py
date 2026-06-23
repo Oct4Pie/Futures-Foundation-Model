@@ -1,4 +1,4 @@
-"""Torch-free unit tests for pipeline.onnx_export — the XGBoost head export +
+"""Torch-free unit tests for extractors.chronos.onnx_export — the XGBoost head export +
 parity path. The Chronos encoder export is torch (a subprocess) and is mocked
 here; its real parity is covered by the produce(export_onnx=True) integration."""
 import numpy as np
@@ -8,7 +8,7 @@ pytest.importorskip("onnxmltools")
 pytest.importorskip("onnxruntime")
 
 from futures_foundation.pipeline.head_xgb import XGBHead, XGBRiskHead
-from futures_foundation.pipeline import onnx_export
+from futures_foundation.extractors.chronos import onnx_export
 
 
 def _tiny_bundle(n=12, with_risk=False):

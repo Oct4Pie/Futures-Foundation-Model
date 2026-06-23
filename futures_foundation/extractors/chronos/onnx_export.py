@@ -73,7 +73,7 @@ def export_bundle_onnx(bundle, output_path, *, verbose=True, samples=50, seed=42
     enc = Path(f"{stem}_encoder.onnx")
     ck = str(bundle['chronos_ckpt'])
     ctx = int(bundle['ctx_window'])
-    from ..extractors.chronos import backbone as _bb
+    from . import backbone as _bb
     root = str(_bb._ROOT)
     env = dict(os.environ, PYTHONPATH=root + os.pathsep + os.environ.get('PYTHONPATH', ''))
     r = subprocess.run(
@@ -91,3 +91,23 @@ def export_bundle_onnx(bundle, output_path, *, verbose=True, samples=50, seed=42
         if not all(ok for _, _, ok in results.values()):
             print("  ⚠ one or more ONNX exports FAILED parity — do NOT ship.")
     return results
+
+
+def main():
+    """CLI: export an existing produce() joblib bundle to ONNX + parity-check.
+    Exits non-zero if any export fails parity vs the joblib."""
+    import argparse
+    import joblib
+    ap = argparse.ArgumentParser(
+        description="Export a produce() joblib bundle to ONNX (XGBoost heads + "
+                    "Chronos encoder), each parity-checked vs the joblib.")
+    ap.add_argument('bundle', help='joblib bundle from produce.py')
+    ap.add_argument('--samples', type=int, default=50, help='parity sample rows')
+    args = ap.parse_args()
+    bundle = joblib.load(args.bundle)
+    res = export_bundle_onnx(bundle, args.bundle, verbose=True, samples=args.samples)
+    raise SystemExit(0 if all(ok for _, _, ok in res.values()) else 1)
+
+
+if __name__ == '__main__':
+    main()

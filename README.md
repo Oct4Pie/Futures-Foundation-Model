@@ -102,7 +102,12 @@ E = foundation.embed_bars(close, indices)          # [N, 256] float32, strictly 
 - **Process contract:** all torch/Chronos work runs in an **isolated subprocess** (`futures_foundation/_embed_worker.py`). The parent stays torch-free — torch and xgboost segfault in one process on macOS (libomp collision). `D_MODEL = 256` and `CTX = 128` are torch-free constants. Do not "optimize" the embed back in-process.
 - **Backbone wiring guards** (post-incident, 2026-05-19): `$CHRONOS_FT_CKPT` selects a local fine-tuned checkpoint; unset = frozen vanilla. `stamp_active_source()` prints which backbone will load (`❄️ FROZEN` vs `🧪 FINE-TUNED`), scans `temp/` for fine-tune checkpoints sitting unused, and prints the exact `export` command if one is being silently ignored. The worker also stamps what it loaded to stderr (defense in depth).
 
-Domain-adapting the foundation is supported but optional: `futures_foundation/chronos/bolt_finetune.py` (forecasting-loss fine-tune on our 9-instrument corpus) + `bolt_ab.py` (vanilla-vs-fine-tuned A/B on a real strategy). The measured verdict to date: domain fine-tuning improves forecasting loss but **not** selection edge — production runs vanilla frozen weights.
+Fine-tuning the foundation is **objective-specific** — the verdict depends entirely on the training objective:
+
+- **Forecasting-loss FT** (`futures_foundation/chronos/bolt_finetune.py` + `bolt_ab.py`): improves forecasting loss but **not** selection edge — not worth it.
+- **Triple-barrier *direction* FT** (`scripts/finetune_tb_direction.py` → `checkpoints/chronos_bolt_ft`): **does** improve selection for the **trend book** — more setups + tighter generalization across 1min/3min, and it rescued two strategies that overfit on vanilla (ema_cross, ema_decycler now generalize). It's **trend-specialized** (continuation objective), so it does *not* help mean-reversion — CISD stays vanilla; a *reversal*-objective FT is the future lever there.
+
+Select a backbone by name (HF-style): `CHRONOS_FT_CKPT=chronos_bolt_ft` or `ChronosExtractor.from_pretrained('chronos_bolt_ft')` (`vanilla`/unset = frozen base). Produced bundles stamp `chronos_ckpt`, so the consumer loads the **matching** backbone automatically (`from_pretrained(bundle['chronos_ckpt'])`).
 
 ---
 
@@ -153,8 +158,11 @@ if verdict['final']['generalizes']:
 > `loop=True` runs the full [training loop](#the-training-loop--overfit-driven). Use `loop=False` (default) for a single walk-forward pass — e.g. inside A/B harnesses where each arm must see the *same* untuned pass.
 
 ```bash
-# ONNX export + 3-layer verify (requires: pip install onnxmltools skl2onnx)
-python3 -m futures_foundation.chronos.export_onnx <bundle.joblib>
+# ONNX export (XGBoost heads + Chronos encoder), each parity-checked vs the joblib.
+# A) as part of produce (option):
+produce.train(MyLabeler(), export_onnx=True)   # any produce/pipeline script: pass --onnx
+# B) standalone, from an existing bundle:
+python3 -m futures_foundation.extractors.chronos.onnx_export <bundle.joblib>
 ```
 
 ### Pipeline components
@@ -166,14 +174,14 @@ python3 -m futures_foundation.chronos.export_onnx <bundle.joblib>
 | `train_loop.py` | The overfit-driven training loop: default WF → generalize check → Optuna only if overfit → rerun → repeat → final full WF. Returns chosen params + final verdict + history. |
 | `tune_head.py` | Optuna head tuner with a **generalization-robust** objective + held-out guard and **auto-fallback to defaults**. `--walkforward` runs the scan then the full 3-way walk-forward with the tuned params. |
 | `produce.py` | Production training: ONE fit on full corpus minus N-month holdout; saves joblib bundle (signal head + risk head + `feat_dim` + `ctx_window` + `chronos_ckpt` + labeler config + holdout threshold sweep). Production-scale defaults (`n_estimators=600, max_depth=5`). |
-| `export_onnx.py` | joblib → 3 ONNX files (chronos + signal + risk) via subprocess-isolated phases. End-to-end `verify()`: per-stage drift < 1e-3, chained-pipeline equivalence, decision parity at the trading threshold. |
+| `extractors/chronos/onnx_export.py` | Bundle → ONNX (signal head + risk head + Chronos encoder), each **parity-checked vs the joblib** (heads ~1e-7/1e-6, encoder ~1e-5). Chronos-specific (encoder export), so it lives under `extractors/chronos`, not the generic pipeline. Used by `produce(export_onnx=True)` / `--onnx`, or standalone. Encoder export runs in a torch subprocess (`onnx_encoder.py`) to avoid the libomp collision. |
 | `head_xgb.py` | `XGBHead` (signal classifier) + `XGBRiskHead` (log1p-transformed max-favorable-R regression for dynamic TP). |
 | `bolt_finetune.py` / `bolt_ab.py` | Optional Bolt domain-adaptation fine-tune + vanilla-vs-fine-tuned A/B harness on a real strategy. |
 | `_primitives.py` | Pure-numpy indicator/barrier primitives the **live** strategies certified against. Numerically divergent from `futures_foundation.primitives` — deliberately not consolidated (see module docstring). |
 | `data.py` | Long-format assembly + leak-guarded rolling walk-forward folds. |
 | `_ft/` | Vendored upstream Chronos T5 fine-tune path (historical). |
 
-Extra deps (not in `requirements.txt`): `chronos-forecasting`, `xgboost>=2.0`, `onnxmltools` + `skl2onnx` (ONNX export only).
+All deps are in `requirements.txt`, including the ONNX-export stack (`onnxmltools`, `onnxruntime`, `onnx`, `onnxscript`) used by `produce(export_onnx=True)` / `--onnx`.
 
 ---
 
