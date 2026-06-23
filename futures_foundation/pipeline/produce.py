@@ -44,7 +44,7 @@ def train(labeler, *, holdout_months: int = 1, seed: int = 0,
           n_estimators: int = 600, max_depth: int = 5,
           output_path: Optional[str | Path] = None,
           context_heads_path: Optional[str] = None, emb_mode: str = 'both',
-          verbose: bool = True) -> dict:
+          export_onnx: bool = False, verbose: bool = True) -> dict:
     """Fit on all signals strictly before `cal_max - holdout_months`
     (with the same leak-purge the walk-forward uses), evaluate on the
     unseen holdout, save bundle. Returns metadata dict.
@@ -303,6 +303,17 @@ def train(labeler, *, holdout_months: int = 1, seed: int = 0,
 
     if verbose:
         print(f"\n[save] {output_path}  ({size_mb:.1f} MB)")
+
+    # ---- Stage 8 (optional): export ONNX + parity-check vs the joblib ----
+    # Any produce/pipeline script gets ONNX via export_onnx=True OR the
+    # FFM_EXPORT_ONNX=1 env (universal switch, no per-script wiring needed).
+    onnx_results = None
+    if export_onnx or os.environ.get('FFM_EXPORT_ONNX') == '1':
+        from . import onnx_export
+        onnx_results = onnx_export.export_bundle_onnx(bundle, output_path,
+                                                      verbose=verbose)
+
+    if verbose:
         print("\n=== DONE ===")
 
     return {
@@ -310,4 +321,5 @@ def train(labeler, *, holdout_months: int = 1, seed: int = 0,
         'training_metadata': bundle['training_metadata'],
         'holdout_eval': holdout_eval,
         'size_mb': size_mb,
+        'onnx': onnx_results,
     }
