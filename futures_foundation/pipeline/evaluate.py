@@ -7,6 +7,7 @@ realized R (cost lives inside the strategy's evaluate()). No strategy or
 head specifics here — only the StrategyLabeler protocol and a head with
 fit(X,y,seed)/predict(X).
 """
+import os
 from collections import defaultdict
 
 import numpy as np
@@ -370,6 +371,14 @@ def run(labeler, head_factory=None, seeds=(0, 1, 2), train_m=3, val_m=1, test_m=
         Ytr, Xtr, Xte, Kte = d['Ytr'], d['Xtr'], d['Xte'], d['Kte']
         Yte_np = d['Yte']
         nc = labeler.n_classes
+        # R-WEIGHTED ranking (opt-in, FFM_R_WEIGHT=1): weigh each TRAIN row by
+        # the max favorable R it reached (key[3]), floored at 1 so the head
+        # optimizes realized R magnitude — not bare hit-rate. None -> uniform
+        # (the default win-rate objective; all other strategies unaffected).
+        # The weight is tied to the row's trade, so it stays aligned even when
+        # the SHUFFLE control permutes labels.
+        w_tr = (np.maximum(_max_rr_targets(d['Ktr']), 1.0)
+                if (binary and os.environ.get('FFM_R_WEIGHT') == '1') else None)
         # signal head — binary take/skip. FIT ON TRAIN ONLY. When the default
         # head is in use, fit it through the shared AUTO-REGULARIZE wheel
         # (futures_foundation.overfit): fit default → if it overfit train→val,
@@ -379,12 +388,15 @@ def run(labeler, head_factory=None, seeds=(0, 1, 2), train_m=3, val_m=1, test_m=
         if binary and auto_regularize and _default_head:
             _mean = lambda R: float(R.mean()) if len(R) else 0.0
             head, remediated, _ = _of.regularized_fit(
-                fit=lambda cfg: XGBHead(nc, **cfg).fit(Xtr, Ytr, seed),
+                fit=lambda cfg: XGBHead(nc, **cfg).fit(Xtr, Ytr, seed,
+                                                       sample_weight=w_tr),
                 score_train=lambda m: _mean(labeler.evaluate(d['Ktr'],
                                                              m.predict(Xtr))),
                 score_val=lambda m: _mean(labeler.evaluate(d['Kval'],
                                                            m.predict(d['Xval']))),
                 reg_candidates=REG_LADDER, overfit_gap=OVERFIT_GAP_R)
+        elif w_tr is not None:
+            head = head_factory(nc).fit(Xtr, Ytr, seed, sample_weight=w_tr)
         else:
             head = head_factory(nc).fit(Xtr, Ytr, seed)
 

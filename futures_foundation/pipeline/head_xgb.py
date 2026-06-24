@@ -30,15 +30,20 @@ class XGBHead:
         # baked into the ONNX export so the bot reads calibrated proba.
         self._platt = None
 
-    def fit(self, X, y, seed=0):
+    def fit(self, X, y, seed=0, sample_weight=None):
         # Let XGBClassifier infer the objective from y: binary:logistic for
         # 2 classes, multi:softprob for >2. Forcing multi+num_class breaks
         # the binary case (predict returns 2-D).
+        # sample_weight (optional): per-row training weight. Used for
+        # R-WEIGHTED ranking — weigh each trade by the R it would realize so
+        # the loss cares about profit magnitude, not just hit/miss. None ->
+        # uniform (the win-rate objective).
         import xgboost as xgb
         self._clf = xgb.XGBClassifier(
             tree_method='hist', random_state=seed, n_jobs=1,
             verbosity=0, **self._p)
-        self._clf.fit(np.asarray(X, np.float32), np.asarray(y))
+        sw = None if sample_weight is None else np.asarray(sample_weight, np.float32)
+        self._clf.fit(np.asarray(X, np.float32), np.asarray(y), sample_weight=sw)
         return self
 
     def fit_calibration(self, X, y, n_splits=3, seed=0):
