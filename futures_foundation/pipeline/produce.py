@@ -40,6 +40,71 @@ from . import context_fusion
 from .head_xgb import XGBHead, XGBRiskHead
 
 
+def write_signal_contract(labeler, bundle, output_path):
+    """Emit the self-describing signal contract `<base>_signal.json` (v1.0) next
+    to the ONNX triplet — the consumer (bot) reads it to VALIDATE it can run the
+    model (flip scheme implemented? ctx match? triplet match? feature contract?)
+    instead of silently feeding a head the wrong bars/features.
+
+    Bundle supplies the encoder/output/integrity fields; the labeler's optional
+    `signal_contract()` (flip/trigger + label) and `feature_names()` (EXACT
+    ordered handcraft columns) supply the strategy-specific contract. Labelers
+    without those hooks still get a valid minimal sidecar (the required subset).
+    """
+    import hashlib
+    import json
+    base = Path(output_path).with_suffix('')
+    sc = labeler.signal_contract() if hasattr(labeler, 'signal_contract') else {}
+    names = (labeler.feature_names() if hasattr(labeler, 'feature_names')
+             else sc.get('handcraft_features'))
+    td = (bundle.get('training_metadata') or {}).get('train_date')
+    embed_dim = int(bundle.get('embed_dim') or backbone.D_MODEL)
+    handcraft_dim = int(bundle['feat_dim']) - embed_dim
+    sig_onnx = Path(f"{base}_signal_head.onnx")
+    sha = (hashlib.sha256(sig_onnx.read_bytes()).hexdigest()
+           if sig_onnx.exists() else None)
+    contract = {
+        'contract_version': '1.0',
+        'triplet_id': f"{base.name}@{td}" if td else base.name,
+        'role': 'signal_head',
+        # 1. trigger / flip (labeler-supplied)
+        'flip_scheme': sc.get('flip_scheme'),
+        'flip_params': sc.get('flip_params', {}),
+        'direction_rule': sc.get('direction_rule'),
+        'entry_timing': sc.get('entry_timing', 'next_bar_open'),
+        'min_gap_bars': sc.get('min_gap_bars'),
+        # 2. features (EXACT ordered handcraft names + integrity dim)
+        'handcraft_features': names,
+        'handcraft_dim': (len(names) if names is not None else handcraft_dim),
+        'feature_lib': sc.get('feature_lib'),
+        'nan_policy': {'posinf': 0, 'neginf': 0},
+        # 3. encoder / input
+        'chronos_ckpt': bundle.get('chronos_ckpt'),
+        'ctx_window': (int(bundle['ctx_window'])
+                       if bundle.get('ctx_window') else None),
+        'pool': bundle.get('pool', 'mean'),
+        'locscale': bool(bundle.get('locscale', False)),
+        'embed_dim': embed_dim,
+        # 4. output / label
+        'n_classes': int(bundle['n_classes']),
+        'calibrated': bool(bundle.get('calibrated', False)),
+        'label_def': sc.get('label_def'),
+        'proba_meaning': sc.get('proba_meaning',
+                                'P(trade reaches TP before SL)'),
+        # 5. provenance / integrity
+        'version': sc.get('version'),
+        'train_date': td,
+        'train_scope': sc.get('train_scope'),
+        'content_sha': sha,
+    }
+    path = Path(f"{base}_signal.json")
+    path.write_text(json.dumps(contract, indent=2))
+    # guard: the ordered handcraft names MUST match the bundle's actual width,
+    # else the consumer would build a mismatched vector (the silent-bug class).
+    ok = names is None or len(names) == handcraft_dim
+    return str(path), contract, ok
+
+
 def train(labeler, *, holdout_months: int = 1, seed: int = 0,
           n_estimators: int = 600, max_depth: int = 5,
           output_path: Optional[str | Path] = None,
@@ -290,6 +355,8 @@ def train(labeler, *, holdout_months: int = 1, seed: int = 0,
         'ctx_window': len(Ctr[0]) if len(Ctr) else None,
         'd_model': backbone.D_MODEL,
         'chronos_ckpt': ckpt,
+        'pool': 'mean',
+        'locscale': os.environ.get('CHRONOS_POOL_LOCSCALE') == '1',
         'calibrated': signal_head._platt is not None,
         'platt': signal_head._platt,            # (A, B) or None — for transparency
         'labeler_name': type(labeler).__name__,
@@ -325,10 +392,20 @@ def train(labeler, *, holdout_months: int = 1, seed: int = 0,
     # Any produce/pipeline script gets ONNX via export_onnx=True OR the
     # FFM_EXPORT_ONNX=1 env (universal switch, no per-script wiring needed).
     onnx_results = None
+    contract_path = None
     if export_onnx or os.environ.get('FFM_EXPORT_ONNX') == '1':
         from ..extractors.chronos import onnx_export   # Chronos-specific (encoder export)
         onnx_results = onnx_export.export_bundle_onnx(bundle, output_path,
                                                       verbose=verbose)
+        # self-describing signal contract sidecar (next to the ONNX triplet)
+        contract_path, contract, ok = write_signal_contract(
+            labeler, bundle, output_path)
+        if verbose:
+            print(f"\n[contract] {('✓' if ok else '⚠ feature-dim MISMATCH')} "
+                  f"{contract_path}  "
+                  f"(flip={contract['flip_scheme']}, "
+                  f"handcraft={contract['handcraft_dim']}, "
+                  f"triplet={contract['triplet_id']})")
 
     if verbose:
         print("\n=== DONE ===")
@@ -339,4 +416,5 @@ def train(labeler, *, holdout_months: int = 1, seed: int = 0,
         'holdout_eval': holdout_eval,
         'size_mb': size_mb,
         'onnx': onnx_results,
+        'contract': contract_path,
     }

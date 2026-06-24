@@ -51,3 +51,65 @@ class StrategyLabeler(Protocol):
         """Predicted class per decision -> realized per-trade R (cost
         included). Skipped/Hold predictions contribute no trade."""
         ...
+
+
+class BaseChronosStrategy:
+    """Optional base giving every strategy a SELF-DESCRIBING signal contract for
+    the `<base>_signal.json` sidecar (produce writes it; the bot reads it to
+    validate it can run the triplet). Inherit it and declare the class attrs —
+    no per-strategy boilerplate:
+
+        class FooChronos(BaseChronosStrategy):
+            n_classes = 2
+            FLIP_SCHEME    = 'foo'
+            FLIP_PARAMS    = {'fast': 9, 'slow': 20}      # or override flip_params()
+            DIRECTION_RULE = 'cross_side'
+            MIN_GAP        = MIN_GAP
+            HANDCRAFT_NAMES = ('ema_spread', 'adx')       # cols AFTER the FFM lib
+            STOP_ATR, RR, VERT = STOP_ATR, RR, VERT
+            VERSION     = 'foo-1.0'
+            TRAIN_SCOPE = {'tickers': TICKERS, 'timeframes': ['3min']}
+
+    Relies on the labeler convention `self._b[tk]['feat_cols']` (the ordered FFM
+    library columns). A subclass that declares no attrs still yields a valid
+    MINIMAL contract; declaring HANDCRAFT_NAMES is what makes the feature
+    contract exact (produce flags a width mismatch loudly)."""
+    # contract class-attrs — override in the subclass
+    FLIP_SCHEME = None
+    FLIP_PARAMS: dict = {}
+    DIRECTION_RULE = None
+    ENTRY_TIMING = 'next_bar_open'
+    MIN_GAP = None
+    HANDCRAFT_NAMES: tuple = ()        # ordered handcraft cols AFTER the FFM lib
+    STOP_ATR = None
+    RR = None
+    VERT = None
+    FEATURE_LIB = 'futures_foundation'
+    PROBA_MEANING = 'P(trade reaches TP before SL)'
+    VERSION = None
+    TRAIN_SCOPE = None
+
+    def feature_names(self):
+        """EXACT ordered handcraft columns features() emits: the FFM library
+        cols (self._b[*]['feat_cols']) then this strategy's HANDCRAFT_NAMES."""
+        feat_cols = list(next(iter(self._b.values()))['feat_cols'])
+        return feat_cols + list(self.HANDCRAFT_NAMES)
+
+    def flip_params(self) -> dict:
+        return dict(self.FLIP_PARAMS)
+
+    def signal_contract(self) -> dict:
+        label = (f'triple_barrier SL={self.STOP_ATR}ATR TP={self.RR}R '
+                 f'VERT={self.VERT}') if self.STOP_ATR is not None else None
+        return {
+            'flip_scheme': self.FLIP_SCHEME,
+            'flip_params': self.flip_params(),
+            'direction_rule': self.DIRECTION_RULE,
+            'entry_timing': self.ENTRY_TIMING,
+            'min_gap_bars': self.MIN_GAP,
+            'label_def': label,
+            'proba_meaning': self.PROBA_MEANING,
+            'feature_lib': self.FEATURE_LIB,
+            'version': self.VERSION,
+            'train_scope': self.TRAIN_SCOPE,
+        }
