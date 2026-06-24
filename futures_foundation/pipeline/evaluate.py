@@ -574,6 +574,30 @@ def run(labeler, head_factory=None, seeds=(0, 1, 2), train_m=3, val_m=1, test_m=
                   f"{100 * wr:>5.1f}%  {100 * recall:>5.1f}%  {pf_s}  "
                   f"{100 * delta:>+7.1f}%  {verdict}")
 
+        # ---- Per-bucket WR-by-proba (NON-cumulative calibration view) ----
+        # The cumulative table above shows WR for proba>=thr; this shows each
+        # proba BAND in isolation so you can see whether higher proba actually
+        # means higher WR (monotonicity / calibration) AND, alongside it, the
+        # band's realized meanR — the "are we trading WR away for R?" check.
+        print(f"\n📊 WR-BY-PROBA BUCKET — REAL @ fixed-TP (non-cumulative, pooled)")
+        print(f"   {'Bucket':>12}  {'Trades':>6}  {'Wins':>5}  {'WR':>6}  "
+              f"{'meanR':>6}")
+        print(f"   {'-' * 46}")
+        edges = [0.0, 0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 1.01]
+        p_all = np.concatenate([pr for _, pr, _, _ in proba_records])
+        y_all = np.concatenate([yt for _, _, yt, _ in proba_records])
+        rfull = np.concatenate([labeler.evaluate(keys, np.ones(len(pr), int))
+                                for keys, pr, _, _ in proba_records])
+        for lo, hi in zip(edges[:-1], edges[1:]):
+            m = (p_all >= lo) & (p_all < hi)
+            n = int(m.sum())
+            if n == 0:
+                print(f"   [{lo:.2f},{hi:.2f})  {0:>6}     —     —       —")
+                continue
+            wins = int(y_all[m].sum())
+            print(f"   [{lo:.2f},{hi:.2f})  {n:>6}  {wins:>5}  "
+                  f"{100 * wins / n:>5.1f}%  {rfull[m].mean():>+6.2f}")
+
         # ---- Dynamic-TP confidence dashboard (signal + risk head) --------
         # The deployment-equivalent metric: per signal, TP is set from
         # the risk-head prediction. This is what the bot will earn.
