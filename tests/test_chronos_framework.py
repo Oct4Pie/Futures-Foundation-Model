@@ -21,6 +21,17 @@ from futures_foundation.extractors.chronos import finetune as ft  # torch is laz
 from futures_foundation.pipeline import evaluate, strategy
 from futures_foundation.pipeline.head_xgb import XGBHead, XGBRiskHead
 
+
+@pytest.fixture(autouse=True)
+def _iso_return_shape():
+    """Base embed-dim assertions run with return-shape OFF (default-on is verified
+    in test_window_features)."""
+    saved = os.environ.get('CHRONOS_RETURN_SHAPE')
+    os.environ['CHRONOS_RETURN_SHAPE'] = '0'
+    yield
+    (os.environ.pop('CHRONOS_RETURN_SHAPE', None) if saved is None
+     else os.environ.__setitem__('CHRONOS_RETURN_SHAPE', saved))
+
 # find_spec does NOT import the module -> pytest process stays torch-free.
 _CHRONOS = (importlib.util.find_spec('chronos') is not None
             and importlib.util.find_spec('torch') is not None)

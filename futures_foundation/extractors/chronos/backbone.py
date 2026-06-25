@@ -38,7 +38,30 @@ def pooled_dim(pool: str = 'mean') -> int:
     """Width of embed()'s output for a pool mode (torch-free). 'meanreg'
     concatenates mean + [REG] → 2*D_MODEL; 'mean'/'reg' → D_MODEL."""
     base = 2 * D_MODEL if pool == 'meanreg' else D_MODEL
-    return base + (2 if os.environ.get('CHRONOS_POOL_LOCSCALE') == '1' else 0)
+    extra = 2 if os.environ.get('CHRONOS_POOL_LOCSCALE') == '1' else 0
+    if _return_shape_on():
+        from .window_features import RETURN_SHAPE_DIM
+        extra += RETURN_SHAPE_DIM
+    return base + extra
+
+
+def _return_shape_on() -> bool:
+    """Return-shape features are BUILT IN (always on) — they re-inject the
+    direction/momentum info Chronos's instance_norm strips, validated to help at
+    the trade-able top. NOT opt-in (opt-in flags rot). Only an explicit
+    CHRONOS_RETURN_SHAPE=0 disables it (for reproducing legacy 256-d bundles)."""
+    return os.environ.get('CHRONOS_RETURN_SHAPE', '1') != '0'
+
+
+def _maybe_return_shape(E, contexts):
+    """Append return-shape scalars (drift/skew/persistence/autocorr) to the pooled
+    embedding — the direction info instance_norm discards. Chronos-SPECIFIC, lives
+    entirely inside this package so swapping extractors cannot trigger or break it.
+    ON by default; CHRONOS_RETURN_SHAPE=0 disables (legacy-bundle parity)."""
+    if not _return_shape_on() or len(E) == 0:
+        return E
+    from .window_features import return_shape_features
+    return np.hstack([E, return_shape_features(np.asarray(contexts, np.float32))])
 
 
 def resolve_ckpt(spec):
@@ -163,7 +186,7 @@ def embed(contexts, batch=64, pool='mean', return_loc_scale=False):
 
     if pool not in ('mean', 'reg', 'meanreg'):
         raise ValueError(f"pool must be 'mean'|'reg'|'meanreg', got {pool!r}")
-    dim = 2 * D_MODEL if pool == 'meanreg' else D_MODEL
+    dim = pooled_dim(pool)        # full width incl. locscale + return-shape (consistent)
     X = np.asarray(contexts, dtype=np.float32)
     if len(X) == 0:
         empty = np.zeros((0, dim), np.float32)
@@ -185,7 +208,7 @@ def embed(contexts, batch=64, pool='mean', return_loc_scale=False):
         if r.returncode != 0 or not os.path.exists(op):
             raise RuntimeError(
                 "chronos embed worker failed:\n" + r.stderr[-2000:])
-        E = np.load(op)
+        E = _maybe_return_shape(np.load(op), X)   # CHRONOS_RETURN_SHAPE opt-in
         return (E, np.load(ls)) if return_loc_scale else E
 
 

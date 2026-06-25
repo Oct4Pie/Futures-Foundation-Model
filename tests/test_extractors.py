@@ -56,8 +56,9 @@ import json as _json
 
 @pytest.fixture(autouse=True)
 def _iso_ckpt_env():
-    keys = ('CHRONOS_POOL_LOCSCALE', 'CHRONOS_FT_CKPT')
+    keys = ('CHRONOS_POOL_LOCSCALE', 'CHRONOS_FT_CKPT', 'CHRONOS_RETURN_SHAPE')
     saved = {k: _os.environ.get(k) for k in keys}
+    _os.environ['CHRONOS_RETURN_SHAPE'] = '0'   # isolate base dims; default-on tested in test_window_features
     yield
     for k, v in saved.items():
         _os.environ.pop(k, None) if v is None else _os.environ.__setitem__(k, v)

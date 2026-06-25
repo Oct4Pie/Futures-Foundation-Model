@@ -15,6 +15,18 @@ import futures_foundation as ffm
 from futures_foundation.extractors.chronos import backbone as foundation
 
 
+@pytest.fixture(autouse=True)
+def _iso_return_shape():
+    """Base-mechanic tests (pool/locscale/empty dims) run with return-shape OFF;
+    the default-on (+7) contract is verified in test_window_features."""
+    import os as _o
+    saved = _o.environ.get('CHRONOS_RETURN_SHAPE')
+    _o.environ['CHRONOS_RETURN_SHAPE'] = '0'
+    yield
+    (_o.environ.pop('CHRONOS_RETURN_SHAPE', None) if saved is None
+     else _o.environ.__setitem__('CHRONOS_RETURN_SHAPE', saved))
+
+
 # ---------------------------------------------------------------------------
 # Import contract — the parent must stay torch-free (macOS libomp segfault)
 # ---------------------------------------------------------------------------
