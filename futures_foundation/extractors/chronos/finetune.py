@@ -56,6 +56,10 @@ class FTConfig:
     self_supervised: bool = False      # Option A: MoCo/SimCLR contrastive, NO labels
     aug_jitter: float = 0.10           # jitter σ as fraction of per-window std
     aug_mask: float = 0.15             # fraction of bars time-masked per view
+    lora: bool = False                 # LoRA: freeze base, learn low-rank deltas (no drift)
+    lora_r: int = 8
+    lora_alpha: int = 16
+    lora_dropout: float = 0.0
 
 
 def _seed(seed):
@@ -138,6 +142,29 @@ def _ntxent(z1, z2, tau):
     return -logprob[torch.arange(n2, device=z.device), pos].mean()
 
 
+def _wrap_lora(m, cfg):
+    """Freeze base, inject LoRA adapters (official Chronos targets: attn q/k/v/o +
+    output projection). Preserves the pretrained embedding -> no full-FT drift."""
+    from peft import LoraConfig, get_peft_model
+    lc = LoraConfig(r=cfg.lora_r, lora_alpha=cfg.lora_alpha,
+                    lora_dropout=cfg.lora_dropout, bias='none',
+                    target_modules=['SelfAttention.q', 'SelfAttention.v',
+                                    'SelfAttention.k', 'SelfAttention.o',
+                                    'output_patch_embedding.output_layer'])
+    m = get_peft_model(m, lc)
+    if cfg.log_every:
+        m.print_trainable_parameters()
+    return m
+
+
+def _finalize(m, cfg):
+    """Merge LoRA into base (so backbone.embed loads a plain ckpt) + move to cpu."""
+    if cfg.lora:
+        m = m.merge_and_unload()
+    m.to('cpu')
+    return m
+
+
 def _train_ssl(contexts, cfg, seed):
     """Option A: self-supervised contrastive FT (NO labels). Returns (m, None).
     The FT only adapts bolt-tiny into a discriminative feature extractor; the
@@ -148,11 +175,14 @@ def _train_ssl(contexts, cfg, seed):
         'mps' if torch.backends.mps.is_available()
         else 'cuda' if torch.cuda.is_available() else 'cpu')
     m = backbone.fresh_model(); m.to(dev)
-    for p in m.parameters():
-        p.requires_grad_(True)
+    if cfg.lora:
+        m = _wrap_lora(m, cfg); m.to(dev)         # freeze base, train adapters only
+    else:
+        for p in m.parameters():
+            p.requires_grad_(True)
     X = np.asarray(contexts, np.float32)
     n = len(X)
-    opt = torch.optim.Adam(m.parameters(), lr=cfg.lr_back)
+    opt = torch.optim.Adam([p for p in m.parameters() if p.requires_grad], lr=cfg.lr_back)
     rng = np.random.default_rng(seed)
     m.train()
     if cfg.log_every:
@@ -170,8 +200,7 @@ def _train_ssl(contexts, cfg, seed):
         if cfg.log_every and (step % cfg.log_every == 0 or step == cfg.steps - 1):
             print(f"[finetune] step {step+1}/{cfg.steps}  ntxent={float(loss):.4f}",
                   flush=True)
-    m.to('cpu')
-    return m, None
+    return _finalize(m, cfg), None
 
 
 def train(contexts, labels, cfg=FTConfig(), seed=0):
@@ -189,8 +218,6 @@ def train(contexts, labels, cfg=FTConfig(), seed=0):
         else 'cuda' if torch.cuda.is_available() else 'cpu')
     m = backbone.fresh_model()                    # reset -> independent run
     m.to(dev)
-    for p in m.parameters():
-        p.requires_grad_(True)
     X = np.asarray(contexts, np.float32)
     yl = np.asarray(labels)
     Y = torch.tensor(yl, dtype=torch.long, device=dev)
@@ -198,12 +225,17 @@ def train(contexts, labels, cfg=FTConfig(), seed=0):
     # probe pooled width (auto-adapts to CHRONOS_POOL_LOCSCALE shape-preservation)
     with torch.no_grad():
         d = backbone.pool(m, torch.tensor(X[:2], device=dev)).shape[1]
+    if cfg.lora:
+        m = _wrap_lora(m, cfg); m.to(dev)         # freeze base, train adapters only
+    else:
+        for p in m.parameters():
+            p.requires_grad_(True)
     head = fresh_head(d, nc).to(dev)
     centers = torch.nn.Parameter(torch.randn(nc, d, device=dev) * 0.01)
     opt = torch.optim.Adam(
         [{'params': head.parameters(), 'lr': cfg.lr_head},
          {'params': [centers], 'lr': cfg.lr_head},
-         {'params': m.parameters(), 'lr': cfg.lr_back}])
+         {'params': [p for p in m.parameters() if p.requires_grad], 'lr': cfg.lr_back}])
     ce = torch.nn.CrossEntropyLoss()
     idx_by_c = [np.where(yl == c)[0] for c in range(nc)]
     rng = np.random.default_rng(seed)
@@ -227,7 +259,7 @@ def train(contexts, labels, cfg=FTConfig(), seed=0):
         if cfg.log_every and (step % cfg.log_every == 0 or step == cfg.steps - 1):
             print(f"[finetune] step {step+1}/{cfg.steps}  loss={float(loss):.4f}",
                   flush=True)
-    m.to('cpu'); head.to('cpu')                   # save/embed/predict from cpu
+    m = _finalize(m, cfg); head.to('cpu')         # merge LoRA + save/embed from cpu
     return m, head
 
 
