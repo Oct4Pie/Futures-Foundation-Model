@@ -79,3 +79,26 @@ def test_calibrated_flag_passthrough(tmp_path):
     b = _bundle(8 + 256); b['calibrated'] = True
     _, c, _ = write_signal_contract(_Labeler(), b, str(tmp_path / 'm.joblib'))
     assert c['calibrated'] is True
+
+
+def test_contract_no_return_shape_by_default(tmp_path):
+    _, c, _ = write_signal_contract(_Labeler(), _bundle(8 + 256),
+                                    str(tmp_path / 'm.joblib'))
+    assert c['return_shape'] is False
+    assert c['return_shape_features'] is None and c['return_shape_fn'] is None
+    assert c['embed_layout'] == [['chronos_pool', 256]]
+
+
+def test_contract_declares_return_shape_for_serve_parity(tmp_path):
+    from futures_foundation.extractors.chronos.window_features import (
+        return_shape_feature_names, RETURN_SHAPE_DIM)
+    b = _bundle(8 + 256 + RETURN_SHAPE_DIM)            # embed now 263, +8 handcraft
+    b['embed_dim'] = 256 + RETURN_SHAPE_DIM
+    b['return_shape'] = True
+    _, c, ok = write_signal_contract(_Labeler(), b, str(tmp_path / 'm.joblib'))
+    assert ok and c['return_shape'] is True
+    assert c['return_shape_features'] == return_shape_feature_names()
+    assert c['return_shape_fn'].endswith('window_features.return_shape_features')
+    assert c['embed_layout'][0] == ['chronos_pool', 256]
+    assert ['return_shape', RETURN_SHAPE_DIM] in c['embed_layout']
+    assert c['handcraft_dim'] == 8                     # 271 - 263, consumer-checkable

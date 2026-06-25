@@ -63,6 +63,17 @@ def write_signal_contract(labeler, bundle, output_path):
     sig_onnx = Path(f"{base}_signal_head.onnx")
     sha = (hashlib.sha256(sig_onnx.read_bytes()).hexdigest()
            if sig_onnx.exists() else None)
+    # embed sub-layout the SERVE path must reproduce, in order: ONNX is the
+    # chronos_pool block only; the consumer appends loc/scale + return-shape
+    # itself (both computed from the SAME ctx window, both pure-numpy).
+    rs_on = bool(bundle.get('return_shape', False))
+    from .. extractors.chronos.window_features import return_shape_feature_names
+    rs_names = return_shape_feature_names() if rs_on else None
+    embed_layout = [['chronos_pool', int(backbone.D_MODEL)]]
+    if bundle.get('locscale'):
+        embed_layout.append(['locscale', 2])
+    if rs_on:
+        embed_layout.append(['return_shape', len(return_shape_feature_names())])
     contract = {
         'contract_version': '1.0',
         'triplet_id': f"{base.name}@{td}" if td else base.name,
@@ -84,6 +95,13 @@ def write_signal_contract(labeler, bundle, output_path):
                        if bundle.get('ctx_window') else None),
         'pool': bundle.get('pool', 'mean'),
         'locscale': bool(bundle.get('locscale', False)),
+        # return-shape: 7 direction/momentum scalars the SERVE path must compute
+        # from the ctx window via `return_shape_fn` and append per `embed_layout`.
+        'return_shape': rs_on,
+        'return_shape_features': rs_names,
+        'return_shape_fn': ('futures_foundation.extractors.chronos.window_features'
+                            '.return_shape_features' if rs_on else None),
+        'embed_layout': embed_layout,
         'embed_dim': embed_dim,
         # 4. output / label
         'n_classes': int(bundle['n_classes']),
@@ -357,6 +375,7 @@ def train(labeler, *, holdout_months: int = 1, seed: int = 0,
         'chronos_ckpt': ckpt,
         'pool': 'mean',
         'locscale': os.environ.get('CHRONOS_POOL_LOCSCALE') == '1',
+        'return_shape': backbone._return_shape_on(),   # +7 return-shape dims baked into embed
         'calibrated': signal_head._platt is not None,
         'platt': signal_head._platt,            # (A, B) or None — for transparency
         'labeler_name': type(labeler).__name__,
