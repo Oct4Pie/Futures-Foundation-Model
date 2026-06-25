@@ -33,6 +33,8 @@ folds (great walk-forward, dead clean-holdout). Validate on a strict forward blo
 """
 from dataclasses import dataclass
 
+import os
+
 import numpy as np
 
 from futures_foundation.extractors.chronos import backbone
@@ -50,6 +52,7 @@ class FTConfig:
     tau: float = 0.1                   # SupCon temperature (UniShape: 0.1)
     proto_tau: float = 0.1             # prototype temperature
     balanced: bool = True              # class-balanced batches (positives for SupCon)
+    log_every: int = 0                 # >0: print step/loss every N steps (long runs)
 
 
 def _seed(seed):
@@ -73,9 +76,12 @@ def _supcon(z, y, tau):
     sim = z @ z.t() / tau                                  # [B,B] cosine/τ
     B = z.shape[0]
     eye = torch.eye(B, dtype=torch.bool, device=z.device)
-    sim = sim.masked_fill(eye, float('-inf'))             # drop self-similarity
     pos = (y.unsqueeze(0) == y.unsqueeze(1)) & ~eye       # same-label, not self
-    logprob = sim - torch.logsumexp(sim, dim=1, keepdim=True)
+    # MPS-safe log-prob: row-max stabilize + multiplicative self-mask (NO -inf,
+    # which yields NaN under MPS logsumexp). Denominator excludes self (Khosla).
+    sim = sim - sim.max(dim=1, keepdim=True).values.detach()
+    exp_sim = torch.exp(sim) * (~eye).to(sim.dtype)       # zero self in denom
+    logprob = sim - torch.log(exp_sim.sum(1, keepdim=True) + 1e-12)
     pcnt = pos.sum(1)
     valid = pcnt > 0
     if int(valid.sum()) == 0:
@@ -102,18 +108,22 @@ def train(contexts, labels, cfg=FTConfig(), seed=0):
     import torch
     import torch.nn.functional as F
     _seed(seed)
+    dev = os.environ.get('FFM_FT_DEVICE') or (    # auto: local GPU if available
+        'mps' if torch.backends.mps.is_available()
+        else 'cuda' if torch.cuda.is_available() else 'cpu')
     m = backbone.fresh_model()                    # reset -> independent run
+    m.to(dev)
     for p in m.parameters():
         p.requires_grad_(True)
     X = np.asarray(contexts, np.float32)
     yl = np.asarray(labels)
-    Y = torch.tensor(yl, dtype=torch.long)
+    Y = torch.tensor(yl, dtype=torch.long, device=dev)
     n = len(Y); nc = cfg.n_classes
     # probe pooled width (auto-adapts to CHRONOS_POOL_LOCSCALE shape-preservation)
     with torch.no_grad():
-        d = backbone.pool(m, torch.tensor(X[:2])).shape[1]
-    head = fresh_head(d, nc)
-    centers = torch.nn.Parameter(torch.randn(nc, d) * 0.01)
+        d = backbone.pool(m, torch.tensor(X[:2], device=dev)).shape[1]
+    head = fresh_head(d, nc).to(dev)
+    centers = torch.nn.Parameter(torch.randn(nc, d, device=dev) * 0.01)
     opt = torch.optim.Adam(
         [{'params': head.parameters(), 'lr': cfg.lr_head},
          {'params': [centers], 'lr': cfg.lr_head},
@@ -122,10 +132,13 @@ def train(contexts, labels, cfg=FTConfig(), seed=0):
     idx_by_c = [np.where(yl == c)[0] for c in range(nc)]
     rng = np.random.default_rng(seed)
     m.train(); head.train()
-    for _ in range(cfg.steps):
+    if cfg.log_every:
+        print(f"[finetune] device={dev} | {cfg.steps} steps batch={cfg.batch} "
+              f"| {n:,} ctx | CE+λsc{cfg.lambda_supcon}+λpr{cfg.lambda_proto}", flush=True)
+    for step in range(cfg.steps):
         b = (_balanced_batch(idx_by_c, cfg.batch, rng) if cfg.balanced
              else rng.choice(n, size=min(cfg.batch, n), replace=False))
-        z = backbone.pool(m, torch.tensor(X[b]))
+        z = backbone.pool(m, torch.tensor(X[b], device=dev))
         yb = Y[b]
         loss = ce(head(z), yb)
         if cfg.lambda_supcon > 0:
@@ -135,6 +148,10 @@ def train(contexts, labels, cfg=FTConfig(), seed=0):
                             @ F.normalize(centers, dim=1).t()) / cfg.proto_tau
             loss = loss + cfg.lambda_proto * ce(proto_logits, yb)
         opt.zero_grad(); loss.backward(); opt.step()
+        if cfg.log_every and (step % cfg.log_every == 0 or step == cfg.steps - 1):
+            print(f"[finetune] step {step+1}/{cfg.steps}  loss={float(loss):.4f}",
+                  flush=True)
+    m.to('cpu'); head.to('cpu')                   # save/embed/predict from cpu
     return m, head
 
 
