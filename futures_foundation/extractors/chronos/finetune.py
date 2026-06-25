@@ -53,6 +53,9 @@ class FTConfig:
     proto_tau: float = 0.1             # prototype temperature
     balanced: bool = True              # class-balanced batches (positives for SupCon)
     log_every: int = 0                 # >0: print step/loss every N steps (long runs)
+    self_supervised: bool = False      # Option A: MoCo/SimCLR contrastive, NO labels
+    aug_jitter: float = 0.10           # jitter σ as fraction of per-window std
+    aug_mask: float = 0.15             # fraction of bars time-masked per view
 
 
 def _seed(seed):
@@ -102,9 +105,82 @@ def _balanced_batch(idx_by_c, batch, rng):
     return np.concatenate(picks)
 
 
+def _augment_view(X, rng, jitter, mask_frac):
+    """Two-way TS augmentation for SimCLR/MoCo. X:[B,T] log-price windows. Only
+    SHAPE-changing augs (level/scale are stripped by bolt's instance_norm anyway):
+    per-window jitter + contiguous time-masking (hold-last). Returns a new [B,T]."""
+    B, T = X.shape
+    sd = X.std(axis=1, keepdims=True) + 1e-8
+    out = X + rng.normal(0.0, 1.0, X.shape).astype(np.float32) * (jitter * sd)
+    span = max(1, int(mask_frac * T))
+    for r in range(B):                                # contiguous hold-last mask
+        s = int(rng.integers(0, max(1, T - span)))
+        out[r, s:s + span] = out[r, max(0, s - 1)]
+    return out
+
+
+def _ntxent(z1, z2, tau):
+    """NT-Xent (SimCLR). z1,z2:[B,d] are two views of the same B windows. Positive
+    pair = (i, i+B); all other 2B-2 are negatives. MPS-safe: row-max stabilize +
+    multiplicative self-mask (NO -inf -> no NaN on Metal)."""
+    import torch
+    import torch.nn.functional as F
+    z = torch.cat([z1, z2], dim=0)                    # [2B,d]
+    z = F.normalize(z, dim=1)
+    n2 = z.shape[0]; B = z1.shape[0]
+    sim = z @ z.t() / tau                             # [2B,2B]
+    eye = torch.eye(n2, dtype=torch.bool, device=z.device)
+    sim = sim - sim.max(dim=1, keepdim=True).values.detach()
+    exp_sim = torch.exp(sim) * (~eye).to(sim.dtype)   # drop self from denominator
+    logprob = sim - torch.log(exp_sim.sum(1, keepdim=True) + 1e-12)
+    pos = torch.arange(n2, device=z.device)
+    pos = (pos + B) % n2                              # i<->i+B partner index
+    return -logprob[torch.arange(n2, device=z.device), pos].mean()
+
+
+def _train_ssl(contexts, cfg, seed):
+    """Option A: self-supervised contrastive FT (NO labels). Returns (m, None).
+    The FT only adapts bolt-tiny into a discriminative feature extractor; the
+    downstream classifier (XGBoost) owns the trend label. Leak-immune."""
+    import torch
+    _seed(seed)
+    dev = os.environ.get('FFM_FT_DEVICE') or (
+        'mps' if torch.backends.mps.is_available()
+        else 'cuda' if torch.cuda.is_available() else 'cpu')
+    m = backbone.fresh_model(); m.to(dev)
+    for p in m.parameters():
+        p.requires_grad_(True)
+    X = np.asarray(contexts, np.float32)
+    n = len(X)
+    opt = torch.optim.Adam(m.parameters(), lr=cfg.lr_back)
+    rng = np.random.default_rng(seed)
+    m.train()
+    if cfg.log_every:
+        print(f"[finetune] device={dev} | SSL contrastive | {cfg.steps} steps "
+              f"batch={cfg.batch} | {n:,} ctx (NO labels)", flush=True)
+    for step in range(cfg.steps):
+        b = rng.choice(n, size=min(cfg.batch, n), replace=False)
+        xb = X[b]
+        v1 = _augment_view(xb.copy(), rng, cfg.aug_jitter, cfg.aug_mask)
+        v2 = _augment_view(xb.copy(), rng, cfg.aug_jitter, cfg.aug_mask)
+        z1 = backbone.pool(m, torch.tensor(v1, device=dev))
+        z2 = backbone.pool(m, torch.tensor(v2, device=dev))
+        loss = _ntxent(z1, z2, cfg.tau)
+        opt.zero_grad(); loss.backward(); opt.step()
+        if cfg.log_every and (step % cfg.log_every == 0 or step == cfg.steps - 1):
+            print(f"[finetune] step {step+1}/{cfg.steps}  ntxent={float(loss):.4f}",
+                  flush=True)
+    m.to('cpu')
+    return m, None
+
+
 def train(contexts, labels, cfg=FTConfig(), seed=0):
-    """Joint fine-tune: pristine backbone + fresh head + class prototypes.
-    loss = CE + λ_supcon·SupCon + λ_proto·ProtoCE (discriminative embedding)."""
+    """Joint fine-tune. Two modes:
+      - cfg.self_supervised (Option A): MoCo/SimCLR contrastive, NO labels ->
+        bolt-tiny becomes a discriminative extractor; XGBoost owns the label.
+      - else (Option B): loss = CE + λ_supcon·SupCon + λ_proto·ProtoCE."""
+    if cfg.self_supervised:
+        return _train_ssl(contexts, cfg, seed)             # labels ignored
     import torch
     import torch.nn.functional as F
     _seed(seed)
