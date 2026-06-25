@@ -156,6 +156,7 @@ def group_importance(imp, embed_dim, handcraft_names=None, locscale=False,
 def train(labeler, *, holdout_months: int = 1, seed: int = 0,
           n_estimators: int = 600, max_depth: int = 5,
           head_params: Optional[dict] = None,
+          holdout_start_date: Optional[str] = None,
           output_path: Optional[str | Path] = None,
           context_heads_path: Optional[str] = None, emb_mode: str = 'both',
           export_onnx: bool = False, calibrate: bool = False,
@@ -197,8 +198,17 @@ def train(labeler, *, holdout_months: int = 1, seed: int = 0,
                   f"{cal_min} -> {HEADS_CUTOFF} (heads saw earlier bars)")
             cal_min = HEADS_CUTOFF
         context_fusion.enforce_cutoff(heads, cal_min, what='production train')
-    holdout_start = (cal_max - pd.DateOffset(months=holdout_months)
-                     if holdout_months > 0 else cal_max + pd.Timedelta('1ns'))
+    # holdout boundary: explicit DATE (e.g. '2026-01-01' -> clean 2026 OOS)
+    # takes precedence over months-from-tail.
+    if holdout_start_date is not None:
+        holdout_start = pd.Timestamp(holdout_start_date)
+        if holdout_start.tzinfo is None and cal_max.tzinfo is not None:
+            holdout_start = holdout_start.tz_localize(cal_max.tzinfo)
+        has_holdout = holdout_start < cal_max
+    else:
+        has_holdout = holdout_months > 0
+        holdout_start = (cal_max - pd.DateOffset(months=holdout_months)
+                         if has_holdout else cal_max + pd.Timedelta('1ns'))
 
     nc = int(labeler.n_classes)
     binary = (nc == 2)
@@ -209,9 +219,8 @@ def train(labeler, *, holdout_months: int = 1, seed: int = 0,
         print(f"  data span : {cal_min}  →  {cal_max}")
         print(f"  train     : {cal_min}  →  {holdout_start}  "
               f"(leak-purged at boundary)")
-        if holdout_months > 0:
-            print(f"  holdout   : {holdout_start}  →  {cal_max}  "
-                  f"({holdout_months}mo unseen)")
+        if has_holdout:
+            print(f"  holdout   : {holdout_start}  →  {cal_max}  (unseen OOS)")
         else:
             print(f"  holdout   : (none — training on all data)")
         print(f"  n_classes : {nc} "
@@ -221,7 +230,7 @@ def train(labeler, *, holdout_months: int = 1, seed: int = 0,
     t0 = time.time()
     Ctr, Ytr, Ktr = labeler.build(
         cal_min, holdout_start,
-        test_start=(holdout_start if holdout_months > 0 else None))
+        test_start=(holdout_start if has_holdout else None))
     Ytr = np.asarray(Ytr)
     if not len(Ytr):
         raise RuntimeError("no training signals — labeler returned empty")
@@ -302,9 +311,9 @@ def train(labeler, *, holdout_months: int = 1, seed: int = 0,
 
     # ---- Stage 6: holdout evaluation ----
     holdout_eval = None
-    if holdout_months > 0:
+    if has_holdout:
         if verbose:
-            print(f"\n=== HOLDOUT EVAL ({holdout_months}mo unseen) ===")
+            print(f"\n=== HOLDOUT EVAL ({holdout_start.date()} → {cal_max.date()} OOS) ===")
         Cte, Yte, Kte = labeler.build(
             holdout_start, cal_max + pd.Timedelta('1ns'), test_start=None)
         Yte = np.asarray(Yte)
@@ -435,7 +444,8 @@ def train(labeler, *, holdout_months: int = 1, seed: int = 0,
         'training_metadata': {
             'train_span': (str(cal_min), str(holdout_start)),
             'holdout_span': ((str(holdout_start), str(cal_max))
-                             if holdout_months > 0 else None),
+                             if has_holdout else None),
+            'head_params': head_params,
             'n_train_signals': int(len(Ytr)),
             'label_dist': np.bincount(Ytr, minlength=nc).tolist(),
             'train_date': _dt.date.today().isoformat(),
