@@ -21,24 +21,36 @@ import sys
 import numpy as np
 
 
+def _resolve_embed_device(requested: str, mps_available: bool) -> str:
+    """Embed device: honor 'mps' only if Metal is actually available, else fall
+    back to 'cpu' (the parity-safe default). Pure/torch-free -> unit-testable."""
+    if requested == 'mps' and not mps_available:
+        return 'cpu'
+    return requested
+
+
 def main(inp, outp, batch, pool='mean', locscale_out=None):
     import torch
 
     from chronos import BaseChronosPipeline
 
     from . import backbone as foundation
+    # device: default CPU (byte-identical / parity-safe for produced bundles);
+    # CHRONOS_EMBED_DEVICE=mps opts into Metal (no help for tiny bolt, but safe).
+    dev = _resolve_embed_device(os.environ.get('CHRONOS_EMBED_DEVICE', 'cpu'),
+                                torch.backends.mps.is_available())
     src = foundation.active_source()
     is_local = os.path.isabs(src) or os.path.exists(src)
     tag = 'FINE-TUNED' if is_local else 'FROZEN-VANILLA'
-    print(f"[chronos worker] loading {tag} backbone: {src} (pool={pool})",
+    print(f"[chronos worker] loading {tag} backbone: {src} (pool={pool}, dev={dev})",
           flush=True, file=sys.stderr)
     pipe = BaseChronosPipeline.from_pretrained(
-        src, device_map='cpu', dtype=torch.float32)
+        src, device_map=dev, dtype=torch.float32)
     X = np.load(inp).astype(np.float32)
     out, lss = [], []
     with torch.no_grad():
         for s in range(0, len(X), batch):
-            emb, ls = pipe.embed(torch.tensor(X[s:s + batch]))
+            emb, ls = pipe.embed(torch.tensor(X[s:s + batch]).to(dev))
             if pool == 'mean':
                 v = emb.mean(1)
             elif pool == 'reg':
