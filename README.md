@@ -102,12 +102,7 @@ E = foundation.embed_bars(close, indices)          # [N, 256] float32, strictly 
 - **Process contract:** all torch/Chronos work runs in an **isolated subprocess** (`futures_foundation/_embed_worker.py`). The parent stays torch-free — torch and xgboost segfault in one process on macOS (libomp collision). `D_MODEL = 256` and `CTX = 128` are torch-free constants. Do not "optimize" the embed back in-process.
 - **Backbone wiring guards** (post-incident, 2026-05-19): `$CHRONOS_FT_CKPT` selects a local fine-tuned checkpoint; unset = frozen vanilla. `stamp_active_source()` prints which backbone will load (`❄️ FROZEN` vs `🧪 FINE-TUNED`), scans `temp/` for fine-tune checkpoints sitting unused, and prints the exact `export` command if one is being silently ignored. The worker also stamps what it loaded to stderr (defense in depth).
 
-Fine-tuning the foundation is **objective-specific** — the verdict depends entirely on the training objective:
-
-- **Forecasting-loss FT** (`futures_foundation/chronos/bolt_finetune.py` + `bolt_ab.py`): improves forecasting loss but **not** selection edge — not worth it.
-- **Triple-barrier *direction* FT** (`scripts/finetune_tb_direction.py` → `checkpoints/chronos_bolt_ft`): **does** improve selection for the **trend book** — more setups + tighter generalization across 1min/3min, and it rescued two strategies that overfit on vanilla (ema_cross, ema_decycler now generalize). It's **trend-specialized** (continuation objective), so it does *not* help mean-reversion — CISD stays vanilla; a *reversal*-objective FT is the future lever there.
-
-Select a backbone by name (HF-style): `CHRONOS_FT_CKPT=chronos_bolt_ft` or `ChronosExtractor.from_pretrained('chronos_bolt_ft')` (`vanilla`/unset = frozen base). Produced bundles stamp `chronos_ckpt`, so the consumer loads the **matching** backbone automatically (`from_pretrained(bundle['chronos_ckpt'])`).
+Select a backbone by name (HF-style): `CHRONOS_FT_CKPT=<name>` or `ChronosExtractor.from_pretrained('<name>')` (`vanilla`/unset = frozen base). Produced bundles stamp `chronos_ckpt`, so the consumer loads the **matching** backbone automatically (`from_pretrained(bundle['chronos_ckpt'])`).
 
 ---
 
