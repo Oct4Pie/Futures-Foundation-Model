@@ -60,6 +60,31 @@ def test_folds_roll_and_are_deterministic():
     assert f1 == f2 and [x[0] for x in f1] == list(range(len(f1)))
 
 
+def test_walk_forward_holdout_is_anchored_and_clean():
+    df = _toy()                                    # 2022-01 .. ~2022-06
+    cut = pd.Timestamp('2022-04-01', tz='UTC')
+    folds = list(walk_forward_folds(df, val_months=1, test_months=1,
+                                    holdout_start='2022-04-01'))
+    assert len(folds) >= 2                          # Apr, May, Jun test windows
+    train_maxes = []
+    for i, tr, val, te in folds:
+        assert val['timestamp'].max() < cut                       # holdout excluded from train+val
+        assert tr['timestamp'].max() < val['timestamp'].min()     # leak guard
+        assert val['timestamp'].max() < te['timestamp'].min()     # leak guard
+        assert te['timestamp'].min() >= cut                       # test is in the holdout
+        train_maxes.append(tr['timestamp'].max())
+    # anchored: same train every fold (all months < val); only the test rolls
+    assert all(t == train_maxes[0] for t in train_maxes)
+
+
+def test_walk_forward_default_unchanged_without_holdout():
+    df = _toy()
+    a = [(i, len(tr), len(te)) for i, tr, val, te in walk_forward_folds(df)]
+    b = [(i, len(tr), len(te)) for i, tr, val, te in
+         walk_forward_folds(df, holdout_start=None)]
+    assert a == b                                   # default path byte-identical
+
+
 @pytest.mark.skipif(not _HAS, reason='data/ES_3min.csv absent')
 def test_real_data_loads_long_format():
     df = load_long('3min', tickers=['ES', 'NQ'], target='logret')

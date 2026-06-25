@@ -188,6 +188,17 @@ def test_xgbhead_deterministic_and_bounded(nc):
     assert np.allclose(proba.sum(1), 1.0, atol=1e-4)
 
 
+@iso_only
+def test_xgbhead_feature_importances():
+    rng = np.random.default_rng(0)
+    X = rng.standard_normal((200, 8)).astype('float32')
+    y = (X[:, 0] + X[:, 1] > 0).astype(int)          # cols 0,1 informative
+    fi = XGBHead(2, n_estimators=60).fit(X, y, seed=0).feature_importances()
+    assert fi.shape == (8,)
+    assert abs(float(fi.sum()) - 1.0) < 1e-4         # gain-weighted -> sums ~1
+    assert fi[0] > 0 and fi[1] > 0                   # informative features used
+
+
 # ---- frozen embedding + head-agnostic honest ruler -----------------------
 
 @chronos_only

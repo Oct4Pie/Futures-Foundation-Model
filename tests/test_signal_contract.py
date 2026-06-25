@@ -8,8 +8,11 @@ and a hook-less labeler still yields a valid minimal contract.
 import json
 from pathlib import Path
 
+import numpy as np
+
 from futures_foundation.pipeline.strategy import BaseChronosStrategy
-from futures_foundation.pipeline.produce import write_signal_contract
+from futures_foundation.pipeline.produce import write_signal_contract, group_importance
+from futures_foundation.extractors.chronos.window_features import return_shape_feature_names
 
 
 class _Labeler(BaseChronosStrategy):
@@ -87,6 +90,28 @@ def test_contract_no_return_shape_by_default(tmp_path):
     assert c['return_shape'] is False
     assert c['return_shape_features'] is None and c['return_shape_fn'] is None
     assert c['embed_layout'] == [['chronos_pool', 256]]
+
+
+def test_group_importance_splits_chronos_returnshape_handcraft():
+    embed_dim = 256 + len(return_shape_feature_names())          # chronos + return-shape
+    imp = np.ones(embed_dim + 2)                                 # +2 handcraft
+    grp, named = group_importance(imp, embed_dim, handcraft_names=['hc0', 'hc1'],
+                                  return_shape=True)
+    assert grp['chronos_embed'] == 256
+    assert grp['return_shape'] == len(return_shape_feature_names())
+    assert grp['handcraft'] == 2
+    allnames = [n for n, _ in named]
+    assert len(named) == embed_dim + 2
+    assert 'ret_acf1' in allnames and 'hc0' in allnames and 'chronos_0' in allnames
+
+
+def test_group_importance_with_locscale():
+    embed_dim = 256 + 2 + len(return_shape_feature_names())      # chronos + loc/scale + return-shape
+    imp = np.ones(embed_dim + 1)
+    grp, _ = group_importance(imp, embed_dim, handcraft_names=['x'],
+                              locscale=True, return_shape=True)
+    assert grp['chronos_embed'] == 256 and grp['locscale'] == 2
+    assert grp['return_shape'] == len(return_shape_feature_names()) and grp['handcraft'] == 1
 
 
 def test_contract_declares_return_shape_for_serve_parity(tmp_path):

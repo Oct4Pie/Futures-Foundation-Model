@@ -51,7 +51,8 @@ def load_long(timeframe: str = '3min', tickers=None, target: str = 'logret',
 
 
 def walk_forward_folds(long_df: pd.DataFrame, train_months: int = 3,
-                       val_months: int = 1, test_months: int = 1):
+                       val_months: int = 1, test_months: int = 1,
+                       holdout_start=None):
     """Yield (fold_idx, train_df, val_df, test_df) — three CONTIGUOUS,
     month-aligned, forward-chained windows (the STANDARD train/validate/test
     split). The head is FIT on train, any SELECTION (confidence threshold,
@@ -60,11 +61,46 @@ def walk_forward_folds(long_df: pd.DataFrame, train_months: int = 3,
     finetune convention (train_end / val_end / test_end + VAL_TEST_GAP check).
 
     HARD leak guards: train.max < val.min AND val.max < test.min. Unanchored
-    (drop oldest month each step), stride = test_months."""
+    (drop oldest month each step), stride = test_months.
+
+    `holdout_start` (date, e.g. '2026-01-01') switches to ANCHORED clean-holdout
+    mode: train = ALL months before the cutoff (minus val), val = the last
+    `val_months` before the cutoff, test = rolling `test_months` windows >=
+    cutoff. The honest forward verdict (train excludes the holdout range), with
+    per-month test consistency. Default None = the rolling behavior above."""
     ts = pd.DatetimeIndex(long_df['timestamp'])
     per = ts.tz_localize(None).to_period('M') if ts.tz is not None \
         else ts.to_period('M')
     months = per.unique().sort_values()
+
+    if holdout_start is not None:
+        hs = pd.Period(pd.Timestamp(holdout_start).tz_localize(None)
+                       if pd.Timestamp(holdout_start).tzinfo else
+                       pd.Timestamp(holdout_start), freq='M')
+        pre = months[months < hs]
+        post = months[months >= hs]
+        if len(pre) <= val_months or len(post) == 0:
+            return                                  # not enough history / no holdout
+        va = pre[-val_months:]
+        tr = pre[:-val_months]                       # anchored: all before val
+        trm = np.asarray(per.isin(tr)); vam = np.asarray(per.isin(va))
+        fold = 0
+        for ti in range(0, len(post), test_months):
+            te = post[ti:ti + test_months]
+            tem = np.asarray(per.isin(te))
+            if not (trm.any() and vam.any() and tem.any()):
+                continue
+            train_df = long_df[trm].reset_index(drop=True)
+            val_df = long_df[vam].reset_index(drop=True)
+            test_df = long_df[tem].reset_index(drop=True)
+            assert train_df['timestamp'].max() < val_df['timestamp'].min(), \
+                f'LEAK: holdout fold {fold} train overlaps/precedes val'
+            assert val_df['timestamp'].max() < test_df['timestamp'].min(), \
+                f'LEAK: holdout fold {fold} val overlaps/precedes test'
+            yield fold, train_df, val_df, test_df
+            fold += 1
+        return
+
     fold = 0
     s = 0
     span = train_months + val_months + test_months

@@ -123,8 +123,39 @@ def write_signal_contract(labeler, bundle, output_path):
     return str(path), contract, ok
 
 
+def group_importance(imp, embed_dim, handcraft_names=None, locscale=False,
+                     return_shape=False, d_model=None):
+    """Reusable feature-importance review: split a fitted head's importances into
+    chronos_embed / return_shape / handcraft groups + name the top fields. The
+    embedding block layout mirrors the signal-contract (chronos_pool [+ locscale]
+    [+ return_shape]); the handcraft block (labeler features) follows. Returns
+    (groups: dict, named: list[(name, importance)] sorted desc)."""
+    from ..extractors.chronos.window_features import return_shape_feature_names
+    imp = np.asarray(imp, float)
+    d_model = int(d_model or backbone.D_MODEL)
+    names, o = [], 0
+    chronos_w = embed_dim - (2 if locscale else 0) - (len(return_shape_feature_names()) if return_shape else 0)
+    names += [f'chronos_{i}' for i in range(chronos_w)]
+    if locscale:
+        names += ['loc', 'scale']
+    if return_shape:
+        names += return_shape_feature_names()
+    names += list(handcraft_names or [f'feat_{i}' for i in range(len(imp) - embed_dim)])
+    names = names[:len(imp)]
+    grp = {'chronos_embed': float(imp[:chronos_w].sum())}
+    o = chronos_w
+    if locscale:
+        grp['locscale'] = float(imp[o:o + 2].sum()); o += 2
+    if return_shape:
+        rs = len(return_shape_feature_names()); grp['return_shape'] = float(imp[o:o + rs].sum()); o += rs
+    grp['handcraft'] = float(imp[o:].sum())
+    named = sorted(zip(names, imp.tolist()), key=lambda x: -x[1])
+    return grp, named
+
+
 def train(labeler, *, holdout_months: int = 1, seed: int = 0,
           n_estimators: int = 600, max_depth: int = 5,
+          head_params: Optional[dict] = None,
           output_path: Optional[str | Path] = None,
           context_heads_path: Optional[str] = None, emb_mode: str = 'both',
           export_onnx: bool = False, calibrate: bool = False,
@@ -221,12 +252,23 @@ def train(labeler, *, holdout_months: int = 1, seed: int = 0,
 
     # ---- Stage 4: fit signal head ----
     t0 = time.time()
-    signal_head = XGBHead(n_classes=nc, n_estimators=n_estimators,
-                          max_depth=max_depth).fit(Xtr, Ytr, seed=seed)
+    _hp = dict(n_estimators=n_estimators, max_depth=max_depth)
+    if head_params:                                  # e.g. Optuna-tuned config
+        _hp.update(head_params)
+    signal_head = XGBHead(n_classes=nc, **_hp).fit(Xtr, Ytr, seed=seed)
     if verbose:
         print(f"\n[signal-head] fit XGBHead({nc}-class) on {len(Ytr)} rows  "
-              f"(n_est={n_estimators}, depth={max_depth})  "
-              f"({time.time()-t0:.1f}s)")
+              f"({_hp})  ({time.time()-t0:.1f}s)")
+    # feature-importance review (reusable): chronos / return-shape / handcraft
+    fi_groups, fi_named = group_importance(
+        signal_head.feature_importances(), int(Etr.shape[1]),
+        handcraft_names=(labeler.feature_names() if hasattr(labeler, 'feature_names') else None),
+        locscale=(os.environ.get('CHRONOS_POOL_LOCSCALE') == '1'),
+        return_shape=backbone._return_shape_on())
+    if verbose:
+        print("[feature-importance] " + " ".join(f"{g}={v:.1%}" for g, v in
+              sorted(fi_groups.items(), key=lambda x: -x[1])))
+        print("  top: " + ", ".join(f"{n}={v:.2%}" for n, v in fi_named[:8]))
 
     # ---- Stage 4b: calibrate signal-head proba (Platt, OUT-OF-FOLD) ----
     # Maps raw XGB proba -> P(win). Binary heads only. Off by default so the

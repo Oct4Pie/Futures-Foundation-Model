@@ -183,7 +183,7 @@ def run(labeler, head_factory=None, seeds=(0, 1, 2), train_m=3, val_m=1, test_m=
         max_folds=None, context_heads_path=None, emb_mode='both',
         min_train_start=None, auto_regularize=True, return_verdict=False,
         loop=False, ctx_provider=None, embed_cache=None,
-        pool_mode='mean', use_loc_scale=False):
+        pool_mode='mean', use_loc_scale=False, holdout_start=None):
     """labeler: a StrategyLabeler. head_factory: nc -> head (default
     XGBHead). max_folds=None -> sweep every available OOS month-pair
     (XGBoost-pipeline convention). Prints REAL/SHUFFLE/RANDOM per
@@ -236,7 +236,8 @@ def run(labeler, head_factory=None, seeds=(0, 1, 2), train_m=3, val_m=1, test_m=
     fold_data = []
     n_excluded = 0
     for fold, tr, val, te in walk_forward_folds(labeler.calendar(), train_m,
-                                                val_m, test_m):
+                                                val_m, test_m,
+                                                holdout_start=holdout_start):
         if max_folds is not None and len(fold_data) >= max_folds:
             break
         if min_train_start is not None \

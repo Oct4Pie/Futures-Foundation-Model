@@ -84,6 +84,11 @@ class XGBHead:
         z = np.log(p / (1 - p))
         return 1.0 / (1.0 + np.exp(-(A * z + B)))
 
+    def feature_importances(self):
+        """Gain-weighted importances [feat_dim] of the fitted head (sums to ~1).
+        Pair with `group_importance` for the chronos/return-shape/handcraft split."""
+        return np.asarray(self._clf.feature_importances_, np.float32)
+
     def predict(self, X):
         return self._clf.predict(np.asarray(X, np.float32)).astype(int)
 
