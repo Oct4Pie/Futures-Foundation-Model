@@ -364,9 +364,34 @@ def train(labeler, *, holdout_months: int = 1, seed: int = 0,
                         r_d = _row(R_d)
                         if r_d is not None:
                             dyn_rows[thr] = r_d
+            # recall curve: target catch-rate (recall of TREND label) -> proba
+            # threshold, from the holdout. The bot sets catch_rate (e.g. 0.85)
+            # and filters signals above the looked-up threshold. per-TF (1/3/5/
+            # 15min differ) + global; the triple-barrier label IS the trend, so
+            # this is calibrated on confirmed catches.
+            recall_curve = None
+            if proba is not None and (Yte == 1).any():
+                tgts = [round(0.50 + 0.05 * k, 2) for k in range(11)]   # 0.50..1.00
+                tfs = np.array([str(k[0]).split('@')[1] if '@' in str(k[0])
+                                else 'all' for k in Kte])
+
+                def _curve(mask):
+                    pos = proba[mask & (Yte == 1)]
+                    if not len(pos):
+                        return {}
+                    return {f'{t:.2f}': float(np.quantile(pos, 1.0 - t))
+                            for t in tgts}
+                recall_curve = {'global': _curve(np.ones(len(proba), bool))}
+                for tf in sorted(set(tfs)):
+                    recall_curve[tf] = _curve(tfs == tf)
+                if verbose:
+                    g = recall_curve['global']
+                    print(f"  [recall-curve] catch 80%→thr {g.get('0.80')}  "
+                          f"85%→{g.get('0.85')}  90%→{g.get('0.90')}")
             holdout_eval = {
                 'n_signals': int(len(Yte)),
                 'positive_rate': float(Yte.mean()),
+                'recall_curve': recall_curve,
                 'proba_stats': ({
                     'mean': float(proba.mean()),
                     'median': float(np.median(proba)),
