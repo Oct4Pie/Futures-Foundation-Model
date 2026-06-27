@@ -21,10 +21,23 @@ import sys
 import numpy as np
 
 
-def _resolve_embed_device(requested: str, mps_available: bool) -> str:
-    """Embed device: honor 'mps' only if Metal is actually available, else fall
-    back to 'cpu' (the parity-safe default). Pure/torch-free -> unit-testable."""
+def _resolve_embed_device(requested: str, mps_available: bool,
+                          cuda_available: bool = False) -> str:
+    """Resolve the embed device. Pure/torch-free -> unit-testable.
+      'auto' -> CUDA if available, else MPS, else CPU (the GPU-where-possible
+                default; CPU is the universal backup).
+      'cuda' / 'mps' -> honored only if available, else CPU.
+      'cpu'  -> always CPU (parity-safe; produced bundles pin this so the head
+                trains on the SAME embeddings the CPU ONNX encoder serves)."""
+    if requested == 'auto':
+        if cuda_available:
+            return 'cuda'
+        if mps_available:
+            return 'mps'
+        return 'cpu'
     if requested == 'mps' and not mps_available:
+        return 'cpu'
+    if requested == 'cuda' and not cuda_available:
         return 'cpu'
     return requested
 
@@ -35,10 +48,13 @@ def main(inp, outp, batch, pool='mean', locscale_out=None):
     from chronos import BaseChronosPipeline
 
     from . import backbone as foundation
-    # device: default CPU (byte-identical / parity-safe for produced bundles);
-    # CHRONOS_EMBED_DEVICE=mps opts into Metal (no help for tiny bolt, but safe).
+    # device: default CPU (byte-identical / parity-safe — produced bundles + the
+    # CPU ONNX encoder the bot serves MUST match, so production stays CPU and
+    # NEVER drifts). Research/eval opt into GPU via CHRONOS_EMBED_DEVICE=auto
+    # (CUDA->MPS->CPU) / 'mps' / 'cuda' — speed only, never ships.
     dev = _resolve_embed_device(os.environ.get('CHRONOS_EMBED_DEVICE', 'cpu'),
-                                torch.backends.mps.is_available())
+                                torch.backends.mps.is_available(),
+                                torch.cuda.is_available())
     src = foundation.active_source()
     is_local = os.path.isabs(src) or os.path.exists(src)
     tag = 'FINE-TUNED' if is_local else 'FROZEN-VANILLA'

@@ -167,7 +167,7 @@ def stamp_active_source(context: str = '') -> str:
     return src
 
 
-def embed(contexts, batch=64, pool='mean', return_loc_scale=False):
+def embed(contexts, batch=64, pool='mean', return_loc_scale=False, device=None):
     """FROZEN batched embeddings, computed in an isolated subprocess so the
     torch-free parent can run XGBoost safely. Deterministic; no grad.
     contexts: iterable of equal-length 1-D causal windows. Imports NO torch in
@@ -178,6 +178,10 @@ def embed(contexts, batch=64, pool='mean', return_loc_scale=False):
     return_loc_scale: also return [N,2] (loc, scale) = the window mean/std that
       instance_norm strips from the embedding (Chronos's magnitude blind spot;
       feed log(scale) to XGBoost as the volatility feature).
+    device: override the worker device for THIS call ('cpu'|'mps'|'cuda'|'auto').
+      None -> inherit $CHRONOS_EMBED_DEVICE (default 'cpu'). PRODUCTION pins
+      'cpu' so the bundle matches the CPU ONNX encoder the bot serves (no live
+      drift); research/eval may pass 'auto' for GPU speed.
     -> [N, D] (or ([N,D], [N,2]) if return_loc_scale).
     """
     import sys
@@ -198,6 +202,8 @@ def embed(contexts, batch=64, pool='mean', return_loc_scale=False):
         env = dict(os.environ,
                    PYTHONPATH=str(_ROOT) + os.pathsep
                    + os.environ.get('PYTHONPATH', ''))
+        if device is not None:                      # per-call device override
+            env['CHRONOS_EMBED_DEVICE'] = device
         cmd = [sys.executable, '-m',
                'futures_foundation.extractors.chronos._worker',
                ip, op, str(batch), pool]

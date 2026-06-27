@@ -231,8 +231,10 @@ def train(labeler, *, holdout_months: int = 1, seed: int = 0,
     # ---- Stage 2: batch-embed ----
     t0 = time.time()
     if verbose:
-        print(f"\n[embed] {len(Ctr):,} contexts → foundation backbone ...")
-    Etr = backbone.embed(Ctr)
+        print(f"\n[embed] {len(Ctr):,} contexts → foundation backbone (cpu) ...")
+    # PIN CPU: the bundle must match the CPU ONNX encoder the bot serves — never
+    # embed production on GPU (would drift live). Research/eval may use GPU.
+    Etr = backbone.embed(Ctr, device='cpu')
     if verbose:
         print(f"[embed] done. shape={Etr.shape}  ({time.time()-t0:.1f}s)")
 
@@ -332,7 +334,7 @@ def train(labeler, *, holdout_months: int = 1, seed: int = 0,
             if verbose:
                 print("  [holdout] no signals in window — skipped")
         else:
-            Ete = backbone.embed(Cte)
+            Ete = backbone.embed(Cte, device='cpu')   # parity: CPU like the bundle
             Fte = (np.asarray(feats_fn(Kte), np.float32)
                    if feats_fn is not None else None)
             Xte = (np.hstack([Ete, Fte.reshape(len(Ete), -1)]).astype(np.float32)
