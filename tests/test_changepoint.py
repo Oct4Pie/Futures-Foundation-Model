@@ -6,7 +6,8 @@ import pytest
 pytest.importorskip("scipy")
 
 from futures_foundation.changepoint import (
-    bocpd_features, change_point_features, N_CHANGEPOINT_FEATS)
+    bocpd_features, change_point_features, change_point_from_feature,
+    N_CHANGEPOINT_FEATS, CHANGEPOINT_RETURN_COL)
 
 
 def test_shape_and_bounds():
@@ -69,6 +70,27 @@ def test_change_point_features_shape_and_share():
     assert np.isfinite(f).all()
     np.testing.assert_array_equal(f[0], f[1])      # both dirs of a bar share
     np.testing.assert_array_equal(f[2], f[3])
+
+
+# ---- change_point_from_feature (pipeline entry point) ---------------------
+def test_change_point_from_feature_shape_share_and_finite():
+    keys, series = _stream(60)
+    # build a feature matrix with a 'ret_close_1' column = per-bar returns
+    feat_names = ['embed_0', CHANGEPOINT_RETURN_COL, 'adx']
+    rng = np.random.default_rng(0)
+    feat = rng.standard_normal((len(keys), 3)).astype(np.float32)
+    feat[:, 1] = np.diff(series, prepend=series[0])      # ret column
+    out = change_point_from_feature(keys, feat, feat_names)
+    assert out.shape == (len(keys), N_CHANGEPOINT_FEATS)
+    assert np.isfinite(out).all()
+    np.testing.assert_array_equal(out[0], out[1])         # both dirs of a bar share
+
+
+def test_change_point_from_feature_raises_without_return_col():
+    keys, _ = _stream(20)
+    feat = np.zeros((len(keys), 2), np.float32)
+    with pytest.raises(ValueError):
+        change_point_from_feature(keys, feat, ['a', 'b'])  # no ret_close_1
 
 
 def test_change_point_features_two_streams_independent():

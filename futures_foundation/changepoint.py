@@ -96,6 +96,28 @@ def bocpd_features(x, hazard_lambda=250.0, rmax=300, warmup=20):
 N_CHANGEPOINT_FEATS = 2
 
 
+CHANGEPOINT_RETURN_COL = 'ret_close_1'
+
+
+def change_point_from_feature(keys, feat, feat_names, col=CHANGEPOINT_RETURN_COL,
+                              hazard_lambda=250.0):
+    """Change-point features [N, 2] computed from an EXISTING return column in the
+    labeler's feature matrix (default 'ret_close_1'), per stream — the pipeline
+    entry point. Mirrors the validated combo study: BOCPD on the per-bar returns,
+    causal, scattered to both directions. Additive market-state signal; strongest
+    WITH the regime HMM ('we just shifted into this regime')."""
+    from .regime import _stream_index
+    feat = np.asarray(feat, np.float32)
+    if col not in feat_names:
+        raise ValueError(f"change-point needs '{col}' in labeler.feature_names()")
+    ret = feat[:, feat_names.index(col)]
+    out = np.zeros((len(keys), N_CHANGEPOINT_FEATS), np.float32)
+    for s in _stream_index(keys).values():
+        out[s['rows']] = bocpd_features(
+            ret[s['uniq_rows']], hazard_lambda=hazard_lambda)[s['pos']]
+    return out
+
+
 def change_point_features(keys, series, hazard_lambda=250.0):
     """Per-signal change-point features [N, 2] from a per-signal scalar `series`
     (e.g. the decision-bar log-close). Groups into per-stream time-ordered

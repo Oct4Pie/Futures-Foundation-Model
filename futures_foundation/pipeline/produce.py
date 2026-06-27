@@ -159,6 +159,7 @@ def train(labeler, *, holdout_months: int = 1, seed: int = 0,
           output_path: Optional[str | Path] = None,
           export_onnx: bool = False, calibrate: bool = False,
           use_regime: bool = False, regime_states: int = 4,
+          use_changepoint: bool = False,
           verbose: bool = True) -> dict:
     """Fit on all signals strictly before `cal_max - holdout_months`
     (with the same leak-purge the walk-forward uses), evaluate on the
@@ -272,6 +273,23 @@ def train(labeler, *, holdout_months: int = 1, seed: int = 0,
         if verbose:
             print(f"[regime] +{regime_states}-state HMM on {regime_names} -> "
                   f"X_train {Xtr.shape} (posteriors appended)")
+
+    # ---- Stage 3c (opt-in): change-point (BOCPD) features APPENDED (additive) --
+    # Causal change-point score on the existing return column, per stream. Adds
+    # no new properties; default off -> byte-identical when unused.
+    cp_on = False
+    if use_changepoint:
+        from .. import changepoint as _cp
+        feat_names = (labeler.feature_names()
+                      if hasattr(labeler, 'feature_names') else None)
+        if feat_names is None or Ftr is None:
+            raise ValueError("use_changepoint needs labeler.feature_names() + features()")
+        cp_tr = _cp.change_point_from_feature(Ktr, Ftr, feat_names)
+        Xtr = np.hstack([Xtr, cp_tr]).astype(np.float32)
+        cp_on = True
+        if verbose:
+            print(f"[changepoint] +{cp_tr.shape[1]} BOCPD features -> "
+                  f"X_train {Xtr.shape}")
     feat_dim = Xtr.shape[1]
 
     # ---- Stage 4: fit signal head ----
@@ -350,6 +368,12 @@ def train(labeler, *, holdout_months: int = 1, seed: int = 0,
                 Kall = list(Ktr) + list(Kte)
                 pall = regime_hmm.transform(Kall, np.vstack([regime_obs_tr, obs_te]))
                 Xte = np.hstack([Xte, pall[len(Ktr):]]).astype(np.float32)
+            if cp_on:                                   # append holdout change-point
+                from .. import changepoint as _cp
+                fn = labeler.feature_names()
+                cp_all = _cp.change_point_from_feature(
+                    list(Ktr) + list(Kte), np.vstack([Ftr, Fte]), fn)  # warm-start
+                Xte = np.hstack([Xte, cp_all[len(Ktr):]]).astype(np.float32)
             # threshold sweep mirrors the walk-forward dashboard — argmax
             # `predict()` is wrong here because class imbalance (~70/30)
             # parks the model below 0.50 on most signals; what matters in

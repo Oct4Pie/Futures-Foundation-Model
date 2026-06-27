@@ -182,7 +182,8 @@ def run(labeler, head_factory=None, seeds=(0, 1, 2), train_m=3, val_m=1, test_m=
         max_folds=None, min_train_start=None, auto_regularize=True,
         return_verdict=False, loop=False, embed_cache=None,
         pool_mode='mean', use_loc_scale=False, holdout_start=None,
-        use_regime=False, regime_states=4, embed_cache_dir=None):
+        use_regime=False, regime_states=4, embed_cache_dir=None,
+        use_changepoint=False):
     """labeler: a StrategyLabeler. head_factory: nc -> head (default
     XGBHead). max_folds=None -> sweep every available OOS month-pair
     (XGBoost-pipeline convention). Prints REAL/SHUFFLE/RANDOM per
@@ -213,7 +214,8 @@ def run(labeler, head_factory=None, seeds=(0, 1, 2), train_m=3, val_m=1, test_m=
                          final_max_folds=max_folds,
                          use_regime=use_regime, regime_states=regime_states,
                          holdout_start=holdout_start,
-                         embed_cache_dir=embed_cache_dir)
+                         embed_cache_dir=embed_cache_dir,
+                         use_changepoint=use_changepoint)
         final = res.get('final') or {}
         return res if return_verdict else (final.get('records') or [])
 
@@ -310,10 +312,13 @@ def run(labeler, head_factory=None, seeds=(0, 1, 2), train_m=3, val_m=1, test_m=
             X = np.hstack([X, np.log(np.clip(L[:, 1:2], 1e-6, None))]).astype(np.float32)
         return X
 
-    _regime = _regime_fn = None
+    _regime = _cp = _feat_names = None
     if use_regime:
         from .. import regime as _regime
-        _regime_fn = labeler.feature_names()
+    if use_changepoint:
+        from .. import changepoint as _cp
+    if use_regime or use_changepoint:
+        _feat_names = labeler.feature_names()
     for d in fold_data:
         ntr, nva, nte = len(d['Ctr']), len(d['Cval']), len(d['Cte'])
         Etr = flat_embed[o:o + ntr]
@@ -332,29 +337,34 @@ def run(labeler, head_factory=None, seeds=(0, 1, 2), train_m=3, val_m=1, test_m=
         d['Xtr'] = _fuse(Etr, Ftr, Ltr)
         d['Xval'] = _fuse(Eva, Fva, Lva)
         d['Xte'] = _fuse(Ete, Fte, Lte)
-        if use_regime:
-            # regime HMM (additive, leak-safe PER FOLD): fit on THIS fold's TRAIN
-            # volatility features only (existing cols, reusing the already-computed
-            # F* matrices). Then filter the FULL fold sequence (train+val+test) per
-            # stream in ONE pass so val/test are warm-started from train history
-            # (still strictly causal — forward filter, no future peek) and the
-            # per-signal scatter is vectorized. Slice the posteriors back per split.
-            otr, _ = _regime.select_regime_observations(Ftr, _regime_fn)
-            ova, _ = _regime.select_regime_observations(Fva, _regime_fn)
-            ote, _ = _regime.select_regime_observations(Fte, _regime_fn)
+        if use_regime or use_changepoint:
+            # Additive market-state features (regime HMM and/or change-point),
+            # leak-safe PER FOLD: computed over the FULL fold sequence
+            # (train+val+test) per stream in ONE warm-started pass (val/test see
+            # train history; strictly causal — forward only, no future peek),
+            # then sliced back per split. Reuses the already-computed F* matrices.
             Kall = list(d['Ktr']) + list(d['Kval']) + list(d['Kte'])
-            oall = np.vstack([otr, ova, ote])
-            tmask = np.zeros(len(Kall), bool); tmask[:len(otr)] = True
-            allidx = _regime._stream_index(Kall)
-            rh = _regime.RegimeHMM(n_states=regime_states, seed=0).fit(
-                Kall, oall, tmask, index=allidx)
-            pall = rh.transform(Kall, oall, index=allidx)
-            n1, n2 = len(otr), len(otr) + len(ova)
-            d['Xtr'] = np.hstack([d['Xtr'], pall[:n1]]).astype(np.float32)
-            d['Xval'] = np.hstack([d['Xval'], pall[n1:n2]]).astype(np.float32)
-            d['Xte'] = np.hstack([d['Xte'], pall[n2:]]).astype(np.float32)
-    rnote = f" (+{regime_states}-state regime HMM)" if use_regime else ""
-    print(f"[batch-embed] done. feat_dim={fold_data[0]['Xtr'].shape[1]}{rnote}\n")
+            Fall = np.vstack([Ftr, Fva, Fte]) if Ftr is not None else None
+            n1, n2 = len(d['Ktr']), len(d['Ktr']) + len(d['Kval'])
+            adds = []
+            if use_regime:
+                # HMM fit on TRAIN rows only (tmask), filtered over the full seq
+                obs_all, _ = _regime.select_regime_observations(Fall, _feat_names)
+                tmask = np.zeros(len(Kall), bool); tmask[:n1] = True
+                allidx = _regime._stream_index(Kall)
+                rh = _regime.RegimeHMM(n_states=regime_states, seed=0).fit(
+                    Kall, obs_all, tmask, index=allidx)
+                adds.append(rh.transform(Kall, obs_all, index=allidx))
+            if use_changepoint:
+                # causal BOCPD on the return column — stateless (no fit, no leak)
+                adds.append(_cp.change_point_from_feature(Kall, Fall, _feat_names))
+            add = np.hstack(adds) if len(adds) > 1 else adds[0]
+            d['Xtr'] = np.hstack([d['Xtr'], add[:n1]]).astype(np.float32)
+            d['Xval'] = np.hstack([d['Xval'], add[n1:n2]]).astype(np.float32)
+            d['Xte'] = np.hstack([d['Xte'], add[n2:]]).astype(np.float32)
+    _note = (("+regime" if use_regime else "") + ("+changept" if use_changepoint else ""))
+    print(f"[batch-embed] done. feat_dim={fold_data[0]['Xtr'].shape[1]}"
+          f"{(' ('+_note+')') if _note else ''}\n")
 
     # Phase 3 — per-(fold, seed) XGBoost work, parallelized via threads.
     # XGBoost releases the GIL in its C tree-builder + numpy ops, so a
