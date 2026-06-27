@@ -39,8 +39,6 @@ if verdict['final']['generalizes']:
 
 FFM gives downstream trading models a shared **market-understanding layer**. The foundation is **`amazon/chronos-bolt-tiny`** — a time-series transformer pretrained by Amazon on large forecasting corpora — used **frozen**: a 128-bar log-close context ending at the decision bar becomes a 256-dim embedding that downstream heads (XGBoost classifiers/regressors) consume alongside strategy-specific features.
 
-> **History.** FFM v0.x–v1.x trained a transformer backbone from scratch (68 hand-derived features, 4 self-supervised heads, ~2.3M bars). That stack is retired — building on a foundation model pretrained on vastly more data proved better than pretraining our own. The last version with the full from-scratch stack is preserved at git tag **`ffm-transformer-final`**. The *philosophy* survives unchanged; only who provides the embedding changed.
-
 ### Philosophy
 
 > Separate **"understanding market context"** from **"making strategy-specific decisions."**
@@ -64,7 +62,7 @@ vol features ──┘                                                    ▼
 
 - **Data-discovered, not hand-tuned.** The HMM finds regimes unsupervised — no hand-set thresholds to overfit. Where the embedding describes *what the bar looks like*, the regime posteriors describe the *persistent context*.
 - **Leak-safe + causal.** Fit on **train rows only** (per-fold in eval, train-span in produce); decoded with **causal forward-filtering** `P(state_t | obs_1..t)` (never smoothing) — warm-started across splits in one pass, no future peek.
-- **Additive + opt-in.** Posteriors are *concatenated* (the embedding path is byte-identical); `use_regime` defaults **off** (Kalman and existing bundles unchanged) and **on for fractal**. The fitted HMM is baked into the bundle.
+- **Additive + opt-in.** Posteriors are *concatenated* (the embedding path is byte-identical); `use_regime` defaults **off** (existing bundles unchanged), opt-in per consumer. The fitted HMM is baked into the bundle.
 - **No new properties.** It observes volatility features the labeler already computes (selected by name) — it adds no hand-crafted inputs, only the regime summary.
 
 Embeddings are **disk-cached** (content-hash verified, recipe-signature namespaced), so re-runs skip the multi-million-context embed and only the cheap heads/HMM recompute.
@@ -298,7 +296,6 @@ Futures-Foundation-Model/
 - [x] Chronos-Bolt as the foundation (seam promoted, torch stack retired, torch-free import contract)
 - [x] Capability probes — measured what the foundation knows, per input recipe (5 arms, gates + shuffle + trivial adversary)
 - [x] Bolt domain-adaptation fine-tune + A/B harness (verdict: vanilla wins for selection — stay frozen)
-- [ ] Single-file ONNX export (frozen embedding + XGBoost head in one graph) for the bot
 - [ ] Multivariate context / Chronos-2 (next information rung beyond bars+features)
 
 ---
