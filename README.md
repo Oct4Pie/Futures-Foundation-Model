@@ -49,7 +49,25 @@ Just as BERT learns language structure before being fine-tuned for sentiment or 
 
 This architecture is **proven live**: a production selection model (frozen Bolt embedding + XGBoost head) runs in production, certified on the honest-ruler walk-forward with pre-registered controls.
 
-The pipeline is deliberately two stages: **frozen Chronos-Bolt embedding (feature extractor) → XGBoost (classifier)**, concatenated with strategy-specific hand-crafted features. No intermediate market-context prediction layer — the embedding *is* the market-state representation, and the downstream head learns whatever of it the task needs.
+The pipeline: **frozen Chronos-Bolt embedding (feature extractor) → market-regime HMM → XGBoost (classifier)**, concatenated with strategy-specific hand-crafted features. The embedding *is* the market-state representation; the regime HMM adds a compact **"what regime are we in now"** summary; the head learns whatever of it the task needs. No forward-prediction context layer — every input is either the frozen embedding, a data-discovered regime state, or hand-crafted geometry.
+
+### Market-regime layer (HMM)
+
+A Hidden Markov Model fit on **existing volatility features** discovers the market's regimes (trend / range / chop) as hidden states, and appends its **causal-filtered state posteriors** to the head's feature vector:
+
+```
+Chronos embed ─┐
+               ├─► HMM (discovers regimes) ─► state posteriors [K] ─┐
+vol features ──┘                                                    ▼
+   [ 256 embed | strategy features | K regime posteriors ] ─► XGBoost
+```
+
+- **Data-discovered, not hand-tuned.** The HMM finds regimes unsupervised — no hand-set thresholds to overfit. Where the embedding describes *what the bar looks like*, the regime posteriors describe the *persistent context*.
+- **Leak-safe + causal.** Fit on **train rows only** (per-fold in eval, train-span in produce); decoded with **causal forward-filtering** `P(state_t | obs_1..t)` (never smoothing) — warm-started across splits in one pass, no future peek.
+- **Additive + opt-in.** Posteriors are *concatenated* (the embedding path is byte-identical); `use_regime` defaults **off** (Kalman and existing bundles unchanged) and **on for fractal**. The fitted HMM is baked into the bundle.
+- **No new properties.** It observes volatility features the labeler already computes (selected by name) — it adds no hand-crafted inputs, only the regime summary.
+
+Embeddings are **disk-cached** (content-hash verified, recipe-signature namespaced), so re-runs skip the multi-million-context embed and only the cheap heads/HMM recompute.
 
 ### Why this architecture
 
@@ -253,6 +271,8 @@ Futures-Foundation-Model/
 │   ├── labels.py                 # Legacy forward-looking label generation
 │   ├── prepare.py                # prepare_data: raw CSVs → features+labels parquet
 │   ├── primitives/               # Indicators, barriers, rolling, session, detection
+│   ├── regime.py                 # ★ Market-regime HMM (leak-safe, causal posteriors)
+│   ├── pipeline/embed_cache.py   # Disk embed cache (content-hash + recipe-signature)
 │   ├── chronos/                  # ★ Foundation training/eval/deploy harness (see above)
 │   └── finetune/                 # Torch-free framework survivors
 │       ├── base.py               # StrategyLabeler ABC (final run() = TP≥SL triple barrier)
