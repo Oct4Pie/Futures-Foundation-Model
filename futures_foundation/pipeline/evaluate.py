@@ -182,7 +182,7 @@ def run(labeler, head_factory=None, seeds=(0, 1, 2), train_m=3, val_m=1, test_m=
         max_folds=None, min_train_start=None, auto_regularize=True,
         return_verdict=False, loop=False, embed_cache=None,
         pool_mode='mean', use_loc_scale=False, holdout_start=None,
-        use_regime=False, regime_states=4):
+        use_regime=False, regime_states=4, embed_cache_dir=None):
     """labeler: a StrategyLabeler. head_factory: nc -> head (default
     XGBHead). max_folds=None -> sweep every available OOS month-pair
     (XGBoost-pipeline convention). Prints REAL/SHUFFLE/RANDOM per
@@ -212,7 +212,8 @@ def run(labeler, head_factory=None, seeds=(0, 1, 2), train_m=3, val_m=1, test_m=
         res = train_loop(labeler, seeds=seeds, loop_max_folds=max_folds,
                          final_max_folds=max_folds,
                          use_regime=use_regime, regime_states=regime_states,
-                         holdout_start=holdout_start)
+                         holdout_start=holdout_start,
+                         embed_cache_dir=embed_cache_dir)
         final = res.get('final') or {}
         return res if return_verdict else (final.get('records') or [])
 
@@ -278,6 +279,14 @@ def run(labeler, head_factory=None, seeds=(0, 1, 2), train_m=3, val_m=1, test_m=
         print(f"\n[embed-cache] {len(flat_keys):,} embeddings via positional "
               f"cache ({len(fold_data)} folds, no re-embed)")
         flat_embed = np.stack([embed_cache[k[0]][k[1]] for k in flat_keys])
+    elif embed_cache_dir is not None and not use_loc_scale:
+        # disk-backed cache: embed each context ONCE, reuse across runs
+        # (content-hash verified + recipe-signature namespaced — see embed_cache).
+        from .embed_cache import embed_with_cache
+        print(f"\n[batch-embed] {len(flat_contexts):,} contexts across "
+              f"{len(fold_data)} folds (pool={pool_mode}, disk cache)...")
+        flat_embed = embed_with_cache(flat_contexts, flat_keys, embed_cache_dir,
+                                      pool=pool_mode)
     else:
         print(f"\n[batch-embed] {len(flat_contexts):,} contexts across "
               f"{len(fold_data)} folds (pool={pool_mode}, loc_scale={use_loc_scale})...")

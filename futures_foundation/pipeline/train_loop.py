@@ -36,7 +36,8 @@ from futures_foundation.extractors.chronos import backbone
 
 
 def _walk_forward(labeler, params, *, seeds, max_folds, tag,
-                  use_regime=False, regime_states=4, holdout_start=None):
+                  use_regime=False, regime_states=4, holdout_start=None,
+                  embed_cache_dir=None):
     bar = "█" * 64
     print(f"\n{bar}\n  WALK-FORWARD [{tag}] — params: "
           f"{params or 'shipped defaults'}\n{bar}", flush=True)
@@ -44,7 +45,7 @@ def _walk_forward(labeler, params, *, seeds, max_folds, tag,
                   seeds=seeds, max_folds=max_folds,
                   auto_regularize=False, return_verdict=True,
                   use_regime=use_regime, regime_states=regime_states,
-                  holdout_start=holdout_start)
+                  holdout_start=holdout_start, embed_cache_dir=embed_cache_dir)
 
 
 def _overfit(v):
@@ -54,9 +55,10 @@ def _overfit(v):
 
 def train_loop(labeler, *, max_iters=3, loop_max_folds=12, final_max_folds=None,
                seeds=(0, 1, 2), scan_trials=40, seed=42,
-               use_regime=False, regime_states=4, holdout_start=None):
+               use_regime=False, regime_states=4, holdout_start=None,
+               embed_cache_dir=None):
     _rk = dict(use_regime=use_regime, regime_states=regime_states,
-               holdout_start=holdout_start)
+               holdout_start=holdout_start, embed_cache_dir=embed_cache_dir)
     backbone.stamp_active_source(context='train-loop')
     name = type(labeler).__name__
     print(f"\n{'#'*64}\n# TRAIN LOOP — {name}\n{'#'*64}")
