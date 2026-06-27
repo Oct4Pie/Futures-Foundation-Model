@@ -207,7 +207,7 @@ def run(labeler, head_factory=None, seeds=(0, 1, 2), train_m=3, val_m=1, test_m=
         return_verdict=False, loop=False, embed_cache=None,
         pool_mode='mean', use_loc_scale=False, holdout_start=None,
         use_regime=False, regime_states=4, embed_cache_dir=None,
-        use_changepoint=False):
+        use_changepoint=False, use_volume_embed=False, volume_pool='meanreg'):
     """labeler: a StrategyLabeler. head_factory: nc -> head (default
     XGBHead). max_folds=None -> sweep every available OOS month-pair
     (XGBoost-pipeline convention). Prints REAL/SHUFFLE/RANDOM per
@@ -226,6 +226,12 @@ def run(labeler, head_factory=None, seeds=(0, 1, 2), train_m=3, val_m=1, test_m=
     _default_head = head_factory is None      # auto-regularize only the default head
     binary = labeler.n_classes == 2
 
+    # fail-fast (torch-free) BEFORE any embed: opt-in volume embed needs the
+    # labeler to supply aligned volume windows.
+    if use_volume_embed and not hasattr(labeler, 'volume_contexts'):
+        raise ValueError("use_volume_embed=True but labeler has no "
+                         "volume_contexts(keys) method")
+
     # loop=True → run the OVERFIT-DRIVEN TRAINING LOOP (default WF → generalize
     # check → Optuna only if overfit → rerun → repeat → final full WF), so every
     # validation entry point works the same way. Only the default head on a
@@ -239,7 +245,9 @@ def run(labeler, head_factory=None, seeds=(0, 1, 2), train_m=3, val_m=1, test_m=
                          use_regime=use_regime, regime_states=regime_states,
                          holdout_start=holdout_start,
                          embed_cache_dir=embed_cache_dir,
-                         use_changepoint=use_changepoint)
+                         use_changepoint=use_changepoint,
+                         use_volume_embed=use_volume_embed,
+                         volume_pool=volume_pool)
         final = res.get('final') or {}
         return res if return_verdict else (final.get('records') or [])
 
@@ -321,6 +329,29 @@ def run(labeler, head_factory=None, seeds=(0, 1, 2), train_m=3, val_m=1, test_m=
                                                  return_loc_scale=True)
         else:
             flat_embed = backbone.embed(flat_contexts, pool=pool_mode)
+    # OPT-IN volume embed: a SECOND bolt pass over the volume context windows
+    # (same backbone, pool=volume_pool), concatenated as features. The labeler
+    # supplies volume windows aligned to flat_keys via volume_contexts(keys).
+    flat_vol_embed = None
+    if use_volume_embed:
+        vc_fn = getattr(labeler, 'volume_contexts', None)
+        if vc_fn is None:
+            raise ValueError("use_volume_embed=True but labeler has no "
+                             "volume_contexts(keys) method")
+        flat_vol_ctx = list(vc_fn(flat_keys))
+        if len(flat_vol_ctx) != len(flat_keys):
+            raise ValueError("volume_contexts must align 1:1 with keys")
+        if embed_cache_dir is not None:
+            from .embed_cache import embed_with_cache
+            print(f"[batch-embed] volume: {len(flat_vol_ctx):,} contexts "
+                  f"(pool={volume_pool}, disk cache)...")
+            flat_vol_embed = embed_with_cache(flat_vol_ctx, flat_keys,
+                                              embed_cache_dir, pool=volume_pool,
+                                              channel='volume')
+        else:
+            print(f"[batch-embed] volume: {len(flat_vol_ctx):,} contexts "
+                  f"(pool={volume_pool})...")
+            flat_vol_embed = backbone.embed(flat_vol_ctx, pool=volume_pool)
     # slice back per fold + concat labeler features
     o = 0
     feats_fn = getattr(labeler, 'features', None)
@@ -353,6 +384,11 @@ def run(labeler, head_factory=None, seeds=(0, 1, 2), train_m=3, val_m=1, test_m=
             Ltr = flat_ls[o:o + ntr]
             Lva = flat_ls[o + ntr:o + ntr + nva]
             Lte = flat_ls[o + ntr + nva:o + ntr + nva + nte]
+        Vtr = Vva = Vte = None
+        if flat_vol_embed is not None:
+            Vtr = flat_vol_embed[o:o + ntr]
+            Vva = flat_vol_embed[o + ntr:o + ntr + nva]
+            Vte = flat_vol_embed[o + ntr + nva:o + ntr + nva + nte]
         o += ntr + nva + nte
         # compute labeler features ONCE per split (reused for X + regime obs)
         Ftr = (np.asarray(feats_fn(d['Ktr']), np.float32) if feats_fn else None)
@@ -361,6 +397,10 @@ def run(labeler, head_factory=None, seeds=(0, 1, 2), train_m=3, val_m=1, test_m=
         d['Xtr'] = _fuse(Etr, Ftr, Ltr)
         d['Xval'] = _fuse(Eva, Fva, Lva)
         d['Xte'] = _fuse(Ete, Fte, Lte)
+        if flat_vol_embed is not None:
+            d['Xtr'] = np.hstack([d['Xtr'], Vtr]).astype(np.float32)
+            d['Xval'] = np.hstack([d['Xval'], Vva]).astype(np.float32)
+            d['Xte'] = np.hstack([d['Xte'], Vte]).astype(np.float32)
         if use_regime or use_changepoint:
             # Additive market-state features (regime HMM and/or change-point),
             # leak-safe PER FOLD: computed over the FULL fold sequence
@@ -386,7 +426,8 @@ def run(labeler, head_factory=None, seeds=(0, 1, 2), train_m=3, val_m=1, test_m=
             d['Xtr'] = np.hstack([d['Xtr'], add[:n1]]).astype(np.float32)
             d['Xval'] = np.hstack([d['Xval'], add[n1:n2]]).astype(np.float32)
             d['Xte'] = np.hstack([d['Xte'], add[n2:]]).astype(np.float32)
-    _note = (("+regime" if use_regime else "") + ("+changept" if use_changepoint else ""))
+    _note = (("+regime" if use_regime else "") + ("+changept" if use_changepoint else "")
+             + ("+volembed" if use_volume_embed else ""))
     print(f"[batch-embed] done. feat_dim={fold_data[0]['Xtr'].shape[1]}"
           f"{(' ('+_note+')') if _note else ''}\n")
 

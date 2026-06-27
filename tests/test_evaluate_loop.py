@@ -41,6 +41,40 @@ def test_loop_true_delegates_and_returns_records(monkeypatch):
     assert seen['loop_max_folds'] == 5 and seen['final_max_folds'] == 5
 
 
+class _LabVol:
+    n_classes = 2
+    def volume_contexts(self, keys): return []      # hook present (passes guard)
+
+
+def test_loop_threads_volume_embed_params(monkeypatch):
+    """use_volume_embed / volume_pool must reach train_loop (so loop-tuned
+    validation actually uses the volume embed)."""
+    _stub_env(monkeypatch)
+    seen = {}
+
+    def fake_tl(labeler, **kw):
+        seen.update(kw)
+        return dict(params={}, source='default',
+                    final=dict(records=[], generalizes=True, all_pass=True),
+                    history=[])
+    monkeypatch.setattr(TLmod, 'train_loop', fake_tl)
+
+    ev.run(_LabVol(), loop=True, seeds=(0,), use_volume_embed=True, volume_pool='reg')
+    assert seen['use_volume_embed'] is True
+    assert seen['volume_pool'] == 'reg'
+
+
+def test_loop_volume_embed_defaults_off(monkeypatch):
+    """Default is OFF (existing models unchanged)."""
+    _stub_env(monkeypatch)
+    seen = {}
+    monkeypatch.setattr(TLmod, 'train_loop',
+                        lambda labeler, **kw: (seen.update(kw) or
+                        dict(final=dict(records=[]))))
+    ev.run(_Lab(), loop=True, seeds=(0,))
+    assert seen['use_volume_embed'] is False
+
+
 def test_loop_true_returns_full_verdict_when_requested(monkeypatch):
     _stub_env(monkeypatch)
     res = dict(params={'max_depth': 3}, source='tuned',

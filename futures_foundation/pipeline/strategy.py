@@ -21,6 +21,13 @@ array` (one row per key, aligned to build()'s order). The harness fuses it
 with the frozen foundation embedding (hstack) before the head. Omit it for an
 embedding-only model. Keep features causal and reproducible as plain tensor
 ops (the deployed single-ONNX export folds them in).
+
+Optional: a labeler MAY also expose `volume_contexts(decision_keys) -> list of
+1-D windows` (same length/order as build()'s contexts) to enable the opt-in
+VOLUME EMBED — a second frozen-backbone pass over the volume channel,
+concatenated as features (use_volume_embed=True). Same causal contract as the
+price context (bars <= the decision bar). Omit it and use_volume_embed must stay
+False. Neither hook is part of the required Protocol below (kept duck-typeable).
 """
 from typing import Protocol, Tuple, List, runtime_checkable
 

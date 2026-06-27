@@ -153,6 +153,15 @@ class _DummyLabelerFeat(_DummyLabeler):
         return np.asarray(keys, np.float32).reshape(-1, 1)
 
 
+class _DummyLabelerVol(_DummyLabelerFeat):
+    """Adds the optional volume_contexts() hook — exercises the opt-in volume
+    embed (a 2nd backbone pass over volume windows, concatenated)."""
+
+    def volume_contexts(self, keys):
+        rng = np.random.default_rng(len(keys) + 7)
+        return [rng.standard_normal(48).astype('float32') for _ in keys]
+
+
 # ---- XGBoost head (in-process xgboost — isolated from FFM torch) ---------
 
 @iso_only
@@ -264,6 +273,14 @@ def test_evaluate_run_tier1_embed_cache_guard():
                      embed_cache={'A': {}, 'B': {}}, use_loc_scale=True)
 
 
+def test_evaluate_run_volume_embed_guard():
+    """use_volume_embed without the optional volume_contexts() hook fails fast,
+    BEFORE any embed → torch-free, runs in the suite."""
+    with pytest.raises(ValueError):
+        evaluate.run(_DummyLabeler(), seeds=(0,), max_folds=1,
+                     use_volume_embed=True)
+
+
 @iso_only
 @chronos_only
 def test_evaluate_run_tier1_meanreg_loc_scale():
@@ -274,6 +291,19 @@ def test_evaluate_run_tier1_meanreg_loc_scale():
                        pool_mode='meanreg', use_loc_scale=True)
     assert len(res) == 1
     assert isinstance(res[0]['REAL'], np.ndarray)
+
+
+@iso_only
+@chronos_only
+def test_evaluate_run_volume_embed():
+    """Opt-in volume embed end-to-end: a 2nd backbone pass over volume_contexts
+    is concatenated; the honest ruler runs clean (no dim mismatch) both with the
+    flag off (default) and on."""
+    base = evaluate.run(_DummyLabelerVol(), seeds=(0,), max_folds=1)
+    vol = evaluate.run(_DummyLabelerVol(), seeds=(0,), max_folds=1,
+                       use_volume_embed=True, volume_pool='meanreg')
+    assert len(base) == 1 and len(vol) == 1
+    assert isinstance(vol[0]['REAL'], np.ndarray)
 
 
 # Legacy 'pipelines.chronos' / 'futures_foundation.chronos' pickle-compat test

@@ -85,3 +85,33 @@ def test_partial_overlap_only_new_keys_embed(stub_backbone, tmp_path):
     new_keys = [('NQ@3min', 10 + i) for i in range(5)]
     EC.embed_with_cache(ctx + new_ctx, keys + new_keys, tmp_path, verbose=False)
     assert stub_backbone['embedded'] == base + 5
+
+
+# ---- channel namespacing (volume embed) -----------------------------------
+def test_signature_channel_namespaces_but_price_unchanged(stub_backbone):
+    """'volume' channel → distinct namespace; None/'price' → ORIGINAL signature
+    (so existing price caches stay valid)."""
+    h_default, _ = EC.signature('mean')
+    h_price, _ = EC.signature('mean', channel='price')
+    h_none, _ = EC.signature('mean', channel=None)
+    h_vol, _ = EC.signature('mean', channel='volume')
+    assert h_default == h_price == h_none          # price path unchanged
+    assert h_vol != h_default                       # volume is its own namespace
+
+
+def test_volume_and_price_dont_collide_same_key(stub_backbone, tmp_path):
+    """Price and volume embeds for the SAME (item, bar) must not overwrite each
+    other — they live in separate channel namespaces."""
+    ctx_p, keys = _data(n=6, seed=0)
+    ctx_v = [c + 50.0 for c in ctx_p]              # different content, same keys
+    ep = EC.embed_with_cache(ctx_p, keys, tmp_path, verbose=False)
+    ev = EC.embed_with_cache(ctx_v, keys, tmp_path, verbose=False, channel='volume')
+    # both correct (no collision), and re-reading each hits its own cache
+    np.testing.assert_allclose(ep, _ref(ctx_p), atol=1e-5)
+    np.testing.assert_allclose(ev, _ref(ctx_v), atol=1e-5)
+    base = stub_backbone['embedded']
+    ep2 = EC.embed_with_cache(ctx_p, keys, tmp_path, verbose=False)
+    ev2 = EC.embed_with_cache(ctx_v, keys, tmp_path, verbose=False, channel='volume')
+    assert stub_backbone['embedded'] == base       # both full cache hits, no re-embed
+    np.testing.assert_array_equal(ep, ep2)
+    np.testing.assert_array_equal(ev, ev2)

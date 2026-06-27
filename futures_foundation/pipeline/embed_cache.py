@@ -25,12 +25,18 @@ import hashlib
 import numpy as np
 
 
-def signature(pool='mean'):
-    """(short_hash, human_string) of the embedding recipe — the cache namespace."""
+def signature(pool='mean', channel=None):
+    """(short_hash, human_string) of the embedding recipe — the cache namespace.
+
+    `channel` namespaces a non-price embed (e.g. 'volume') into its own cache so
+    it can't collide with the price embed for the same (item, bar). channel=None
+    or 'price' keeps the ORIGINAL signature (existing price caches stay valid)."""
     from futures_foundation.extractors.chronos import backbone
     s = (f"src={backbone.active_source()}|pool={pool}"
          f"|rs={backbone._return_shape_on()}|ctx={backbone.CTX}"
          f"|d={backbone.D_MODEL}")
+    if channel and channel != 'price':
+        s += f"|ch={channel}"
     return hashlib.sha1(s.encode()).hexdigest()[:12], s
 
 
@@ -44,12 +50,14 @@ def _fname(cdir, item):
     return cdir / (str(item).replace('/', '_').replace('@', '_') + '.npz')
 
 
-def embed_with_cache(contexts, keys, cache_dir, pool='mean', verbose=True):
+def embed_with_cache(contexts, keys, cache_dir, pool='mean', verbose=True,
+                     channel=None):
     """Return flat embeddings [N, D] for `contexts` (aligned to `keys`), using a
     disk cache. keys[i] = (item_id, bar_index, ...). Cache HITs are content-hash
-    verified; everything else is embedded fresh via backbone.embed and stored."""
+    verified; everything else is embedded fresh via backbone.embed and stored.
+    `channel` ('volume', ...) namespaces a non-price embed into its own cache."""
     from futures_foundation.extractors.chronos import backbone
-    sigh, _ = signature(pool)
+    sigh, _ = signature(pool, channel)
     cdir = Path(cache_dir) / sigh
     cdir.mkdir(parents=True, exist_ok=True)
     N = len(keys)
