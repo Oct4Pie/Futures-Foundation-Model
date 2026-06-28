@@ -37,6 +37,90 @@ def detect_pivots(highs, lows, period):
     return np.where(is_ph)[0] + period, np.where(is_pl)[0] + period
 
 
+def atr_zigzag_legs(o, h, l, c, atr, rev_atr, aflr):
+    """ATR-ZigZag swing/pivot detection — the fractal pivot-confirm, SHARED so
+    3rd-party consumers (e.g. the live bot) derive the SAME pivots from bars (no
+    drift). Pure OHLC, strictly causal: a pivot is only emitted once price has
+    retraced `rev_atr * ATR` off the extreme (the moment it's KNOWN).
+
+    Returns list of legs: (origin_idx, extreme_idx, dir, R, confirm_idx). A leg
+    runs from origin (a swing extreme) to extreme, in `dir` (+1 up / -1 down).
+    confirm_idx = bar at which the leg's ORIGIN pivot was confirmed causally; a
+    causal entry for the leg is confirm_idx+1. The first seed leg has
+    confirm_idx == origin (not a real signal; drop downstream).
+
+    rev_atr : reversal threshold = retrace this * ATR off the extreme (granularity).
+    aflr    : ATR floor for the R-normalization (kills low-ATR R explosions)."""
+    def _r(move, oidx):
+        return move / (0.5 * max(atr[oidx], aflr))
+    n = len(c)
+    legs = []
+    i0 = next((k for k in range(n) if np.isfinite(atr[k]) and atr[k] > 0), None)
+    if i0 is None:
+        return legs
+    origin = i0
+    direction = 0                       # 0 = unknown until first reversal sets it
+    ext_idx = i0
+    ext_px = c[i0]
+    confirm = i0                        # confirm bar of the CURRENT leg's origin pivot
+    for j in range(i0 + 1, n):
+        a = atr[origin] if np.isfinite(atr[origin]) and atr[origin] > 0 else atr[j]
+        if not (np.isfinite(a) and a > 0):
+            continue
+        rev = rev_atr * a
+        if direction >= 0 and h[j] > ext_px:              # extend up-extreme
+            ext_px, ext_idx, direction = h[j], j, 1
+        if direction <= 0 and l[j] < ext_px and direction != 1:
+            ext_px, ext_idx, direction = l[j], j, -1
+        if direction == 1 and (ext_px - l[j]) >= rev:     # retrace down -> up-pivot confirmed
+            legs.append((origin, ext_idx, 1, _r(ext_px - c[origin], origin), confirm))
+            origin, ext_idx, ext_px, direction = ext_idx, j, l[j], -1
+            confirm = j
+        elif direction == -1 and (h[j] - ext_px) >= rev:  # retrace up -> down-pivot confirmed
+            legs.append((origin, ext_idx, -1, _r(c[origin] - ext_px, origin), confirm))
+            origin, ext_idx, ext_px, direction = ext_idx, j, h[j], 1
+            confirm = j
+    # final in-progress leg (current trend at the data edge); filtered downstream
+    if direction != 0 and ext_idx > origin:
+        move = (ext_px - c[origin]) if direction == 1 else (c[origin] - ext_px)
+        legs.append((origin, ext_idx, direction, _r(move, origin), confirm))
+    return legs
+
+
+def detect_atr_zigzag_pivots(o, h, l, c, atr_period=20, rev_atr=1.25,
+                             min_r=3.0, min_bars=5):
+    """FULL self-contained pivot-confirm — bars → confirmed swing pivots ready to
+    trade. THE shared entry-trigger method so any consumer (live bot, other
+    strategies) derives IDENTICAL pivots from OHLC, no drift. Byte-identical to the
+    fractal label scan (`trend_scan`): Wilder ATR(atr_period) → aflr = 0.5·median(ATR)
+    → ATR-zigzag legs → confirmed pivots (seed/edge legs dropped).
+
+    Returns list of dict(confirm, direction, origin, leg_end, R, is_trend):
+      confirm   : causal confirm bar — ENTER at confirm+1
+      direction : +1 long / -1 short
+      origin    : swing extreme (stop reference)
+      leg_end   : leg extreme
+      R         : |leg R| (ATR-normalized)
+      is_trend  : |R| >= min_r AND (leg_end - origin) >= min_bars  (good vs chop pivot)"""
+    from futures_foundation.pipeline._primitives import compute_atr  # the certified ATR
+    o = np.asarray(o, float); h = np.asarray(h, float)
+    l = np.asarray(l, float); c = np.asarray(c, float)
+    atr = compute_atr(h, l, c, atr_period)
+    fin = np.isfinite(atr) & (atr > 0)
+    if fin.sum() < 1:
+        return []
+    aflr = 0.5 * float(np.nanmedian(atr[fin]))
+    n = len(c)
+    pivots = []
+    for (oi, ei, d, R, cf) in atr_zigzag_legs(o, h, l, c, atr, rev_atr, aflr):
+        if cf <= oi or cf + 1 >= n:                  # seed leg / no causal entry
+            continue
+        pivots.append({'confirm': int(cf), 'direction': int(d), 'origin': int(oi),
+                       'leg_end': int(ei), 'R': float(abs(R)),
+                       'is_trend': bool(abs(R) >= min_r and (ei - oi) >= min_bars)})
+    return pivots
+
+
 def detect_cisd_signals(o, h, l, c, tolerance=0.70, expiry_bars=50,
                         body_ratio_min=0.50, close_str_min=0.60):
     """
