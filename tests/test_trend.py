@@ -58,27 +58,59 @@ def test_kalman_velocity_direction():
     assert vu[200:].mean() > 0 and vd[200:].mean() < 0
 
 
-# ---- trend_aligned: causal gate, correct direction match ------------------
-def test_trend_aligned_correct_and_causal():
-    from futures_foundation.pivots import causal_htf_dir
-    n = 4000
+# ---- TRIGGER GATE: truth table (positive / negative / edge) ---------------
+def test_gate_truth_table():
+    """The trigger rule: aligned = (sign(htf) == sign(dir)) AND dir != 0.
+    POSITIVE = same nonzero sign; NEGATIVE = opposite; EDGE = htf==0 or dir==0."""
+    htf = np.array([1.,  1., -1., -1.,  0.,  0.,  1., -1.,  0.])
+    dr = np.array([1., -1., -1.,  1.,  1., -1.,  0.,  0.,  0.])
+    exp = np.array([1,   0,   1,   0,   0,   0,   0,   0,   0], bool)
+    got = (np.sign(htf) == np.sign(dr)) & (dr != 0)
+    assert np.array_equal(got, exp)
+
+
+def _swing_bars(n=4000, seed=0):
     ts = pd.date_range('2024-01-01', periods=n, freq='1min', tz='UTC').values
-    rng = np.random.default_rng(0)
-    t = np.arange(n)
-    c = 100 + 8 * np.sin(t / 250.0) + rng.standard_normal(n) * 0.05    # clear up & down legs
-    bars = dict(ts=ts, o=c, h=c + 0.1, l=c - 0.1, c=c)
-    htf = np.sign(causal_htf_dir(bars, '1min', ts, 20))
-    # correctness: trend_aligned == (HTF dir matches the signal dir)
+    rng = np.random.default_rng(seed)
+    c = 100 + 8 * np.sin(np.arange(n) / 250.0) + rng.standard_normal(n) * 0.05
+    return dict(ts=ts, o=c, h=c + 0.1, l=c - 0.1, c=c), rng
+
+
+# ---- trend_aligned: positive / negative / edge (end-to-end, derived htf) ---
+def test_trend_aligned_positive_negative_edge():
+    from futures_foundation.pivots import causal_htf_dir
+    bars, rng = _swing_bars()
+    n = len(bars['c'])
+    htf = np.sign(causal_htf_dir(bars, '1min', bars['ts'], 20))
+    assert (htf == 1).any() and (htf == -1).any() and (htf == 0).any()   # all 3 regions present
+
     al_long = T.trend_aligned(bars, np.ones(n, int), '1min')
     al_short = T.trend_aligned(bars, -np.ones(n, int), '1min')
-    assert np.array_equal(al_long, htf == 1)
-    assert np.array_equal(al_short, htf == -1)
-    assert al_long.sum() > 100 and al_short.sum() > 100               # non-degenerate
-    # CAUSAL: perturb the future, past alignment must not change
+    # POSITIVE: long aligned EXACTLY where htf==+1; short EXACTLY where htf==-1
+    assert np.array_equal(al_long, htf == 1) and al_long.any()
+    assert np.array_equal(al_short, htf == -1) and al_short.any()
+    # NEGATIVE: never aligned against the trend (or when flat)
+    assert not al_long[htf != 1].any()
+    assert not al_short[htf != -1].any()
+    # EDGE: signal_dir == 0 -> never aligned anywhere
+    assert not T.trend_aligned(bars, np.zeros(n, int), '1min').any()
+    # EDGE: flat HTF (htf==0) -> not aligned for long OR short
+    flat = htf == 0
+    assert not al_long[flat].any() and not al_short[flat].any()
+    # MIXED signal vector matches the elementwise rule exactly
+    sd = rng.choice([-1, 0, 1], n)
+    assert np.array_equal(T.trend_aligned(bars, sd, '1min'), (htf == np.sign(sd)) & (sd != 0))
+
+
+# ---- trend_aligned: causal (future can't change past gate decisions) -------
+def test_trend_aligned_causal():
+    bars, _ = _swing_bars()
+    n = len(bars['c'])
+    al = T.trend_aligned(bars, np.ones(n, int), '1min')
     b2 = {k: (v.copy() if hasattr(v, 'copy') else v) for k, v in bars.items()}
     b2['h'][3000:] *= 1.2; b2['l'][3000:] *= 1.2; b2['c'][3000:] *= 1.2
     al2 = T.trend_aligned(b2, np.ones(n, int), '1min')
-    assert np.array_equal(al_long[:2900], al2[:2900])
+    assert np.array_equal(al[:2900], al2[:2900])
 
 
 # ---- decycler slope: causal sign tracks trend -----------------------------
