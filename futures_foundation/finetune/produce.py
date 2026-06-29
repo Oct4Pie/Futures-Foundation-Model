@@ -85,6 +85,20 @@ def train_final(labeler, classifier='mantis', clf_kwargs=None, holdout_start='20
         if clf.needs_standardize:
             mu, sd = memmap_standardize_stats(Xtr)
             ck['standardize_mu'] = mu.tolist(); ck['standardize_sd'] = sd.tolist()
+        # features are on disk now; evaluate() reads R from the key tuples (not _b), so
+        # drop the labeler's bars to free RAM before the worker trains (stream is the
+        # memory-critical full-data path — always free).
+        import gc
+        for attr in ('_b', '_labels'):
+            if hasattr(labeler, attr):
+                try:
+                    getattr(labeler, attr).clear()
+                except Exception:
+                    pass
+        gc.collect()
+        if verbose:
+            print("  [mem] freed labeler bars after featurize (memmap holds features)",
+                  flush=True)
     else:
         Xtr = clf.featurize(labeler, Ktr_tr)
         Xval = clf.featurize(labeler, Ktr_va)
