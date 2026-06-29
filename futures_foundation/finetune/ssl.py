@@ -1,21 +1,22 @@
-"""Generic self-supervised pretraining of the Mantis backbone (orchestrator).
+"""Masked-modeling SSL pretraining of the Mantis backbone (orchestrator) — "BERT for
+futures".
 
-Temporal contrastive learning on raw OHLCV across the 9 futures tickers x
-{1,3,5,15}min. Produces an ADAPTED ENCODER CHECKPOINT (saved to Drive on Colab) that
-downstream classifier finetuning starts from
+BERT-style masked modeling on raw OHLCV across the 9 futures tickers x {1,3,5,15}min:
+mask a fraction of bars and reconstruct them from context (in _ssl_torch.train_ssl_mask),
+so the encoder learns regime/volatility/structure. Produces an ADAPTED ENCODER CHECKPOINT
+(saved to Drive on Colab) that downstream classifier finetuning starts from
 (build_model(..., backbone_ckpt=...) / BACKBONE_CKPT=... in the WF/produce driver).
 
-Torch-free at import (the GPU trainer in _ssl_torch + the probe's torch bits load
-lazily) so data assembly, the generalization gate, the Optuna search wiring, and the
-contract are testable without the torch/mantis stack.
+Torch-free at import (the GPU trainer in _ssl_torch + the probe's torch bits load lazily)
+so data assembly, the generalization gate, the Optuna search wiring, and the contract are
+testable without the torch/mantis stack.
 
-Generalization is GATED + OPTUNA-TUNED, mirroring WF/produce:
-  * TIME-SPLIT val NT-Xent early-stop      (generalize forward; 2026 EXCLUDED)
-  * REAL vs SHUFFLE vs RANDOM controls     (REAL must beat both -> real structure)
-  * representation-COLLAPSE guard          (embed std / alignment / uniformity)
-  * if it doesn't generalize -> OPTUNA tunes lr/temp/reg/aug for a config that does
-  * FINAL check: a linear PROBE shows the frozen embedding encodes regime / vol /
-    structure better than vanilla Mantis (ssl_probe) — "useful for downstream"
+Generalization is PROBE-GATED + OPTUNA-TUNED, mirroring WF/produce:
+  * TIME-SPLIT val reconstruction early-stop  (generalize forward; 2026 EXCLUDED)
+  * GATE = a linear PROBE shows the frozen embedding predicts regime / vol / structure +
+    forward buy/sell move BETTER than vanilla Mantis (the classification-relevance test)
+  * if it doesn't pass -> OPTUNA tunes lr/reg/capacity/mask_ratio to MAXIMIZE the probe
+  * REAL vs SHUFFLE vs RANDOM = probe-based diagnostic (did temporal order contribute)
 
 Colab usage: see colab/mantis_ssl_pretrain.py.
 """
@@ -26,8 +27,6 @@ import os
 import numpy as np
 
 from . import ssl_data
-
-_AUG_KEYS = ('resize', 'jitter', 'scale', 'warp')
 
 
 def assemble(streams, *, seq, max_jitter, val_frac, holdout_start, verbose=True):
@@ -55,24 +54,12 @@ def assemble(streams, *, seq, max_jitter, val_frac, holdout_start, verbose=True)
     return big, tr, va
 
 
-# --------------------------------------------------------------------------- config split
-def _split_cfg(cfg):
-    """Separate flat config into (train_kwargs, aug-dict) for train_ssl."""
-    cfg = dict(cfg)
-    aug = {k: cfg.pop(k) for k in _AUG_KEYS if k in cfg}
-    return cfg, aug
-
-
 # --------------------------------------------------------------------------- train + probe
 def _train(big, tr, va, cfg, control='real'):
-    """Train one config under a control ('real'|'shuffle'|'random'). Dispatches on pretext:
-    'mask' = BERT-style masked modeling (default, shortcut-proof), 'contrastive' = SimCLR."""
+    """Train one config under a control ('real'|'shuffle'|'random') with BERT-style masked
+    modeling. Returns (best_encoder_state, history)."""
     from . import _ssl_torch
-    tk, aug = _split_cfg(cfg)
-    pretext = tk.pop('pretext', 'mask')
-    if pretext == 'mask':
-        return _ssl_torch.train_ssl_mask(big, tr, va, control=control, **tk)
-    return _ssl_torch.train_ssl(big, tr, va, control=control, aug=aug, **tk)
+    return _ssl_torch.train_ssl_mask(big, tr, va, control=control, **cfg)
 
 
 def _probe_state(big, va, seq, state, *, model_id, device, seed, verbose=True):
@@ -109,21 +96,13 @@ def _passes(probe_res, std, margin=0.0):
 
 
 # ------------------------------------------------------------------------------- optuna
-def _suggest_ssl(trial, pretext='mask'):
-    """Search the knobs that govern generalization (maximizing the probe delta). Common:
-    optimizer + capacity. Pretext-specific: mask_ratio (mask) or temperature/augmentation
-    strength (contrastive)."""
-    d = dict(lr=trial.suggest_float('lr', 3e-5, 5e-4, log=True),
-             weight_decay=trial.suggest_float('weight_decay', 0.01, 0.3, log=True),
-             new_channels=trial.suggest_int('new_channels', 4, 12))
-    if pretext == 'mask':
-        d['mask_ratio'] = trial.suggest_float('mask_ratio', 0.2, 0.6)
-    else:
-        d.update(temp=trial.suggest_float('temp', 0.07, 0.5, log=True),
-                 jitter=trial.suggest_float('jitter', 0.0, 0.15),
-                 warp=trial.suggest_float('warp', 0.0, 0.2),
-                 resize=(trial.suggest_float('resize_lo', 0.5, 0.9), 1.0))
-    return d
+def _suggest_ssl(trial):
+    """Search the masked-modeling knobs that govern generalization (maximizing the probe
+    delta): optimizer, capacity, and mask ratio."""
+    return dict(lr=trial.suggest_float('lr', 3e-5, 5e-4, log=True),
+                weight_decay=trial.suggest_float('weight_decay', 0.01, 0.3, log=True),
+                new_channels=trial.suggest_int('new_channels', 4, 12),
+                mask_ratio=trial.suggest_float('mask_ratio', 0.2, 0.6))
 
 
 def _tune_ssl(big, tr, va, base_cfg, *, n_trials=10, tune_epochs=8, tune_steps=80,
@@ -134,7 +113,6 @@ def _tune_ssl(big, tr, va, base_cfg, *, n_trials=10, tune_epochs=8, tune_steps=8
     it beats the base probe delta, else base."""
     import optuna
     optuna.logging.set_verbosity(optuna.logging.WARNING)
-    pretext = base_cfg.get('pretext', 'mask')
 
     def delta_of(cfg):
         st, _ = _train(big, tr, va, dict(cfg, epochs=tune_epochs,
@@ -146,16 +124,13 @@ def _tune_ssl(big, tr, va, base_cfg, *, n_trials=10, tune_epochs=8, tune_steps=8
     base = delta_of(base_cfg)
 
     def objective(trial):
-        return delta_of(dict(base_cfg, **_suggest_ssl(trial, pretext)))
+        return delta_of(dict(base_cfg, **_suggest_ssl(trial)))
 
     study = optuna.create_study(direction='maximize',
                                 sampler=optuna.samplers.TPESampler(seed=seed))
     study.optimize(objective, n_trials=n_trials)
     improved = study.best_value > base + 1e-4
-    bp = dict(study.best_params)
-    if 'resize_lo' in bp:
-        bp['resize'] = (bp.pop('resize_lo'), 1.0)
-    best = dict(base_cfg, **bp) if improved else dict(base_cfg)
+    best = dict(base_cfg, **study.best_params) if improved else dict(base_cfg)
     if verbose:
         print(f"  [optuna ssl] base_probe={base:+.4f} best_probe={study.best_value:+.4f} "
               f"{'-> use tuned' if improved else '-> keep defaults'}", flush=True)
@@ -222,15 +197,14 @@ def _load_assemble(data_dir, tickers, tfs, seq, max_jitter, val_frac, holdout_st
 
 
 def _base_cfg(**kw):
-    """Default training config (one place; loop_ssl tunes a subset). pretext='mask' is the
-    BERT-style default; 'contrastive' is the fallback. max_jitter=16 reserves a forward
-    horizon for the buy/sell probe targets (in-stream)."""
-    d = dict(pretext='mask', seq=64, max_jitter=16, new_channels=8, proj_dim=128, temp=0.2,
-             mask_ratio=0.4, epochs=60, steps_per_epoch=200, batch=1024, lr=1e-4,
-             weight_decay=0.05, patience=8, model_id='paris-noah/Mantis-8M',
-             compile_model=False, device=None, seed=0, verbose=True,
-             resize=(0.7, 1.0), jitter=0.05, scale=0.1, warp=0.1)
-    d.update({k: v for k, v in kw.items() if v is not None})
+    """Default masked-modeling config (one place; loop_ssl tunes a subset). max_jitter
+    reserves the forward-probe horizon (in-stream). Only known keys are kept, so stray
+    callers can't inject junk into the trainer."""
+    d = dict(seq=64, max_jitter=16, new_channels=8, mask_ratio=0.4, epochs=60,
+             steps_per_epoch=200, batch=1024, lr=1e-4, weight_decay=0.05, patience=8,
+             model_id='paris-noah/Mantis-8M', compile_model=False, device=None,
+             seed=0, verbose=True)
+    d.update({k: v for k, v in kw.items() if v is not None and k in d})
     return d
 
 
@@ -287,7 +261,7 @@ def run_ssl(data_dir=None, *, controls=('shuffle', 'random'),
 
 
 def main():
-    p = argparse.ArgumentParser(description="Mantis OHLCV contrastive SSL (gated + Optuna)")
+    p = argparse.ArgumentParser(description="Mantis OHLCV masked-modeling SSL (probe-gated + Optuna)")
     p.add_argument('--data-dir', default=os.environ.get('DATA_DIR'))
     p.add_argument('--out', default=os.environ.get('OUT_PATH', 'mantis_ssl_ohlcv.pt'))
     p.add_argument('--tickers', default=os.environ.get('TICKERS'))

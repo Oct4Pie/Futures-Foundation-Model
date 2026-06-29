@@ -7,8 +7,8 @@
 # fraction of bars and reconstruct them from context. To reconstruct a masked bar the
 # encoder MUST model regime/volatility (bar size), temporal dynamics (trend
 # continuation) and cross-channel coupling — the market-context the downstream buy/sell
-# classifier needs. Unlike contrastive, it is NOT gameable by a distributional shortcut.
-# (pretext='contrastive' is kept as a fallback.)
+# classifier needs. It is NOT gameable by a distributional shortcut, and its REAL/SHUFFLE/
+# RANDOM controls are meaningful (only real data has predictable context to reconstruct).
 #
 # OUTPUT: an adapted ENCODER checkpoint saved to Drive. Downstream classifier
 # finetuning starts from it:  build_model(..., backbone_ckpt=<this .pt>)  (and
@@ -74,16 +74,13 @@ TFS     = ['1min', '3min', '5min', '15min']
 HOLDOUT_START = '2026-01-01'          # EXCLUDED from SSL (downstream OOS stays clean)
 VAL_FRAC      = 0.1                    # last 10% of each stream's pre-2026 bars = val
 
-# ── PRETEXT ──
-PRETEXT      = 'mask'  # 'mask' = BERT masked modeling (default); 'contrastive' = SimCLR fallback
-MASK_RATIO   = 0.4     # fraction of bars masked per window (mask pretext)
+# ── MASKED MODELING ──
+MASK_RATIO   = 0.4     # fraction of bars masked per window, reconstructed from context
 
 # ── MODEL ──
-SEQ          = 64      # model input length (bars)
+SEQ          = 64      # model input window (bars); interpolated to Mantis's native 512 internally
 MAX_JITTER   = 16      # forward horizon reserved for the buy/sell probe (in-stream)
 NEW_CHANNELS = 8       # channel-combiner output (OHLCV=5 -> NEW_CHANNELS)
-PROJ_DIM     = 128     # contrastive projection dim (contrastive pretext only)
-TEMP         = 0.2     # NT-Xent temperature (contrastive pretext only)
 
 # ── TRAINING (GPU-max) ──
 BATCH        = 1024    # drop if OOM (512 / 768).
@@ -119,8 +116,8 @@ if not found:
         f'Expected e.g. {DATA_DIR}/ES_3min.csv with columns '
         f'datetime,open,high,low,close,volume.')
 print(f'✅ PRE-FLIGHT: found {len(found)}/{len(TICKERS)*len(TFS)} CSVs under {DATA_DIR}')
-print(f'   pretext={PRETEXT} | corpus {TICKERS} x {TFS} | SEQ={SEQ} BATCH={BATCH} '
-      f'EPOCHS={EPOCHS} controls={CONTROLS}')
+print(f'   masked modeling | corpus {TICKERS} x {TFS} | SEQ={SEQ} MASK={MASK_RATIO} '
+      f'BATCH={BATCH} EPOCHS={EPOCHS} controls={CONTROLS}')
 print(f'   OUTPUT -> {OUT_PATH}')
 
 
@@ -129,9 +126,9 @@ print(f'   OUTPUT -> {OUT_PATH}')
 # ==============================================================================
 verdict = ssl.loop_ssl(
     data_dir=DATA_DIR, out_path=OUT_PATH,
-    tickers=TICKERS, tfs=TFS, pretext=PRETEXT, mask_ratio=MASK_RATIO,
-    seq=SEQ, max_jitter=MAX_JITTER, new_channels=NEW_CHANNELS, proj_dim=PROJ_DIM,
-    temp=TEMP, batch=BATCH, epochs=EPOCHS, steps_per_epoch=STEPS, lr=LR,
+    tickers=TICKERS, tfs=TFS, mask_ratio=MASK_RATIO,
+    seq=SEQ, max_jitter=MAX_JITTER, new_channels=NEW_CHANNELS,
+    batch=BATCH, epochs=EPOCHS, steps_per_epoch=STEPS, lr=LR,
     patience=PATIENCE, val_frac=VAL_FRAC, holdout_start=HOLDOUT_START,
     controls=tuple(CONTROLS), probe=PROBE, n_trials=N_TRIALS, max_iters=MAX_ITERS,
     device=device.type, compile_model=COMPILE, seed=SEED,

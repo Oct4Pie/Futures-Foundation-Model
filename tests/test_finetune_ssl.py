@@ -1,5 +1,5 @@
-"""SSL contrastive pretraining — torch-free data/assembly/verdict (non-gated) +
-torch trainer (gated behind CHRONOS_TORCH_TESTS=1, libomp isolation).
+"""SSL masked-modeling pretraining — torch-free data/assembly/probe/gate (non-gated) +
+torch masked trainer (gated behind CHRONOS_TORCH_TESTS=1, libomp isolation).
 
 Run torch parts: CHRONOS_TORCH_TESTS=1 pytest tests/test_finetune_ssl.py
 """
@@ -127,28 +127,7 @@ def test_passes_gate_on_probe_not_loss():
     assert not ssl._passes(good, std=0.001)[0]
 
 
-# ------------------------------------------------------------------- torch trainer (gated)
-@torch_test
-def test_ssl_network_and_augment_shapes():
-    import torch
-    from futures_foundation.finetune import _ssl_torch as S
-    net = S.build_ssl_net(C=5, new_channels=4, proj_dim=64, device='cpu')
-    x = torch.randn(8, 5, 64)
-    z = net(x)
-    assert z.shape == (8, 64)
-    assert torch.allclose(z.norm(dim=1), torch.ones(8), atol=1e-4)   # L2-normalized
-    parent = torch.randn(8, 5, 72)
-    v1, v2 = S._two_views(parent, seq=64, max_jitter=8)
-    assert v1.shape == (8, 5, 64) and v2.shape == (8, 5, 64)
-    loss = S.nt_xent(z, net(x), temp=0.2)
-    assert torch.isfinite(loss)
-    sh = S._time_shuffle(x)                                          # temporal hard-neg op
-    assert sh.shape == x.shape
-    assert torch.isfinite(S.nt_xent(z, net(x), temp=0.2, extra_neg=net(sh)))   # hard negatives
-    cm = S.collapse_metrics(z, net(x))
-    assert set(cm) == {'std', 'align', 'uniformity'}
-
-
+# ------------------------------------------------------------- masked-modeling trainer (gated)
 @torch_test
 def test_mask_network_and_trainer(tmp_path):
     import torch
@@ -170,19 +149,3 @@ def test_mask_network_and_trainer(tmp_path):
     assert new_c == 4
 
 
-@torch_test
-def test_train_ssl_runs_and_ckpt_loads_into_build_model(tmp_path):
-    import torch
-    from futures_foundation.finetune import _ssl_torch as S
-    from futures_foundation.finetune.classifiers._mantis_torch import build_model
-    rng = np.random.default_rng(0)
-    big = rng.standard_normal((2000, 5)).astype(np.float32)
-    starts = np.arange(0, 1800, 4)
-    state, hist = S.train_ssl(big, starts, starts[-50:], seq=32, max_jitter=8,
-                              new_channels=4, proj_dim=32, epochs=2, steps_per_epoch=3,
-                              batch=16, device='cpu', control='real', verbose=False)
-    assert len(hist) >= 1 and np.isfinite(hist[-1]['val_loss'])
-    ckpt = str(tmp_path / 'enc.pt'); torch.save(state, ckpt)
-    # the SSL encoder ckpt initializes the downstream classifier backbone
-    model, new_c = build_model(5, new_channels=4, device='cpu', backbone_ckpt=ckpt)
-    assert new_c == 4
