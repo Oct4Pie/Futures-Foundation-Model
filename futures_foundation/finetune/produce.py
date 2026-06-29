@@ -17,8 +17,8 @@ from .wf import (_fit_predict, _pct_threshold, _arm_R, _meanR,
                  OP_PERCENTILE, PASS_LIFT_MARGIN_R)
 
 
-def train_final(labeler, classifier='mantis', clf_kwargs=None,
-                holdout_start='2026-01-01', val_frac=0.15, seed=0, verbose=True):
+def train_final(labeler, classifier='mantis', clf_kwargs=None, holdout_start='2026-01-01',
+                val_frac=0.15, seed=0, max_train=None, verbose=True):
     clf_kwargs = dict(clf_kwargs or {})
     hs = pd.Timestamp(holdout_start, tz='UTC')
     cal = labeler.calendar()
@@ -29,6 +29,10 @@ def train_final(labeler, classifier='mantis', clf_kwargs=None,
     Ytr = np.asarray(Ytr).astype(int); Yte = np.asarray(Yte).astype(int)
     if len(Ytr) < 50 or len(Kte) < 20:
         raise ValueError(f"insufficient data: train={len(Ytr)} oos={len(Kte)}")
+    # cap train BEFORE building contexts (parent stays light — don't hold 67k windows)
+    if max_train and len(Ktr) > max_train:
+        sub = np.random.default_rng(seed).choice(len(Ktr), max_train, replace=False)
+        Ktr = [Ktr[j] for j in sub]; Ytr = Ytr[sub]
     Xtr = np.asarray(labeler.mv_contexts(Ktr), np.float32)
     Xte = np.asarray(labeler.mv_contexts(Kte), np.float32)
     C = Xtr.shape[1]
