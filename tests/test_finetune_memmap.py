@@ -80,6 +80,53 @@ class _StreamLabeler:
                          for k, p in zip(keys, preds) if p == 1])
 
 
+class _RKeyLabeler:
+    """Per-stream labeler with R baked into the key tuple (like the fractal labeler) so
+    any instance's evaluate works on accumulated cross-stream keys."""
+    n_classes = 2
+
+    def __init__(self, n_bars=1000, seq=32, C=4, seed=0):
+        rng = np.random.default_rng(seed)
+        self.ts = pd.date_range('2020-01-01', periods=n_bars, freq='1D', tz='UTC')
+        self.y = rng.integers(0, 2, n_bars)
+        self.W = rng.standard_normal((n_bars, C, seq)).astype(np.float32)
+        self.W[self.y == 1, 0, -6:] += 2.5
+        self.seq, self.C = seq, C
+
+    def calendar(self):
+        return pd.DataFrame({'item_id': 'S', 'timestamp': self.ts, 'target': self.y})
+
+    def build(self, lo, hi, test_start):
+        i = np.flatnonzero((self.ts >= lo) & (self.ts < hi))
+        K = [(int(j), 2.0 if self.y[j] == 1 else -1.0) for j in i]   # R baked in key
+        return [None] * len(i), self.y[i], K
+
+    def mv_contexts(self, keys):
+        return (np.stack([self.W[k[0]] for k in keys]) if keys
+                else np.zeros((0, self.C, self.seq)))
+
+    def mv_feature_names(self):
+        return [f'ch{i}' for i in range(self.C)]
+
+    def evaluate(self, keys, preds):
+        return np.array([k[1] for k, p in zip(keys, preds) if p == 1])
+
+
+def test_produce_streamed_per_stream(tmp_path):
+    def make_labeler(tk, tf):
+        return _RKeyLabeler(n_bars=1000, seed=abs(hash((tk, tf))) % 1000)
+    streams = [('A', '3min'), ('B', '3min'), ('C', '3min')]
+    out = produce.train_final_streamed(
+        make_labeler, streams, classifier='logistic', holdout_start='2021-06-01',
+        seed=0, chunk=200, export_onnx=True, output_path=str(tmp_path / 'm'), verbose=False)
+    assert out['n_oos'] > 0 and out['oos_trades'] > 0
+    assert out['oos_auc'] is not None and out['oos_auc'] > 0.75   # learnable across streams
+    c = json.loads(open(out['artifacts']['contract']).read())
+    assert c['train_scope']['tickers'] == ['A', 'B', 'C']
+    assert c['train_scope']['timeframes'] == ['3min']
+    assert (tmp_path / '_Xtr.npy').exists()      # concatenated full memmap written
+
+
 def test_produce_stream_end_to_end(tmp_path):
     lab = _StreamLabeler(n_bars=1600, seed=0)
     out = produce.train_final(lab, classifier='logistic', holdout_start='2023-06-01',

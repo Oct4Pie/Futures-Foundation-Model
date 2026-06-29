@@ -50,6 +50,137 @@ def _contract(labeler, classifier, ck, C, seq, mu, sd, out, onnx_path, sha,
     }
 
 
+def _emit(out, classifier, ck, eval_lab, Xtr, Ytr_tr, Xval, Ytr_va, Xte, mu, sd, C, seq,
+          channel_names, tks, tfs, seed, holdout_start, export_onnx, output_path, verbose):
+    if not (export_onnx and output_path):
+        return out
+    base = Path(output_path).with_suffix('')
+    onnx_path = str(base) + '.onnx'
+    get_classifier(classifier, **dict(ck, export_onnx_path=onnx_path)).fit_predict(
+        Xtr, Ytr_tr, Xval, Ytr_va, Xte, seed)
+    sha = (hashlib.sha256(Path(onnx_path).read_bytes()).hexdigest()
+           if Path(onnx_path).exists() else None)
+    contract = {
+        'contract_version': '1.0', 'role': 'mantis_signal', 'classifier': classifier,
+        'input': {'channels': int(C), 'seq_len': int(seq),
+                  'mv_mode': getattr(eval_lab, 'MV_MODE', None)},
+        'channel_names': channel_names,
+        'standardize': ({'mu': np.asarray(mu).tolist(), 'sd': np.asarray(sd).tolist()}
+                        if mu is not None else None),
+        'mv_contexts_fn': 'strategy.mv_contexts (direction-normalized causal window)',
+        'nan_policy': {'posinf': 0, 'neginf': 0, 'nan': 0},
+        'ft_config': {k: v for k, v in (ck or {}).items()
+                      if k not in ('standardize_mu', 'standardize_sd', 'log_path')},
+        'n_classes': 2, 'proba_meaning': 'P(good trend pivot reaches target before stop)',
+        'output_fn': 'softmax(logits)[:,1]',
+        'train_scope': {'tickers': tks, 'timeframes': tfs, 'holdout_start': holdout_start,
+                        'n_train': int(len(Ytr_tr)), 'n_oos': int(out['n_oos'])},
+        'oos_metrics': {k: out.get(k) for k in
+                        ('oos_auc', 'oos_meanR', 'shuffle_meanR', 'edge_shuffle', 'oos_trades')},
+        'onnx': (Path(onnx_path).name if sha else None), 'content_sha': sha,
+    }
+    cpath = str(base) + '_signal.json'
+    Path(cpath).write_text(json.dumps(contract, indent=2))
+    out['artifacts'] = {'onnx': onnx_path if sha else None, 'contract': cpath, 'content_sha': sha}
+    if verbose:
+        print(f"  artifacts: onnx={out['artifacts']['onnx']} contract={cpath}")
+    return out
+
+
+def _fit_score(classifier, ck, eval_lab, Xtr, Ytr_tr, Xval, Ytr_va, Xte, Kte, Yte, seed, verbose):
+    rng = np.random.default_rng(seed)
+    clf_run = get_classifier(classifier, **ck)
+    p_val, p_te, ba = clf_run.fit_predict(Xtr, Ytr_tr, Xval, Ytr_va, Xte, seed)
+    thr = _pct_threshold(p_val, OP_PERCENTILE)
+    R = _arm_R(eval_lab, Kte, p_te, thr)
+    ysh = np.asarray(Ytr_tr).copy(); rng.shuffle(ysh)
+    psv, ps, _ = clf_run.fit_predict(Xtr, ysh, Xval, Ytr_va, Xte, seed)
+    Rs = _arm_R(eval_lab, Kte, ps, _pct_threshold(psv, OP_PERCENTILE))
+    auc = None
+    if len(np.unique(Yte)) == 2:
+        from sklearn.metrics import roc_auc_score
+        auc = float(roc_auc_score(Yte, p_te))
+    edge = _meanR(R) - _meanR(Rs)
+    out = dict(oos_auc=auc, best_val_auc=ba, oos_meanR=_meanR(R), shuffle_meanR=_meanR(Rs),
+               edge_shuffle=edge, n_train=len(Ytr_tr), n_oos=len(Kte), oos_trades=int(len(R)),
+               beats_shuffle=bool(edge >= PASS_LIFT_MARGIN_R))
+    if verbose:
+        print(f"  OOS AUC {auc:.4f}" if auc is not None else "  OOS AUC n/a")
+        print(f"  OOS meanR REAL {out['oos_meanR']:+.3f} SHUFFLE {out['shuffle_meanR']:+.3f} "
+              f"edge {edge:+.3f} (trades={out['oos_trades']})  -> "
+              f"{'beats SHUFFLE' if out['beats_shuffle'] else 'does NOT beat SHUFFLE'}")
+    return out
+
+
+def train_final_streamed(make_labeler, streams, classifier='mantis', clf_kwargs=None,
+                         holdout_start='2026-01-01', val_frac=0.15, seed=0, chunk=2000,
+                         export_onnx=False, output_path=None, verbose=True):
+    """Run on ALL data across many (ticker, timeframe) streams with bounded memory:
+    load each stream sequentially, featurize its train/val/oos pivots to part memmaps,
+    RELEASE its bars, next stream; concat parts into full memmaps; train per-batch.
+    Peak RAM = one stream + one batch. This is the full 3/5/15 (or all-tickers) run."""
+    import gc
+    from ._memmap import featurize_to_memmap, concat_memmaps, memmap_standardize_stats
+    clf = get_classifier(classifier, **dict(clf_kwargs or {}))
+    hs = pd.Timestamp(holdout_start, tz='UTC')
+    rng = np.random.default_rng(seed)
+    rundir = (Path(output_path).parent if output_path else Path('.'))
+    rundir.mkdir(parents=True, exist_ok=True)
+
+    tr_parts, va_parts, te_parts = [], [], []
+    Ytr_tr, Ytr_va, all_Kte, all_Yte = [], [], [], []
+    channel_names = None; C = seq = None; eval_lab = None
+    for i, (tk, tf) in enumerate(streams):
+        lab = make_labeler(tk, tf)                       # loads ONLY this stream's bars
+        cal = lab.calendar(); lo, hi = cal['timestamp'].min(), cal['timestamp'].max()
+        _, Ytr, Ktr = lab.build(lo, hs, hs)
+        _, Yte, Kte = lab.build(hs, hi + pd.Timedelta('1ns'), None)
+        Ytr = np.asarray(Ytr).astype(int); Yte = np.asarray(Yte).astype(int)
+        if channel_names is None and hasattr(lab, 'mv_feature_names'):
+            channel_names = lab.mv_feature_names()
+        if len(Ktr) >= 2:
+            idx = rng.permutation(len(Ktr)); nv = max(1, int(len(Ktr) * val_frac))
+            va_i, tr_i = idx[:nv], idx[nv:]
+            p = str(rundir / f'_tr{i}.npy')
+            _, sh = featurize_to_memmap(clf, lab, [Ktr[j] for j in tr_i], p, chunk)
+            tr_parts.append((p, len(tr_i))); Ytr_tr += list(Ytr[tr_i]); C, seq = sh[1], sh[2]
+            p = str(rundir / f'_va{i}.npy')
+            featurize_to_memmap(clf, lab, [Ktr[j] for j in va_i], p, chunk)
+            va_parts.append((p, len(va_i))); Ytr_va += list(Ytr[va_i])
+        if len(Kte):
+            p = str(rundir / f'_te{i}.npy')
+            featurize_to_memmap(clf, lab, list(Kte), p, chunk)
+            te_parts.append((p, len(Kte))); all_Kte += list(Kte); all_Yte += list(Yte)
+        if verbose:
+            print(f"  [stream {tk}@{tf}] train={len(Ktr)} oos={len(Kte)}", flush=True)
+        for attr in ('_b', '_labels'):                   # release bars (evaluate uses keys)
+            if hasattr(lab, attr):
+                try:
+                    getattr(lab, attr).clear()
+                except Exception:
+                    pass
+        eval_lab = lab                                   # keep one (R from key tuples)
+        gc.collect()
+
+    Xtr, _ = concat_memmaps(tr_parts, str(rundir / '_Xtr.npy'))
+    Xval, _ = concat_memmaps(va_parts, str(rundir / '_Xval.npy'))
+    Xte, _ = concat_memmaps(te_parts, str(rundir / '_Xte.npy'))
+    Ytr_tr = np.array(Ytr_tr); Ytr_va = np.array(Ytr_va); Yte = np.array(all_Yte)
+    ck = dict(clf_kwargs or {}); mu = sd = None
+    if clf.needs_standardize:
+        mu, sd = memmap_standardize_stats(Xtr)
+        ck['standardize_mu'] = mu.tolist(); ck['standardize_sd'] = sd.tolist()
+    tks = sorted({s[0] for s in streams}); tfs = sorted({s[1] for s in streams})
+    if verbose:
+        print(f"=== PRODUCE STREAMED ({classifier}: {len(streams)} streams, 2026 OOS) ===")
+        print(f"  train={len(Ytr_tr)} val={len(Ytr_va)} oos={len(all_Kte)} C={C} seq={seq} "
+              f"good(train)={Ytr_tr.mean():.3f} good(oos)={Yte.mean():.3f}", flush=True)
+    out = _fit_score(classifier, ck, eval_lab, Xtr, Ytr_tr, Xval, Ytr_va, Xte, all_Kte, Yte,
+                     seed, verbose)
+    return _emit(out, classifier, ck, eval_lab, Xtr, Ytr_tr, Xval, Ytr_va, Xte, mu, sd, C, seq,
+                 channel_names, tks, tfs, seed, holdout_start, export_onnx, output_path, verbose)
+
+
 def train_final(labeler, classifier='mantis', clf_kwargs=None, holdout_start='2026-01-01',
                 val_frac=0.15, seed=0, max_train=None, stream=False, chunk=2000,
                 export_onnx=False, output_path=None, verbose=True):

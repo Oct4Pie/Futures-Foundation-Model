@@ -9,7 +9,38 @@ sample) and applied per-batch — no standardized full copy.
 torch-free. Used by produce/loop for large/full-data runs; small runs can still use
 the in-RAM array path.
 """
+import os
+
 import numpy as np
+
+
+def concat_memmaps(parts, out_path):
+    """Concatenate part memmaps [(path, n), ...] into one [sum n, C, seq] memmap,
+    one part at a time (bounded RAM), deleting each part after. Returns (out_path,
+    shape). Enables per-(ticker,tf) featurize: each stream writes a part, then we
+    stitch them without ever holding all bars/features at once."""
+    parts = [(p, n) for p, n in parts if n > 0]
+    if not parts:
+        raise ValueError("no parts to concatenate")
+    m0 = np.load(parts[0][0], mmap_mode='r')
+    C, seq = int(m0.shape[1]), int(m0.shape[2])
+    del m0
+    total = sum(n for _, n in parts)
+    out = np.lib.format.open_memmap(out_path, mode='w+', dtype=np.float32,
+                                    shape=(total, C, seq))
+    off = 0
+    for p, n in parts:
+        src = np.load(p, mmap_mode='r')
+        out[off:off + n] = src[:]
+        off += n
+        del src
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+    out.flush()
+    del out
+    return out_path, (total, C, seq)
 
 
 def featurize_to_memmap(clf, labeler, keys, path, chunk=2000):
