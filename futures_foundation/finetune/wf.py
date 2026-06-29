@@ -203,13 +203,22 @@ def _verdict(classifier, pool, auc_real, val_meanR, test_meanR, n_folds, verbose
     return verdict
 
 
-def _rolling_folds(ts, train_m=3, val_m=1, test_m=1, max_folds=None):
+def _rolling_folds(ts, train_m=3, val_m=1, test_m=1, max_folds=None, holdout_start=None):
     """Rolling month windows -> list of (tr_rows, va_rows, te_rows) row-index arrays
-    into the featurize-once full set. Stride = test_m (default 1)."""
+    into the featurize-once full set. Stride = test_m (default 1).
+
+    holdout_start (e.g. '2026-01-01'): months >= this are EXCLUDED from the rolling
+    folds entirely — the WF never sees the holdout, which stays the untouched final
+    OOS for produce."""
     per = pd.DatetimeIndex(ts)
     per = per.tz_localize(None) if per.tz is not None else per
     perM = per.to_period('M')
     months = perM.unique().sort_values()
+    if holdout_start is not None:
+        hs = pd.Period(pd.Timestamp(holdout_start).tz_localize(None)
+                       if pd.Timestamp(holdout_start).tzinfo else pd.Timestamp(holdout_start),
+                       freq='M')
+        months = months[months < hs]          # 2026+ never in any fold
     span = train_m + val_m + test_m
     folds, s = [], 0
     while s + span <= len(months):
@@ -304,7 +313,7 @@ def _run_folds(classifier, ck, Xall, Y, keys, eval_lab, rundir, folds, seed, ver
 
 
 def _featurize_and_folds(make_labeler, streams, clf, clf_kwargs, train_m, val_m, test_m,
-                         max_folds, output_path, chunk, verbose):
+                         max_folds, output_path, chunk, verbose, holdout_start='2026-01-01'):
     from pathlib import Path
     from ._memmap import memmap_standardize_stats
     rundir = (Path(output_path).parent if output_path else Path('.'))
@@ -318,41 +327,41 @@ def _featurize_and_folds(make_labeler, streams, clf, clf_kwargs, train_m, val_m,
     if clf.needs_standardize:
         mu, sd = memmap_standardize_stats(Xall)
         ck['standardize_mu'] = mu.tolist(); ck['standardize_sd'] = sd.tolist()
-    folds = _rolling_folds(ts, train_m, val_m, test_m, max_folds)
+    folds = _rolling_folds(ts, train_m, val_m, test_m, max_folds, holdout_start=holdout_start)
     if verbose:
-        print(f"[wf-stream] {len(folds)} folds (rolling {train_m}/{val_m}/{test_m}, stride {test_m})",
-              flush=True)
+        print(f"[wf-stream] {len(folds)} folds (rolling {train_m}/{val_m}/{test_m}, stride "
+              f"{test_m}); holdout {holdout_start} EXCLUDED (reserved OOS)", flush=True)
     return rundir, Xall, Y, keys, eval_lab, ck, mu, sd, folds
 
 
 def run_streamed(make_labeler, streams, classifier='mantis', clf_kwargs=None, train_m=3,
-                 val_m=1, test_m=1, max_folds=None, output_path=None, chunk=2000, seed=0,
-                 verbose=True, health_monitor=None):
+                 val_m=1, test_m=1, max_folds=None, holdout_start='2026-01-01',
+                 output_path=None, chunk=2000, seed=0, verbose=True, health_monitor=None):
     """Walk-forward over time on FULL multi-stream data, SINGLE config. Featurize once ->
-    rolling folds -> per-fold REAL/SHUFFLE/RANDOM + VAL->TEST gap + health. Overfit guards:
-    per-fold val early-stop (trainer) + VAL->TEST gap (verdict) + FoldHealthMonitor."""
+    rolling folds (holdout_start EXCLUDED = untouched OOS) -> per-fold REAL/SHUFFLE/RANDOM
+    + VAL->TEST gap + health. Overfit guards: per-fold val early-stop + gap + health."""
     clf = get_classifier(classifier, **dict(clf_kwargs or {}))
     rundir, Xall, Y, keys, eval_lab, ck, mu, sd, folds = _featurize_and_folds(
         make_labeler, streams, clf, clf_kwargs, train_m, val_m, test_m, max_folds,
-        output_path, chunk, verbose)
+        output_path, chunk, verbose, holdout_start=holdout_start)
     monitor = health_monitor or FoldHealthMonitor()
     return _run_folds(classifier, ck, Xall, Y, keys, eval_lab, rundir, folds, seed,
                       verbose, monitor)
 
 
 def loop_streamed(make_labeler, streams, classifier='mantis', clf_kwargs=None, train_m=3,
-                  val_m=1, test_m=1, max_folds=None, max_iters=2, n_trials=8,
-                  output_path=None, chunk=2000, seed=0, verbose=True):
+                  val_m=1, test_m=1, max_folds=None, holdout_start='2026-01-01', max_iters=2,
+                  n_trials=8, output_path=None, chunk=2000, seed=0, verbose=True):
     """Walk-forward + OVERFIT->OPTUNA guard (the full overfit-guarded process). Run folds
-    with defaults; if they don't generalize (VAL->TEST gap), Optuna-search a generalizing
-    (more-regularized) config on fold-0's train/val and re-run the folds; repeat until it
-    generalizes or max_iters. Featurize ONCE (overfit loop re-runs folds, not featurize)."""
+    (holdout_start EXCLUDED = untouched OOS) with defaults; if they don't generalize
+    (VAL->TEST gap), Optuna-search a generalizing config on fold-0 and re-run; repeat until
+    it generalizes or max_iters. Featurize ONCE (overfit loop re-runs folds, not featurize)."""
     from . import tune as TUNE
     from ._memmap import slice_memmap
     clf = get_classifier(classifier, **dict(clf_kwargs or {}))
     rundir, Xall, Y, keys, eval_lab, ck, mu, sd, folds = _featurize_and_folds(
         make_labeler, streams, clf, clf_kwargs, train_m, val_m, test_m, max_folds,
-        output_path, chunk, verbose)
+        output_path, chunk, verbose, holdout_start=holdout_start)
     if verbose:
         print("[wf-loop] iter 0 · default config", flush=True)
     v = _run_folds(classifier, ck, Xall, Y, keys, eval_lab, rundir, folds, seed, verbose,

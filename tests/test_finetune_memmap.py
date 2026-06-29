@@ -199,3 +199,14 @@ def test_wf_loop_streamed_overfit_guard(tmp_path):
     # the overfit->Optuna loop ran and returned a config + history
     assert 'history' in v and 'final_config' in v and v['n_folds'] >= 1
     assert v['history'][0]['source'] == 'default'
+
+
+def test_rolling_folds_excludes_holdout():
+    from futures_foundation.finetune.wf import _rolling_folds
+    ts = pd.DatetimeIndex(pd.date_range('2024-01-01', periods=900, freq='1D', tz='UTC'))
+    folds = _rolling_folds(ts, 3, 1, 1, holdout_start='2026-01-01')
+    assert len(folds) >= 1
+    cutoff = pd.Timestamp('2026-01-01', tz='UTC')
+    for tr, va, te in folds:                        # 2026 NEVER in any fold (reserved OOS)
+        for rows in (tr, va, te):
+            assert (ts[rows] < cutoff).all()
