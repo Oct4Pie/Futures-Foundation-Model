@@ -99,6 +99,7 @@ def embed_windows(windows, *, ckpt=None, model_id='paris-noah/Mantis-8M', device
     and concatenated. ckpt=None -> vanilla Mantis; ckpt=path -> the masked-adapted encoder.
     This is the head-only/cached downstream primitive: backbone frozen, embed ONCE, then a
     cheap head trains on the cache."""
+    os.environ.setdefault('PYTORCH_ENABLE_MPS_FALLBACK', '1')   # any unsupported op -> CPU
     from mantis.architecture import Mantis8M
     dev = device or ('cuda' if torch.cuda.is_available()
                      else 'mps' if torch.backends.mps.is_available() else 'cpu')
