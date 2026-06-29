@@ -58,6 +58,8 @@ def get_classifier(name, **kwargs) -> Classifier:
     if name not in _REGISTRY:
         if name == 'mantis':
             from .classifiers.mantis import MantisClassifier        # noqa: F401
+        elif name == 'mantis_frozen':
+            from .classifiers.mantis_frozen import MantisFrozenClassifier   # noqa: F401
         elif name == 'logistic':
             from .classifiers.logistic import LogisticClassifier    # noqa: F401
         else:

@@ -127,7 +127,26 @@ def test_passes_gate_on_probe_not_loss():
     assert not ssl._passes(good, std=0.001)[0]
 
 
+def test_mantis_frozen_head_fit_predict():
+    # the head-only path: a cheap head trains on (already-embedded) features; backbone frozen
+    from futures_foundation.finetune.classifier import get_classifier
+    rng = np.random.default_rng(0)
+    y = rng.integers(0, 2, 400)
+    X = rng.standard_normal((400, 32)).astype(np.float32)
+    X[y == 1, 0] += 3.0                                              # separable
+    clf = get_classifier('mantis_frozen', head='logistic')
+    pv, pe, auc = clf.fit_predict(X[:300], y[:300], X[300:], y[300:], X[300:], seed=0)
+    assert auc > 0.9 and len(pv) == 100 and len(pe) == 100
+
+
 # ------------------------------------------------------------- masked-modeling trainer (gated)
+@torch_test
+def test_embed_windows_frozen():
+    import numpy as _np
+    from futures_foundation.finetune import _ssl_torch as S
+    W = _np.random.default_rng(0).standard_normal((6, 5, 64)).astype(_np.float32)
+    emb = S.embed_windows(W, ckpt=None, device='cpu')               # vanilla, encoder-only
+    assert emb.shape[0] == 6 and emb.shape[1] > 0 and _np.isfinite(emb).all()
 @torch_test
 def test_mask_network_and_trainer(tmp_path):
     import torch

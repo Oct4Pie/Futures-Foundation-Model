@@ -91,6 +91,30 @@ def embed_encoder(big, starts, seq, *, ckpt=None, model_id='paris-noah/Mantis-8M
     return np.concatenate(out) if out else np.zeros((0, 0), np.float32), s
 
 
+@torch.no_grad()
+def embed_windows(windows, *, ckpt=None, model_id='paris-noah/Mantis-8M', device=None,
+                  batch=512):
+    """Frozen ENCODER-ONLY embeddings of pre-extracted windows [N, C, seq] -> [N, C*hidden].
+    Each channel is per-window standardized, interpolated to Mantis's native length, encoded,
+    and concatenated. ckpt=None -> vanilla Mantis; ckpt=path -> the masked-adapted encoder.
+    This is the head-only/cached downstream primitive: backbone frozen, embed ONCE, then a
+    cheap head trains on the cache."""
+    from mantis.architecture import Mantis8M
+    dev = device or ('cuda' if torch.cuda.is_available()
+                     else 'mps' if torch.backends.mps.is_available() else 'cpu')
+    enc = Mantis8M.from_pretrained(model_id)
+    if ckpt:
+        enc.load_state_dict(torch.load(ckpt, map_location='cpu'))
+    enc = enc.to(dev).eval()
+    X = torch.as_tensor(np.asarray(windows, np.float32))
+    out = []
+    for b in range(0, len(X), batch):
+        w = _standardize(X[b:b + batch].to(dev))
+        emb = torch.cat([_enc(enc, w[:, [i], :]) for i in range(w.shape[1])], dim=-1)
+        out.append(emb.float().cpu().numpy())
+    return np.concatenate(out) if out else np.zeros((0, 0), np.float32)
+
+
 # ============================================================ MASKED MODELING (BERT pretext)
 class MaskNetwork(nn.Module):
     """Mantis encoder + channel adapter + a light reconstruction decoder. Masked OHLCV bars

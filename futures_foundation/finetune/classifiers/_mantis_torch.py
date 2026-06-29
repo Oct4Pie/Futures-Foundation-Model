@@ -22,6 +22,26 @@ from sklearn.metrics import roc_auc_score
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+
+
+class _InterpNet(nn.Module):
+    """Interpolate the input window to the encoder's native seq_len (512) before the Mantis
+    FineTuningNetwork, so the (SSL-adapted) encoder ALWAYS sees its pretrained patch size
+    (512/num_patches = 16) — exactly how masked-SSL fed it. Without this a short strategy
+    window gives a different patch size and the SSL backbone won't transfer. Interp (time
+    axis) commutes with the channel-combiner (channel axis), so input-side interp is
+    equivalent to SSL's per-channel interp."""
+
+    def __init__(self, model, seq_len):
+        super().__init__()
+        self.model = model
+        self.seq_len = int(seq_len)
+
+    def forward(self, x):
+        if x.shape[-1] != self.seq_len:
+            x = F.interpolate(x, size=self.seq_len, mode='linear', align_corners=False)
+        return self.model(x)
 
 
 def build_model(C, *, new_channels=10, ft_mode='partial', unfreeze_blocks=2,
