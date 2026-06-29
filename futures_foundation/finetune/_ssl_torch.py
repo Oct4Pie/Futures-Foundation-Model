@@ -140,8 +140,8 @@ def nt_xent(z1, z2, temp=0.2):
     """SimCLR NT-Xent over a batch. z1,z2: [B, D] L2-normalized."""
     B = z1.shape[0]
     z = torch.cat([z1, z2], 0)                           # [2B, D]
-    sim = (z @ z.t()) / temp                             # [2B, 2B]
-    sim.fill_diagonal_(-1e9)                             # mask self
+    sim = (z @ z.t()).float() / temp                     # fp32: stable + no fp16 overflow
+    sim.fill_diagonal_(-1e9)                             # mask self (fits fp32)
     targets = torch.cat([torch.arange(B, 2 * B), torch.arange(0, B)]).to(z.device)
     return F.cross_entropy(sim, targets)
 
@@ -151,6 +151,7 @@ def collapse_metrics(z1, z2):
     """Representation-collapse diagnostics (the contrastive 'overfit'/degeneracy):
     embed std (->0 = collapse), alignment (positives close, lower=better), uniformity
     (Wang&Isola, lower=more spread). Returns dict of floats."""
+    z1, z2 = z1.float(), z2.float()                      # fp32 (pdist/std unstable in fp16)
     z = torch.cat([z1, z2], 0)
     std = z.std(0).mean().item()
     align = (z1 - z2).pow(2).sum(1).mean().item()
@@ -198,7 +199,7 @@ def train_ssl(big, train_starts, val_starts, *, seq=64, max_jitter=8, new_channe
     opt = torch.optim.AdamW([p for p in net.parameters() if p.requires_grad],
                             lr=lr, weight_decay=weight_decay)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs)
-    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+    scaler = torch.amp.GradScaler('cuda', enabled=use_amp)
     amp_ctx = (lambda: torch.autocast('cuda', dtype=torch.float16)) if use_amp \
         else _nullctx
 
