@@ -220,16 +220,19 @@ def _rolling_folds(ts, train_m=3, val_m=1, test_m=1, max_folds=None, holdout_sta
                        freq='M')
         months = months[months < hs]          # 2026+ never in any fold
     span = train_m + val_m + test_m
-    folds, s = [], 0
-    while s + span <= len(months):
+    starts = list(range(0, len(months) - span + 1, test_m))    # every 3/1/1 window (stride)
+    if max_folds and len(starts) > max_folds:
+        # SPACE max_folds evenly across ALL years (not the first N) — each fold is still a
+        # true train_m/val_m/test_m window; the start points are spread over the full range.
+        sel = np.linspace(0, len(starts) - 1, max_folds).round().astype(int)
+        starts = [starts[i] for i in dict.fromkeys(sel.tolist())]
+    folds = []
+    for s in starts:
         tr = np.flatnonzero(perM.isin(months[s:s + train_m]))
         va = np.flatnonzero(perM.isin(months[s + train_m:s + train_m + val_m]))
         te = np.flatnonzero(perM.isin(months[s + train_m + val_m:s + span]))
         if len(tr) >= 50 and len(va) >= 10 and len(te) >= 10:
             folds.append((tr, va, te))
-        s += test_m
-        if max_folds and len(folds) >= max_folds:
-            break
     return folds
 
 
