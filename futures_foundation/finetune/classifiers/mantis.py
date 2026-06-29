@@ -33,7 +33,7 @@ class MantisClassifier(Classifier):
     def fit_predict(self, Xtr, ytr, Xval, yval, Xeval, seed=0):
         cfg = dict(self.cfg)
         log_path = cfg.pop('log_path', None)        # parent-side only (not a trainer arg)
-        cmd = [sys.executable, '-m', 'futures_foundation.finetune.classifiers._worker']
+        cmd = [sys.executable, '-u', '-m', 'futures_foundation.finetune.classifiers._worker']
         with tempfile.TemporaryDirectory() as d:
             d = Path(d)
             np.save(d / 'ytr.npy', np.asarray(ytr))      # small: always to tempdir
