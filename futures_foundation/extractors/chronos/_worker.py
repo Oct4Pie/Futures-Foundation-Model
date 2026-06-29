@@ -73,8 +73,12 @@ def main(inp, outp, batch, pool='mean', locscale_out=None):
                 v = emb[:, -1, :]
             elif pool == 'meanreg':
                 v = torch.cat([emb.mean(1), emb[:, -1, :]], dim=-1)
+            elif pool == 'seq':
+                # ALL per-patch tokens flattened [B, n_tokens*d_model] — preserves
+                # the time axis (research/A/B; reshape downstream to [B,T,D]).
+                v = emb.reshape(emb.shape[0], -1)
             else:
-                raise ValueError(f"pool {pool!r} not in mean|reg|meanreg")
+                raise ValueError(f"pool {pool!r} not in mean|reg|meanreg|seq")
             if os.environ.get('CHRONOS_POOL_LOCSCALE') == '1':
                 # append bolt's own loc+scale (instance-norm de-norm terms) ->
                 # +2 dims, restoring level/vol. Must match the FT pool.
