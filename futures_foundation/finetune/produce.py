@@ -10,6 +10,10 @@ Two-step, same as the Chronos process:
 
 Classifier-agnostic (Mantis/logistic/future backbones via the Classifier seam).
 """
+import hashlib
+import json
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 
@@ -18,8 +22,52 @@ from .wf import (_pct_threshold, _arm_R, _meanR, _standardize_on_train,
                  OP_PERCENTILE, PASS_LIFT_MARGIN_R)
 
 
+def _write_artifacts(labeler, classifier, clf_kwargs, Xtr, ytr, Xval, yval, Xte,
+                     mu, sd, out, output_path, holdout_start, n_train, n_oos, seed):
+    """Export the final model to ONNX and write the self-describing signal contract
+    `<base>_signal.json` next to it (mirrors pipeline.produce's signal contract). The
+    contract tells the bot how to reproduce the input (channel features + standardize
+    stats) and validate integrity (sha) before serving the ONNX."""
+    base = Path(output_path).with_suffix('')
+    onnx_path = str(base) + '.onnx'
+    # final export fit (trains + exports inside the isolated worker, if supported)
+    clf_exp = get_classifier(classifier, **dict(clf_kwargs or {}, export_onnx_path=onnx_path))
+    clf_exp.fit_predict(Xtr, ytr, Xval, yval, Xte, seed)
+    sha = (hashlib.sha256(Path(onnx_path).read_bytes()).hexdigest()
+           if Path(onnx_path).exists() else None)
+    tfs = sorted({k[1] for k in getattr(labeler, '_b', {})}) or None
+    tks = sorted({k[0] for k in getattr(labeler, '_b', {})}) or None
+    contract = {
+        'contract_version': '1.0',
+        'role': 'mantis_signal',
+        'classifier': classifier,
+        'input': {'channels': int(Xtr.shape[1]), 'seq_len': int(Xtr.shape[2]),
+                  'mv_mode': getattr(labeler, 'MV_MODE', None)},
+        'channel_names': (labeler.mv_feature_names()
+                          if hasattr(labeler, 'mv_feature_names') else None),
+        'standardize': ({'mu': np.asarray(mu).tolist(), 'sd': np.asarray(sd).tolist()}
+                        if mu is not None else None),
+        'mv_contexts_fn': 'strategy.mv_contexts (direction-normalized causal window)',
+        'nan_policy': {'posinf': 0, 'neginf': 0, 'nan': 0},
+        'ft_config': dict(clf_kwargs or {}),
+        'n_classes': 2,
+        'proba_meaning': 'P(good trend pivot reaches target before stop)',
+        'output_fn': 'softmax(logits)[:,1]',
+        'train_scope': {'tickers': tks, 'timeframes': tfs, 'holdout_start': holdout_start,
+                        'n_train': int(n_train), 'n_oos': int(n_oos)},
+        'oos_metrics': {k: out.get(k) for k in
+                        ('oos_auc', 'oos_meanR', 'shuffle_meanR', 'edge_shuffle', 'oos_trades')},
+        'onnx': (Path(onnx_path).name if sha else None),
+        'content_sha': sha,
+    }
+    cpath = str(base) + '_signal.json'
+    Path(cpath).write_text(json.dumps(contract, indent=2))
+    return {'onnx': onnx_path if sha else None, 'contract': cpath, 'content_sha': sha}
+
+
 def train_final(labeler, classifier='mantis', clf_kwargs=None, holdout_start='2026-01-01',
-                val_frac=0.15, seed=0, max_train=None, verbose=True):
+                val_frac=0.15, seed=0, max_train=None, export_onnx=False,
+                output_path=None, verbose=True):
     clf = get_classifier(classifier, **dict(clf_kwargs or {}))
     hs = pd.Timestamp(holdout_start, tz='UTC')
     cal = labeler.calendar()
@@ -44,8 +92,9 @@ def train_final(labeler, classifier='mantis', clf_kwargs=None, holdout_start='20
     Xtr = clf.featurize(labeler, Ktr_tr)
     Xval = clf.featurize(labeler, Ktr_va)
     Xte = clf.featurize(labeler, Kte)
+    mu = sd = None
     if clf.needs_standardize:
-        Xtr, Xval, Xte = _standardize_on_train(Xtr, Xval, Xte)
+        Xtr, Xval, Xte, mu, sd = _standardize_on_train(Xtr, Xval, Xte)
     if verbose:
         print(f"=== PRODUCE ({classifier}: train < {holdout_start}, 2026 OOS) ===")
         print(f"  train={len(tr_i)} val={len(va_i)} oos={len(Kte)} X={tuple(Xtr.shape[1:])} "
@@ -71,4 +120,11 @@ def train_final(labeler, classifier='mantis', clf_kwargs=None, holdout_start='20
         print(f"  OOS meanR REAL {out['oos_meanR']:+.3f} SHUFFLE {out['shuffle_meanR']:+.3f} "
               f"edge {edge:+.3f} (trades={out['oos_trades']})")
         print(f"  -> {'beats SHUFFLE' if out['beats_shuffle'] else 'does NOT beat SHUFFLE'}")
+    if export_onnx and output_path:
+        out['artifacts'] = _write_artifacts(labeler, classifier, clf_kwargs, Xtr, Ytr_tr,
+                                            Xval, Ytr_va, Xte, mu, sd, out, output_path,
+                                            holdout_start, len(tr_i), len(Kte), seed)
+        if verbose:
+            print(f"  artifacts: onnx={out['artifacts']['onnx']} "
+                  f"contract={out['artifacts']['contract']}")
     return out

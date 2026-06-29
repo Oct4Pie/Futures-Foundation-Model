@@ -40,10 +40,23 @@ def build_model(C, *, new_channels=10, ft_mode='partial', unfreeze_blocks=2,
     return model, new_c
 
 
+def export_model_onnx(model, C, seq, path, device='cpu'):
+    """Export the fitted FineTuningNetwork (adapter+backbone+head) to ONNX. Input is
+    a standardized window [batch, C, seq]; output logits [batch, 2]. The serve path
+    builds the window via the labeler's mv_contexts + standardizes with the contract's
+    mu/sd, then softmax over the logits for P(class 1)."""
+    model.eval()
+    dummy = torch.zeros(1, C, seq, device=device)
+    torch.onnx.export(model, dummy, path, input_names=['window'], output_names=['logits'],
+                      dynamic_axes={'window': {0: 'batch'}, 'logits': {0: 'batch'}},
+                      opset_version=17)
+    return path
+
+
 def fit_predict_torch(Xtr, ytr, Xval, yval, Xeval, *, new_channels=10, ft_mode='partial',
                       unfreeze_blocks=2, epochs=40, batch=64, lr=3e-4, weight_decay=0.05,
                       patience=10, threads=2, device=None, model_id='paris-noah/Mantis-8M',
-                      max_train=None, seed=0, verbose=True):
+                      max_train=None, seed=0, export_onnx_path=None, verbose=True):
     """Returns (p_val, p_eval, best_val_auc, best_epoch). p_* are P(class 1)."""
     os.environ.setdefault('PYTORCH_ENABLE_MPS_FALLBACK', '1')
     torch.set_num_threads(int(threads))
@@ -98,6 +111,8 @@ def fit_predict_torch(Xtr, ytr, Xval, yval, Xeval, *, new_channels=10, ft_mode='
             break
     if best_state:
         model.load_state_dict(best_state)
+    if export_onnx_path:
+        export_model_onnx(model, C, Xtr.shape[2], export_onnx_path, device=dev)
     p_val = pred(model, Xva_t)
     p_eval = pred(model, torch.tensor(np.asarray(Xeval, np.float32), device=dev))
     return p_val, p_eval, float(best), int(best_epoch)

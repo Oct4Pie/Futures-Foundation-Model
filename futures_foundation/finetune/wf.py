@@ -42,13 +42,15 @@ def _arm_R(labeler, keys, proba, thr):
 
 
 def _standardize_on_train(Xtr, Xval, Xeval):
-    """Per-channel standardize [N,C,seq] on TRAIN stats only (no leak)."""
+    """Per-channel standardize [N,C,seq] on TRAIN stats only (no leak).
+    Returns (Xtr, Xval, Xeval, mu, sd) — mu/sd are the per-channel train stats the
+    serve path (ONNX consumer) must reproduce."""
     C = Xtr.shape[1]
     flat = Xtr.transpose(0, 2, 1).reshape(-1, C)
     mu, sd = flat.mean(0), flat.std(0) + 1e-6
     def s(A):
         return ((A - mu[None, :, None]) / sd[None, :, None]).astype(np.float32)
-    return s(Xtr), s(Xval), s(Xeval)
+    return s(Xtr), s(Xval), s(Xeval), mu, sd
 
 
 def _health_metrics(p_te, Yte, p_val, Yval, thr=0.80):
@@ -87,7 +89,7 @@ def run(labeler, classifier='mantis', clf_kwargs=None, seeds=(0,), train_m=3, va
         Xval = clf.featurize(labeler, Kval)
         Xte = clf.featurize(labeler, Kte)
         if clf.needs_standardize:
-            Xtr, Xval, Xte = _standardize_on_train(Xtr, Xval, Xte)
+            Xtr, Xval, Xte, _, _ = _standardize_on_train(Xtr, Xval, Xte)
         n_folds += 1
         if verbose:
             print(f"\n[fold {fold}] train={len(Ytr)} val={len(Yval)} test={len(Yte)} "

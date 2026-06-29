@@ -32,7 +32,7 @@ def _first_fold_arrays(labeler, classifier, clf_kwargs, train_m, val_m, test_m, 
         Xtr = clf.featurize(labeler, Ktr)
         Xval = clf.featurize(labeler, Kval)
         if clf.needs_standardize:
-            Xtr, Xval, _ = wf._standardize_on_train(Xtr, Xval, Xval)
+            Xtr, Xval, _, _, _ = wf._standardize_on_train(Xtr, Xval, Xval)
         return Xtr, Ytr, Xval, Yval
     return None
 
