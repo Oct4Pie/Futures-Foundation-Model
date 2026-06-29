@@ -91,6 +91,31 @@ def test_in_proj_raw_feature_sequence():
     assert roc_auc_score(Y[~tr], p[~tr]) > 0.8
 
 
+# ---- axial adapter: cross-feature + temporal, detects a FEATURE LIFE-CYCLE ----
+@torch_test
+def test_axial_adapter_lifecycle():
+    import torch
+    from sklearn.metrics import roc_auc_score
+    from futures_foundation.extractors.chronos.shape_adapter import (
+        AxialShapeAdapter, fit_and_infer)
+    m = AxialShapeAdapter(T=20, F=9, d=32, depth=1, heads=2)
+    logits, _ = m(torch.randn(6, 20, 9))
+    assert logits.shape == (6, 2)
+    z, lg = m.encode(torch.randn(6, 20, 9))
+    assert z.shape == (6, 64)                     # 2*d: time stream ++ feature stream
+    # learns a FEATURE LIFE-CYCLE: feature 2 GROWS over the window -> class 1
+    rng = np.random.default_rng(0)
+    N, T, Fdim = 500, 20, 9
+    Y = rng.integers(0, 2, N)
+    X = rng.standard_normal((N, T, Fdim)).astype(np.float32)
+    X[Y == 1, :, 2] += np.linspace(0, 2, T)[None, :]
+    tr = np.zeros(N, bool); tr[:340] = True
+    p, c, va = fit_and_infer(X, Y, tr, epochs=40, device='cpu', proj_dim=32,
+                             arch='axial', depth=1, heads=2)
+    assert c.shape == (N, 64)
+    assert roc_auc_score(Y[~tr], p[~tr]) > 0.8   # sees the growing feature's life-cycle
+
+
 # ---- pipeline: OOF-stacked adapter feature (leak-safe) + val/test monitor --
 @torch_test
 def test_oof_adapter_feature():

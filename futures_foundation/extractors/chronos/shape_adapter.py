@@ -86,9 +86,66 @@ class ShapeAwareAdapter(nn.Module):
         return logits, loss
 
 
+class AxialShapeAdapter(nn.Module):
+    """Cross-feature + temporal progression learner (for RAW per-bar feature seqs).
+    Input x: [B, T, F]. Two streams fused into the class representation:
+      TIME    — per-bar tokens (Linear F->d) + positional enc + self-attention
+                -> learns the temporal pattern (how the blended state evolves).
+      FEATURE — each FEATURE's whole time-series as a token (Linear T->d) + self-
+                attention -> learns how each field PROGRESSES and how fields develop
+                TOGETHER (mom contracts WHILE vol dries) — the cross-feature axis the
+                plain Linear+time adapter cannot represent.
+    encode(x) -> (cls [B, 2d], logits)."""
+
+    def __init__(self, T, F, d=64, depth=2, heads=4, mlp=256, n_classes=2,
+                 dropout=0.1, proto=False, proto_dim=128, proto_alpha=0.3,
+                 proto_temp=0.1):
+        super().__init__()
+        self.time_proj = nn.Linear(F, d)
+        self.feat_proj = nn.Linear(T, d)
+        self.cls_t = nn.Parameter(torch.randn(d) * 0.02)
+        self.cls_f = nn.Parameter(torch.randn(d) * 0.02)
+        self.pos_t = PositionalEncoding(d, max_len=T + 1)
+        mk = lambda: nn.TransformerEncoder(
+            nn.TransformerEncoderLayer(d, heads, mlp, dropout, batch_first=True), depth)
+        self.tr_t, self.tr_f = mk(), mk()
+        self.head = nn.Sequential(
+            nn.Linear(2 * d, 256), nn.BatchNorm1d(256), nn.ReLU(),
+            nn.Dropout(dropout), nn.Linear(256, n_classes))
+        self.proto = proto
+        if proto:
+            self.proto_proj = nn.Linear(2 * d, proto_dim)
+            self.centers = nn.Parameter(torch.randn(n_classes, proto_dim) * 0.02)
+            self.proto_alpha, self.proto_temp = proto_alpha, proto_temp
+
+    def encode(self, x):                         # x: [B, T, F]
+        b = x.shape[0]
+        t = self.pos_t(torch.cat([self.cls_t.expand(b, 1, -1),
+                                  self.time_proj(x)], dim=1))      # time tokens
+        clst = self.tr_t(t)[:, 0]
+        f = torch.cat([self.cls_f.expand(b, 1, -1),
+                       self.feat_proj(x.transpose(1, 2))], dim=1)  # feature tokens
+        clsf = self.tr_f(f)[:, 0]                                  # (features unordered: no pos)
+        z = torch.cat([clst, clsf], dim=-1)
+        return z, self.head(z)
+
+    def forward(self, x, labels=None):
+        z, logits = self.encode(x)
+        loss = None
+        if labels is not None:
+            loss = F.cross_entropy(logits, labels)
+            if self.proto:
+                zp = F.normalize(self.proto_proj(z), dim=-1)
+                c = F.normalize(self.centers, dim=-1)
+                loss = loss + self.proto_alpha * F.cross_entropy(
+                    (zp @ c.T) / self.proto_temp, labels)
+        return logits, loss
+
+
 def fit_and_infer(tokens, y, train_mask, *, depth=2, heads=4, mlp=512, epochs=80,
                   device='cpu', proto=False, lr=2e-3, weight_decay=1e-4,
-                  batch_size=512, seed=0, proj_dim=None, val_frac=0.15, patience=10):
+                  batch_size=512, seed=0, proj_dim=None, val_frac=0.15, patience=10,
+                  arch='shape'):
     """Train a ShapeAwareAdapter with OVERFIT GUARDS; return (probs[N], cls[N,work_d],
     val_auc). An inner train/val split is carved off train_mask:
       - EARLY STOPPING on val AUC (patience) + restore best-val weights
@@ -120,9 +177,14 @@ def fit_and_infer(tokens, y, train_mask, *, depth=2, heads=4, mlp=512, epochs=80
     dl = DataLoader(TensorDataset(Xt[in_idx], Yt[in_idx]), batch_size=batch_size,
                     sampler=sampler)
     work_d = int(proj_dim) if proj_dim else X.shape[2]
-    in_dim = X.shape[2] if proj_dim else None
-    model = ShapeAwareAdapter(d=work_d, in_dim=in_dim, n_tokens=X.shape[1], depth=depth,
-                              heads=heads, mlp=mlp, n_classes=2, proto=proto).to(dev)
+    if arch == 'axial':                          # cross-feature + temporal streams
+        model = AxialShapeAdapter(T=X.shape[1], F=X.shape[2], d=work_d, depth=depth,
+                                  heads=heads, mlp=mlp, n_classes=2, proto=proto).to(dev)
+    else:
+        in_dim = X.shape[2] if proj_dim else None
+        model = ShapeAwareAdapter(d=work_d, in_dim=in_dim, n_tokens=X.shape[1],
+                                  depth=depth, heads=heads, mlp=mlp, n_classes=2,
+                                  proto=proto).to(dev)
     opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
     sched = torch.optim.lr_scheduler.ReduceLROnPlateau(
         opt, mode='max', factor=0.5, patience=max(2, patience // 3))
@@ -177,10 +239,11 @@ def _main(argv):
     lr = float(os.environ.get('ADAPTER_LR', '2e-3'))
     patience = int(os.environ.get('ADAPTER_PATIENCE', '10'))
     val_frac = float(os.environ.get('ADAPTER_VAL_FRAC', '0.15'))
+    arch = os.environ.get('ADAPTER_ARCH', 'shape')             # 'shape' | 'axial'
     probs, cls, val_auc = fit_and_infer(np.load(tok_p), np.load(y_p), np.load(tr_p),
                                         device=device, epochs=epochs, proj_dim=proj,
                                         proto=proto, lr=lr, patience=patience,
-                                        val_frac=val_frac)
+                                        val_frac=val_frac, arch=arch)
     np.save(out_prefix + '_probs.npy', probs)
     np.save(out_prefix + '_cls.npy', cls)
     np.save(out_prefix + '_valauc.npy', np.array([val_auc], np.float32))
