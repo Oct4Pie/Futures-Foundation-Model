@@ -55,7 +55,7 @@ class ShapeAwareAdapter(nn.Module):
         layer = nn.TransformerEncoderLayer(d, heads, mlp, dropout, batch_first=True)
         self.tr = nn.TransformerEncoder(layer, depth)
         self.head = nn.Sequential(
-            nn.Linear(d, 256), nn.BatchNorm1d(256), nn.ReLU(),
+            nn.Linear(d, 256), nn.LayerNorm(256), nn.ReLU(),
             nn.Dropout(dropout), nn.Linear(256, n_classes))
         self.proto = proto
         if proto:
@@ -110,7 +110,7 @@ class AxialShapeAdapter(nn.Module):
             nn.TransformerEncoderLayer(d, heads, mlp, dropout, batch_first=True), depth)
         self.tr_t, self.tr_f = mk(), mk()
         self.head = nn.Sequential(
-            nn.Linear(2 * d, 256), nn.BatchNorm1d(256), nn.ReLU(),
+            nn.Linear(2 * d, 256), nn.LayerNorm(256), nn.ReLU(),
             nn.Dropout(dropout), nn.Linear(256, n_classes))
         self.proto = proto
         if proto:
