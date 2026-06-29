@@ -44,8 +44,12 @@ class ShapeAwareAdapter(nn.Module):
 
     def __init__(self, d=256, n_tokens=9, depth=2, heads=4, mlp=512, n_classes=2,
                  dropout=0.1, proto=True, proto_dim=128, proto_alpha=0.3,
-                 proto_temp=0.1):
+                 proto_temp=0.1, in_dim=None):
         super().__init__()
+        # optional input projection: lets the adapter run on RAW per-bar feature
+        # sequences (e.g. handcraft features over time, in_dim=k) -> work dim d,
+        # not just pretrained tokens (in_dim=None -> tokens already at d).
+        self.in_proj = nn.Linear(in_dim, d) if in_dim else None
         self.cls = nn.Parameter(torch.randn(d) * 0.02)
         self.pos = PositionalEncoding(d, max_len=n_tokens + 1)
         layer = nn.TransformerEncoderLayer(d, heads, mlp, dropout, batch_first=True)
@@ -59,7 +63,9 @@ class ShapeAwareAdapter(nn.Module):
             self.centers = nn.Parameter(torch.randn(n_classes, proto_dim) * 0.02)
             self.proto_alpha, self.proto_temp = proto_alpha, proto_temp
 
-    def encode(self, x):                         # x: [B, T, d] -> (cls_emb, logits)
+    def encode(self, x):                         # x: [B, T, d_in] -> (cls_emb, logits)
+        if self.in_proj is not None:             # raw feature seq -> work dim
+            x = self.in_proj(x)
         b = x.shape[0]
         cls = self.cls.unsqueeze(0).expand(b, 1, -1)
         h = self.pos(torch.cat([cls, x], dim=1))
@@ -82,10 +88,12 @@ class ShapeAwareAdapter(nn.Module):
 
 def fit_and_infer(tokens, y, train_mask, *, depth=2, heads=4, mlp=512, epochs=40,
                   device='cpu', proto=True, lr=1e-3, weight_decay=1e-4,
-                  batch_size=512, seed=0):
-    """Train a ShapeAwareAdapter on the train split; return (probs[N], cls[N, d]).
+                  batch_size=512, seed=0, proj_dim=None):
+    """Train a ShapeAwareAdapter on the train split; return (probs[N], cls[N, work_d]).
     Backbone-agnostic: tokens [N, T, d] float, y [N] in {0,1}, train_mask [N] bool.
-    Minority class oversampled. Inference (probs + learned shape-embedding) for ALL N."""
+    proj_dim: if set, project each timestep d -> proj_dim (use for RAW per-bar
+    feature sequences, e.g. all handcraft features over time); None -> tokens are
+    already at the work dim (pretrained tokens). Minority class oversampled."""
     from torch.utils.data import TensorDataset, DataLoader, WeightedRandomSampler
     torch.manual_seed(seed)
     X = np.asarray(tokens, np.float32)
@@ -100,7 +108,9 @@ def fit_and_infer(tokens, y, train_mask, *, depth=2, heads=4, mlp=512, epochs=40
     sampler = WeightedRandomSampler(torch.tensor(w, dtype=torch.double), len(w),
                                     replacement=True)
     dl = DataLoader(TensorDataset(Xt[tr], Yt[tr]), batch_size=batch_size, sampler=sampler)
-    model = ShapeAwareAdapter(d=X.shape[2], n_tokens=X.shape[1], depth=depth,
+    work_d = int(proj_dim) if proj_dim else X.shape[2]
+    in_dim = X.shape[2] if proj_dim else None
+    model = ShapeAwareAdapter(d=work_d, in_dim=in_dim, n_tokens=X.shape[1], depth=depth,
                               heads=heads, mlp=mlp, n_classes=2, proto=proto).to(dev)
     opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
     for ep in range(int(epochs)):
@@ -129,11 +139,13 @@ def fit_and_infer(tokens, y, train_mask, *, depth=2, heads=4, mlp=512, epochs=40
 def _main(argv):
     """Subprocess worker: TOKENS.npy Y.npy TRAINMASK.npy OUT_PREFIX [device] [epochs].
     Writes OUT_PREFIX_probs.npy [N] + OUT_PREFIX_cls.npy [N, d]."""
+    import os
     tok_p, y_p, tr_p, out_prefix = argv[:4]
     device = argv[4] if len(argv) > 4 else 'cpu'
     epochs = int(argv[5]) if len(argv) > 5 else 40
+    proj = int(os.environ.get('ADAPTER_PROJ', '0')) or None    # raw-seq projection dim
     probs, cls = fit_and_infer(np.load(tok_p), np.load(y_p), np.load(tr_p),
-                               device=device, epochs=epochs)
+                               device=device, epochs=epochs, proj_dim=proj)
     np.save(out_prefix + '_probs.npy', probs)
     np.save(out_prefix + '_cls.npy', cls)
     print(f"[shape_adapter] done: probs {probs.shape} cls {cls.shape}",

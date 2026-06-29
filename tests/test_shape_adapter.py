@@ -65,6 +65,29 @@ def test_bolt_token_shape():
     assert logits.shape == (4, 2)
 
 
+# ---- in_proj: ingest RAW per-bar feature sequences (handcraft over time) ---
+@torch_test
+def test_in_proj_raw_feature_sequence():
+    import torch
+    from futures_foundation.extractors.chronos.shape_adapter import (
+        ShapeAwareAdapter, fit_and_infer)
+    m = ShapeAwareAdapter(d=32, in_dim=10, n_tokens=20, depth=1, heads=2)
+    logits, _ = m(torch.randn(6, 20, 10))        # raw [B, T, in_dim] -> projected
+    assert logits.shape == (6, 2)
+    # fit_and_infer with proj_dim learns a separable raw-feature-seq pattern
+    from sklearn.metrics import roc_auc_score
+    rng = np.random.default_rng(0)
+    N, T, k = 400, 12, 10
+    Y = rng.integers(0, 2, N)
+    X = rng.standard_normal((N, T, k)).astype(np.float32)
+    X[Y == 1, -1, 0] += 2.0                       # class-1 signal in a feature/bar
+    tr = np.zeros(N, bool); tr[:280] = True
+    p, c = fit_and_infer(X, Y, tr, epochs=20, device='cpu', proj_dim=16,
+                         depth=1, heads=2)
+    assert c.shape == (N, 16)
+    assert roc_auc_score(Y[~tr], p[~tr]) > 0.7
+
+
 # ---- fit_and_infer LEARNS a separable shape (end-to-end) ------------------
 @torch_test
 def test_fit_and_infer_learns_separable_shape():
