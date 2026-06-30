@@ -58,6 +58,50 @@ def _embed_cache_path(cfg, labeler, keys):
     return cache_dir / f"{tk}_{tf}_{h.hexdigest()[:16]}.npy"
 
 
+def export_head_onnx(clf, n_features, path):
+    """Convert the fitted sklearn head (logistic/MLP) to ONNX: input [N, n_features] standardized
+    [emb|handcraft] -> probabilities [N, 2]. zipmap off so the proba output is a plain array."""
+    from skl2onnx import convert_sklearn
+    from skl2onnx.common.data_types import FloatTensorType
+    onx = convert_sklearn(clf, initial_types=[('input', FloatTensorType([None, int(n_features)]))],
+                          options={id(clf): {'zipmap': False}}, target_opset=15)
+    Path(path).write_bytes(onx.SerializeToString())
+    return path
+
+
+def _export_frozen_bundle(cfg, clf, n_features, Xval_std):
+    """Deployable ONNX bundle in the incumbent format: <base>_encoder.onnx (raw OHLCV window ->
+    Mantis embedding) + <base>_signal_head.onnx (standardized [emb|handcraft] -> P). The encoder
+    runs in the isolated subprocess (parent stays torch-free); the head converts via skl2onnx
+    in-process. Head output is parity-checked vs the sklearn head. Bot serves: window ->
+    encoder.onnx -> concat handcraft -> standardize (contract mu/sd) -> head.onnx -> P."""
+    base = str(cfg['export_onnx_path'])
+    if base.endswith('.onnx'):
+        base = base[:-5]
+    head_path, enc_path = base + '_signal_head.onnx', base + '_encoder.onnx'
+    export_head_onnx(clf, n_features, head_path)
+    ecfg = dict(_export_encoder=enc_path, ckpt=cfg.get('backbone_ckpt'),
+                C=int(cfg.get('raw_C', 5)), seq=int(cfg.get('raw_seq', 64)),
+                model_id=cfg.get('model_id', 'paris-noah/Mantis-8M'))
+    cmd = [sys.executable, '-u', '-m', 'futures_foundation.finetune.classifiers._embed_worker']
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d); (d / 'cfg.json').write_text(json.dumps(ecfg))
+        r = subprocess.run(cmd + [str(d)], capture_output=True, text=True)
+        if r.returncode != 0:
+            raise RuntimeError(f"encoder onnx export failed:\n{r.stderr[-2000:]}")
+    diff = -1.0
+    try:                                              # parity: onnx head vs sklearn head
+        import onnxruntime as ort
+        sess = ort.InferenceSession(head_path, providers=['CPUExecutionProvider'])
+        outs = sess.run(None, {'input': np.asarray(Xval_std, np.float32)})
+        proba = [o for o in outs if getattr(o, 'ndim', 0) == 2 and o.shape[1] == 2][0]
+        diff = float(np.abs(clf.predict_proba(Xval_std)[:, 1] - proba[:, 1]).max())
+    except Exception as e:                            # pragma: no cover
+        print(f"[onnx] head parity check skipped: {e}", flush=True)
+    print(f"[onnx] wrote {enc_path} + {head_path}  head-parity max|diff|={diff:.2e}", flush=True)
+    return enc_path, head_path
+
+
 @register_classifier('mantis_frozen')
 class MantisFrozenClassifier(Classifier):
     needs_standardize = True            # harness standardizes the cached embeddings on train
@@ -121,6 +165,8 @@ class MantisFrozenClassifier(Classifier):
         else:
             clf = LogisticRegression(max_iter=1000, C=float(self.cfg.get('C', 1.0)))
         clf.fit(Xtr, ytr)
+        if self.cfg.get('export_onnx_path'):          # deployable bundle: encoder + head ONNX
+            _export_frozen_bundle(self.cfg, clf, Xtr.shape[1], Xval)
         p_val = clf.predict_proba(Xval)[:, 1]
         p_eval = clf.predict_proba(Xeval)[:, 1]
         auc = roc_auc_score(yval, p_val) if len(np.unique(yval)) == 2 else 0.5

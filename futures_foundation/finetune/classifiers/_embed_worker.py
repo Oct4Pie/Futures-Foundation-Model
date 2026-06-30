@@ -15,6 +15,12 @@ import numpy as np
 def main(d):
     d = Path(d)
     cfg = json.loads((d / 'cfg.json').read_text())
+    if cfg.get('_export_encoder'):                    # ONNX encoder export (torch isolated here)
+        from futures_foundation.finetune._ssl_torch import export_encoder_onnx
+        export_encoder_onnx(cfg['_export_encoder'], ckpt=cfg.get('ckpt'),
+                            C=int(cfg.get('C', 5)), seq=int(cfg.get('seq', 64)),
+                            model_id=cfg.get('model_id', 'paris-noah/Mantis-8M'), device='cpu')
+        return
     windows = np.load(cfg.pop('_windows'), mmap_mode='r')
     from futures_foundation.finetune._ssl_torch import embed_windows
     emb = embed_windows(windows, **cfg)

@@ -116,6 +116,52 @@ def embed_windows(windows, *, ckpt=None, model_id='paris-noah/Mantis-8M', device
     return np.concatenate(out) if out else np.zeros((0, 0), np.float32)
 
 
+class _EncoderONNX(nn.Module):
+    """ONNX-exportable wrapper that reproduces embed_windows EXACTLY: per-window standardize ->
+    per-channel interpolate to native length -> encode -> concat. Input raw window [B,C,seq],
+    output embedding [B, C*hidden]. The per-window standardize is baked in so the bot feeds
+    RAW OHLCV windows (no external preprocessing for the encoder)."""
+
+    def __init__(self, encoder, C):
+        super().__init__()
+        self.encoder = encoder
+        self.C = int(C)
+
+    def forward(self, w):                                     # [B, C, seq] raw OHLCV
+        w = _standardize(w)
+        return torch.cat([_enc(self.encoder, w[:, [i], :]) for i in range(self.C)], dim=-1)
+
+
+def export_encoder_onnx(path, *, ckpt=None, C=5, seq=64,
+                        model_id='paris-noah/Mantis-8M', device='cpu'):
+    """Export the frozen encoder (standardize+interp+encode) to ONNX: raw window [B,C,seq] ->
+    embedding [B, C*hidden]. Matches embed_windows numerically (parity-tested)."""
+    from mantis.architecture import Mantis8M
+    enc = Mantis8M.from_pretrained(model_id)
+    if ckpt:
+        enc.load_state_dict(torch.load(ckpt, map_location='cpu'))
+    enc = enc.to(device).eval()
+    m = _EncoderONNX(enc, C).to(device).eval()
+    dummy = torch.randn(2, int(C), int(seq), device=device)   # >1 row so std is well-defined
+    # Mantis calls torch.diff internally (aten::diff has no ONNX symbolic) -> swap it for an
+    # equivalent slice-subtract during export so the traced graph is exportable. Restored after.
+    _orig_diff = torch.diff
+
+    def _diff_traceable(x, n=1, dim=-1, *, axis=None, prepend=None, append=None):
+        d = axis if axis is not None else dim
+        for _ in range(int(n)):
+            x = x.narrow(d, 1, x.size(d) - 1) - x.narrow(d, 0, x.size(d) - 1)
+        return x
+    torch.diff = _diff_traceable
+    try:
+        torch.onnx.export(m, dummy, path, input_names=['window'], output_names=['embedding'],
+                          dynamic_axes={'window': {0: 'batch'}, 'embedding': {0: 'batch'}},
+                          opset_version=17, dynamo=False)      # legacy tracer (dynamo chokes on Mantis)
+    finally:
+        torch.diff = _orig_diff
+    return path
+
+
 # ============================================================ MASKED MODELING (BERT pretext)
 class MaskNetwork(nn.Module):
     """Mantis encoder + channel adapter + a light reconstruction decoder. Masked OHLCV bars
