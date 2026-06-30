@@ -139,6 +139,90 @@ def test_mantis_frozen_head_fit_predict():
     assert auc > 0.9 and len(pv) == 100 and len(pe) == 100
 
 
+# ---------------------------------------------- seq2seq forecast pretext: orchestration (torch-free)
+def test_assemble_reserves_forecast_horizon(tmp_path):
+    """The forecast pretext needs context+horizon in-stream: assemble reserves
+    seq + max(max_jitter, horizon), and every window stays inside one stream."""
+    _write_csv(tmp_path / 'ES_3min.csv', 400)
+    _write_csv(tmp_path / 'NQ_3min.csv', 400)
+    streams = ssl_data.load_ohlcv(str(tmp_path), ['ES', 'NQ'], ['3min'], verbose=False)
+    seq, max_jitter, horizon = 32, 8, 24
+    big, tr, va = ssl.assemble(streams, seq=seq, max_jitter=max_jitter, horizon=horizon,
+                               val_frac=0.1, holdout_start=None, verbose=False)
+    parent = seq + max(max_jitter, horizon)               # 32 + 24 = 56 (horizon dominates)
+    assert parent == 56
+    bounds = [0, 400, 800]
+    for s in np.concatenate([tr, va]):
+        seg = 0 if s < 400 else 1
+        assert bounds[seg] <= s and s + parent <= bounds[seg + 1]   # context+horizon in-stream
+
+
+def test_assemble_horizon_zero_matches_mask(tmp_path):
+    """horizon=0 (mask pretext) reserves only max_jitter — backward-compatible with stage 1."""
+    _write_csv(tmp_path / 'ES_3min.csv', 400)
+    streams = ssl_data.load_ohlcv(str(tmp_path), ['ES'], ['3min'], verbose=False)
+    _, tr0, _ = ssl.assemble(streams, seq=32, max_jitter=8, horizon=0,
+                             val_frac=0.1, holdout_start=None, verbose=False)
+    _, tr_default, _ = ssl.assemble(streams, seq=32, max_jitter=8,
+                                    val_frac=0.1, holdout_start=None, verbose=False)
+    assert np.array_equal(tr0, tr_default)                # default horizon=0
+
+
+def test_base_cfg_has_seq2seq_keys():
+    cfg = ssl._base_cfg()
+    assert cfg['pretext'] == 'mask' and cfg['horizon'] == 16 and cfg['backbone_ckpt'] is None
+    over = ssl._base_cfg(pretext='forecast', horizon=24, backbone_ckpt='/x/enc.pt')
+    assert over['pretext'] == 'forecast' and over['horizon'] == 24
+    assert over['backbone_ckpt'] == '/x/enc.pt'
+
+
+class _FakeTrial:
+    """Records which hyperparameters were requested; returns the low bound deterministically."""
+    def __init__(self):
+        self.asked = []
+
+    def suggest_float(self, name, lo, hi, log=False):
+        self.asked.append(name); return lo
+
+    def suggest_int(self, name, lo, hi):
+        self.asked.append(name); return lo
+
+
+def test_suggest_ssl_is_pretext_aware():
+    fc = _FakeTrial(); d = ssl._suggest_ssl(fc, 'forecast')
+    assert 'horizon' in d and 'mask_ratio' not in d and 'horizon' in fc.asked
+    mk = _FakeTrial(); d2 = ssl._suggest_ssl(mk, 'mask')
+    assert 'mask_ratio' in d2 and 'horizon' not in d2 and 'mask_ratio' in mk.asked
+    # shared knobs present in both
+    assert {'lr', 'weight_decay', 'new_channels'} <= set(d) and {'lr', 'weight_decay'} <= set(d2)
+
+
+def test_train_dispatches_on_pretext(monkeypatch):
+    """_train routes to the forecast trainer iff pretext='forecast', else the masked trainer,
+    and strips the 'pretext' key (not a trainer kwarg). Uses a fake _ssl_torch — no torch."""
+    import sys, types
+    calls = {}
+    fake = types.ModuleType('futures_foundation.finetune._ssl_torch')
+
+    def _mask(big, tr, va, control='real', **kw):
+        calls['fn'] = 'mask'; calls['kw'] = kw; return ('mask_state', [])
+
+    def _forecast(big, tr, va, control='real', **kw):
+        calls['fn'] = 'forecast'; calls['kw'] = kw; return ('fc_state', [])
+    fake.train_ssl_mask = _mask
+    fake.train_ssl_forecast = _forecast
+    monkeypatch.setitem(sys.modules, 'futures_foundation.finetune._ssl_torch', fake)
+
+    cfg = ssl._base_cfg(pretext='forecast', horizon=20)
+    st, _ = ssl._train(None, None, None, cfg, control='real')
+    assert st == 'fc_state' and calls['fn'] == 'forecast'
+    assert 'pretext' not in calls['kw'] and calls['kw']['horizon'] == 20
+
+    cfg2 = ssl._base_cfg(pretext='mask')
+    st2, _ = ssl._train(None, None, None, cfg2, control='real')
+    assert st2 == 'mask_state' and calls['fn'] == 'mask' and 'pretext' not in calls['kw']
+
+
 # ------------------------------------------------------------- masked-modeling trainer (gated)
 @torch_test
 def test_embed_windows_frozen():
@@ -166,5 +250,62 @@ def test_mask_network_and_trainer(tmp_path):
     ckpt = str(tmp_path / 'enc.pt'); torch.save(state, ckpt)        # encoder ckpt round-trips
     _, new_c = build_model(5, new_channels=4, device='cpu', backbone_ckpt=ckpt)
     assert new_c == 4
+
+
+# ------------------------------------------------------ seq2seq forecast trainer (gated)
+@torch_test
+def test_standardize_ctx_is_leak_safe():
+    """Future bars are standardized by the CONTEXT's mean/std (not their own) — so the target
+    carries no future-level/scale leak. Context standardizes to ~0 mean / ~1 std per channel."""
+    import torch
+    from futures_foundation.finetune import _ssl_torch as S
+    rng = np.random.default_rng(0)
+    ctx = torch.as_tensor(rng.standard_normal((4, 5, 32)).astype(np.float32) * 3 + 7)
+    fut = ctx[:, :, :8] * 10.0 + 100.0                             # very different level/scale
+    cs, fs = S._standardize_ctx(ctx, fut)
+    assert torch.allclose(cs.mean(2), torch.zeros(4, 5), atol=1e-4)
+    assert torch.allclose(cs.std(2, unbiased=True), torch.ones(4, 5), atol=1e-2)  # unbiased: matches code
+    # fut standardized with context stats: recompute and compare (NOT standardized by its own)
+    m = ctx.mean(2, keepdim=True); s = ctx.std(2, keepdim=True) + 1e-6
+    assert torch.allclose(fs, (fut - m) / s, atol=1e-5)
+    assert not torch.allclose(fs.mean(2), torch.zeros(4, 5), atol=1e-2)   # fut not self-normalized
+
+
+@torch_test
+def test_forecast_network_shape():
+    import torch
+    from futures_foundation.finetune import _ssl_torch as S
+    net = S.ForecastNetwork(C=5, new_channels=4, seq=64, horizon=16)
+    ctx = torch.randn(8, 5, 64)
+    assert net(ctx).shape == (8, 5, 16)                            # predict next horizon bars
+    assert net.embed(ctx).shape[0] == 8 and net.embed(ctx).shape[1] > 0
+
+
+@torch_test
+def test_train_ssl_forecast_runs_and_warmstarts(tmp_path):
+    """Forecast trainer runs, returns finite val MSE + emb std, and its encoder ckpt loads
+    downstream via build_model — AND a warm-start ckpt is accepted (FT on stage-1 encoder)."""
+    import torch
+    from futures_foundation.finetune import _ssl_torch as S
+    from futures_foundation.finetune.classifiers._mantis_torch import build_model
+    rng = np.random.default_rng(0)
+    big = rng.standard_normal((2000, 5)).astype(np.float32)
+    starts = np.arange(0, 1880, 4)                                 # room for seq+horizon
+    state, hist = S.train_ssl_forecast(big, starts, starts[-50:], seq=32, horizon=16,
+                                       new_channels=4, epochs=2, steps_per_epoch=3, batch=16,
+                                       device='cpu', control='real', verbose=False)
+    assert len(hist) >= 1 and np.isfinite(hist[-1]['val_loss']) and hist[-1]['std'] > 0
+    ckpt = str(tmp_path / 'enc1.pt'); torch.save(state, ckpt)
+    _, new_c = build_model(5, new_channels=4, device='cpu', backbone_ckpt=ckpt)
+    assert new_c == 4
+    # warm-start: a second forecast run initialized from the first encoder ckpt
+    state2, hist2 = S.train_ssl_forecast(big, starts, starts[-50:], seq=32, horizon=16,
+                                         new_channels=4, epochs=1, steps_per_epoch=2, batch=16,
+                                         device='cpu', control='real', backbone_ckpt=ckpt,
+                                         verbose=False)
+    assert set(state2.keys()) == set(state.keys()) and np.isfinite(hist2[-1]['val_loss'])
+    # NB: the REAL-vs-SHUFFLE/RANDOM control is a research-time PROBE diagnostic measured at
+    # scale on Colab (see ssl._finalize), NOT a unit-test invariant — an undertrained 8M model
+    # on 16-bar-ahead forecasting does not reliably separate the controls in a CPU smoke run.
 
 

@@ -283,6 +283,132 @@ def train_ssl_mask(big, train_starts, val_starts, *, seq=64, new_channels=8, mas
     return best_state, history
 
 
+# ====================================== SEQ2SEQ FORECASTING (causal pretext, SSL stage 2)
+def _standardize_ctx(ctx, fut):
+    """z-score the CONTEXT window per channel, apply the SAME shift/scale to the future bars.
+    Standardizing the future by its own stats would leak its mean/scale into the target —
+    using the context's stats keeps the forecast target strictly causal."""
+    m = ctx.mean(dim=2, keepdim=True)
+    s = ctx.std(dim=2, keepdim=True) + 1e-6
+    return (ctx - m) / s, (fut - m) / s
+
+
+class ForecastNetwork(nn.Module):
+    """Mantis encoder + channel adapter + a forecast decoder. A CONTEXT window of past bars is
+    encoded; the decoder predicts the NEXT `horizon` bars (full OHLCV) from the pooled
+    embedding. To forecast the future the encoder MUST model forward dynamics — trend
+    continuation, momentum, volatility persistence — i.e. the trend-prediction the downstream
+    buy/sell classifier needs. Warm-start the encoder from the masked-SSL ckpt (stage 1)."""
+
+    def __init__(self, C=5, new_channels=8, seq=64, horizon=16, model_id='paris-noah/Mantis-8M'):
+        super().__init__()
+        from mantis.architecture import Mantis8M
+        from mantis.adapters import LinearChannelCombiner
+        self.encoder = Mantis8M.from_pretrained(model_id)
+        hidden = getattr(self.encoder, 'hidden_dim', 256)
+        self.new_c = min(new_channels, C)
+        self.adapter = LinearChannelCombiner(num_channels=C, new_num_channels=self.new_c)
+        self.C, self.seq, self.horizon = C, seq, horizon
+        emb = hidden * self.new_c
+        self.decoder = nn.Sequential(nn.Linear(emb, emb), nn.GELU(), nn.Linear(emb, C * horizon))
+
+    def embed(self, x):                                   # [B,C,seq] context -> [B, new_c*hidden]
+        a = self.adapter(x)
+        return torch.cat([_enc(self.encoder, a[:, [i], :]) for i in range(a.shape[1])], dim=-1)
+
+    def forward(self, ctx):                               # [B,C,seq] -> forecast [B,C,horizon]
+        return self.decoder(self.embed(ctx)).view(-1, self.C, self.horizon)
+
+
+def train_ssl_forecast(big, train_starts, val_starts, *, seq=64, horizon=16, new_channels=8,
+                       epochs=60, steps_per_epoch=200, batch=512, lr=1e-4, weight_decay=0.05,
+                       patience=8, device=None, model_id='paris-noah/Mantis-8M',
+                       backbone_ckpt=None, compile_model=False, control='real', seed=0,
+                       amp_dtype='fp16', verbose=True, **_ignore):
+    """Causal seq2seq forecasting: encode `seq` context bars, predict the next `horizon` bars
+    (MSE, context-standardized). Returns (best_encoder_state, history). Warm-start the encoder
+    from the masked-SSL stage-1 ckpt via backbone_ckpt.
+
+    REAL/SHUFFLE/RANDOM controls are MEANINGFUL: only REAL has a future that follows from its
+    past — SHUFFLE (time-scrambled) and RANDOM (noise) have no predictable continuation, so
+    their val MSE should be clearly WORSE. history carries 'val_loss' + 'std' (collapse guard)."""
+    os.environ.setdefault('PYTORCH_ENABLE_MPS_FALLBACK', '1')
+    dev = device or ('cuda' if torch.cuda.is_available()
+                     else 'mps' if torch.backends.mps.is_available() else 'cpu')
+    torch.manual_seed(seed); gen = torch.Generator(device=dev); gen.manual_seed(seed)
+    C = int(big.shape[1])
+    parent = seq + horizon
+    use_amp = (dev == 'cuda')
+    _adt = torch.float16 if str(amp_dtype).lower() in ('fp16', 'float16') else torch.bfloat16
+    amp_ctx = (lambda: torch.autocast('cuda', dtype=_adt)) if use_amp else (lambda: _nullctx())
+
+    big_t = torch.as_tensor(np.asarray(big, np.float32), device=dev)
+    tr = torch.as_tensor(np.asarray(train_starts, np.int64), device=dev)
+    va = torch.as_tensor(np.asarray(val_starts, np.int64), device=dev)
+
+    net = ForecastNetwork(C=C, new_channels=new_channels, seq=seq, horizon=horizon,
+                          model_id=model_id).to(dev)
+    if backbone_ckpt:                                    # warm-start from stage-1 masked SSL
+        net.encoder.load_state_dict(torch.load(backbone_ckpt, map_location='cpu'))
+    if compile_model and hasattr(torch, 'compile'):
+        net = torch.compile(net)
+    opt = torch.optim.AdamW([p for p in net.parameters() if p.requires_grad],
+                            lr=lr, weight_decay=weight_decay)
+    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs)
+    scaler = torch.amp.GradScaler('cuda', enabled=use_amp)
+
+    def _ctx_fut(starts):
+        b_idx = torch.randint(0, len(starts), (batch,), device=dev, generator=gen)
+        w = _gather_batch(big_t, starts, b_idx, parent)      # [B,C,seq+horizon] raw
+        if control == 'shuffle':
+            w = _time_shuffle(w)                             # no causal continuation survives
+        elif control == 'random':
+            w = torch.randn_like(w)
+        return _standardize_ctx(w[:, :, :seq], w[:, :, seq:])
+
+    def _fc_loss(ctx, fut):
+        return ((net(ctx) - fut) ** 2).mean()                # MSE over all forecast bars
+
+    @torch.no_grad()
+    def val_eval():
+        net.eval(); tot = 0.0; nb = min(20, max(1, len(va) // batch))
+        for _ in range(nb):
+            with amp_ctx():
+                tot += float(_fc_loss(*_ctx_fut(va)))
+        estd = float(net.embed(_ctx_fut(va)[0]).std(0).mean())
+        net.train()
+        return tot / nb, estd
+
+    best, best_state, bad, history = 1e18, None, 0, []
+    for ep in range(epochs):
+        net.train(); tr_tot = 0.0
+        for _ in range(steps_per_epoch):
+            opt.zero_grad(set_to_none=True)
+            with amp_ctx():
+                loss = _fc_loss(*_ctx_fut(tr))
+            scaler.scale(loss).backward(); scaler.step(opt); scaler.update()
+            tr_tot += float(loss.detach())
+        sched.step()
+        if dev == 'cuda':
+            torch.cuda.empty_cache()
+        vloss, estd = val_eval()
+        history.append({'epoch': ep, 'train_loss': tr_tot / steps_per_epoch,
+                        'val_loss': vloss, 'std': estd})
+        improved = vloss < best - 1e-5
+        if improved:
+            best, bad = vloss, 0
+            enc = net.encoder if not hasattr(net, '_orig_mod') else net._orig_mod.encoder
+            best_state = {k: v.detach().cpu().clone() for k, v in enc.state_dict().items()}
+        else:
+            bad += 1
+        if verbose:
+            print(f"  ep{ep:>3} train={tr_tot / steps_per_epoch:.4f} val={vloss:.4f} "
+                  f"emb_std={estd:.4f}{'  *' if improved else ''}", flush=True)
+        if bad >= patience:
+            break
+    return best_state, history
+
+
 class _nullctx:
     def __enter__(self): return None
     def __exit__(self, *a): return False
