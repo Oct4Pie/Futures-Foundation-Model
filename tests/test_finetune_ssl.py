@@ -150,6 +150,32 @@ def test_passes_forecast_gate_is_forward_centric_anti_shortcut():
     assert not ssl._passes(desc_reg, std=0.5, pretext='forecast')[0]
 
 
+def test_suggest_ssl_forecast_searches_channel_weights():
+    """Stage-2 scan searches channel weights (close up / volume down) + forecast knobs; the
+    assembled weights are O,H,L fixed at 1 with close_weight, vol_weight from the trial."""
+    fc = _FakeTrial(); d = ssl._suggest_ssl(fc, 'forecast')
+    assert 'channel_weights' in d and 'horizon' in d
+    assert {'close_weight', 'vol_weight', 'lr', 'weight_decay', 'new_channels'} <= set(fc.asked)
+    cw = d['channel_weights']
+    assert len(cw) == 5 and cw[0] == cw[1] == cw[2] == 1.0     # O,H,L fixed
+    # mask pretext must NOT search channel weights (stage-1 untouched)
+    mk = _FakeTrial(); d2 = ssl._suggest_ssl(mk, 'mask')
+    assert 'channel_weights' not in d2 and 'close_weight' not in mk.asked
+
+
+def test_rebuild_channel_weights_from_best_params():
+    """study.best_params records close_weight/vol_weight -> reassembled into the trainer vector."""
+    p = {'lr': 1e-4, 'horizon': 16, 'close_weight': 2.5, 'vol_weight': 0.0, 'new_channels': 8}
+    out = ssl._rebuild_channel_weights(p)
+    assert out['channel_weights'] == [1.0, 1.0, 1.0, 2.5, 0.0]
+    assert 'close_weight' not in out and 'vol_weight' not in out and out['horizon'] == 16
+
+
+def test_base_cfg_has_channel_weights_key():
+    assert 'channel_weights' in ssl._base_cfg() and ssl._base_cfg()['channel_weights'] is None
+    assert ssl._base_cfg(channel_weights=[1, 1, 1, 2, 0])['channel_weights'] == [1, 1, 1, 2, 0]
+
+
 def test_compare_exposes_forward_and_descriptive_deltas():
     """compare() splits descriptive vs forward content so the stage-2 gate can be anti-shortcut."""
     rng = np.random.default_rng(2)
@@ -361,5 +387,27 @@ def test_train_ssl_forecast_runs_and_warmstarts(tmp_path):
     # NB: the REAL-vs-SHUFFLE/RANDOM control is a research-time PROBE diagnostic measured at
     # scale on Colab (see ssl._finalize), NOT a unit-test invariant — an undertrained 8M model
     # on 16-bar-ahead forecasting does not reliably separate the controls in a CPU smoke run.
+
+
+@torch_test
+def test_train_ssl_forecast_channel_weighted(tmp_path):
+    """Channel-weighted loss (price-path) runs; skill stays finite. With volume zeroed, the
+    loss/skill exclude volume -> pure price skill, and the encoder ckpt still loads downstream."""
+    import torch
+    from futures_foundation.finetune import _ssl_torch as S
+    from futures_foundation.finetune.classifiers._mantis_torch import build_model
+    rng = np.random.default_rng(1)
+    big = rng.standard_normal((2000, 5)).astype(np.float32)
+    big[:, 4] = rng.standard_normal(2000) * 50 + 500           # volume: different scale + noisy
+    starts = np.arange(0, 1880, 4)
+    state, hist = S.train_ssl_forecast(big, starts, starts[-50:], seq=32, horizon=16,
+                                       new_channels=4, epochs=2, steps_per_epoch=3, batch=16,
+                                       device='cpu', control='real',
+                                       channel_weights=[1.0, 1.0, 1.0, 2.0, 0.0],  # price-path
+                                       verbose=False)
+    assert np.isfinite(hist[-1]['val_loss']) and np.isfinite(hist[-1]['skill'])
+    ckpt = str(tmp_path / 'enc_pw.pt'); torch.save(state, ckpt)
+    _, new_c = build_model(5, new_channels=4, device='cpu', backbone_ckpt=ckpt)
+    assert new_c == 4
 
 

@@ -101,10 +101,21 @@ CONTROLS     = ['shuffle', 'random']   # probe-based diagnostics (did temporal o
 COMPILE      = False   # torch.compile(encoder) — try True on A100/L4 for extra speed
 SEED         = 0
 
+# ── CHANNEL-WEIGHTED LOSS (price-path option) ──
+# Per-channel loss weights (O,H,L,C,V). None = equal (every channel weighted the same).
+# PRICE-PATH hypothesis (emphasize close, ignore near-unpredictable volume) for trend detection:
+#   CHANNEL_WEIGHTS = [1.0, 1.0, 1.0, 2.0, 0.0]
+# Leave None to let the Optuna scan (below) FIND the best weighting instead of guessing.
+CHANNEL_WEIGHTS = None
+
 # ── GENERALIZATION (probe gate -> Optuna, like stage 1 / WF / produce) ──
-N_TRIALS     = 10      # Optuna trials (MAXIMIZE probe delta) if the default doesn't pass
-MAX_ITERS    = 2       # default run, then (if needed) one Optuna-tuned re-run
+N_TRIALS     = 20      # Optuna trials maximizing the FORWARD-predictive probe score
+MAX_ITERS    = 2       # default run, then one Optuna-tuned re-run
 PROBE        = True    # GATE: probe regime/vol/structure + forward buy/sell move vs vanilla
+# OPTUNA_SCAN=True -> deliberately run the Optuna scan to FIND the best channel weights + knobs
+# (lr/horizon/capacity), maximizing the forward-predictive score, even if the default passes the
+# gate. This is the "scan to be sure" mode for picking the weighting. False = only tune on gate-fail.
+OPTUNA_SCAN  = True
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f'\nDevice: {device}')
@@ -140,10 +151,12 @@ verdict = ssl.loop_ssl(
     tickers=TICKERS, tfs=TFS,
     pretext='forecast', horizon=HORIZON, backbone_ckpt=WARM_CKPT,   # <- FT on stage-1 encoder
     grad_clip=GRAD_CLIP, clamp=CLAMP,                               # <- stability (anti-blowup)
+    channel_weights=CHANNEL_WEIGHTS,                               # <- price-path option (None=equal)
     seq=SEQ, max_jitter=MAX_JITTER, new_channels=NEW_CHANNELS,
     batch=BATCH, epochs=EPOCHS, steps_per_epoch=STEPS, lr=LR,
     patience=PATIENCE, val_frac=VAL_FRAC, holdout_start=HOLDOUT_START,
     controls=tuple(CONTROLS), probe=PROBE, n_trials=N_TRIALS, max_iters=MAX_ITERS,
+    force_tune=OPTUNA_SCAN,                                         # <- scan weights+knobs "to be sure"
     device=device.type, compile_model=COMPILE, seed=SEED,
 )
 

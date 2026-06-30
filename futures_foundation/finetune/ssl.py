@@ -123,17 +123,38 @@ def _passes(probe_res, std, margin=0.0, dir_margin=0.0, pretext='mask'):
 
 
 # ------------------------------------------------------------------------------- optuna
+def _ssl_channel_weights(close_weight, vol_weight):
+    """Assemble per-channel loss weights (O,H,L,C,V): O/H/L fixed at 1, close emphasized,
+    volume down-weighted. This is the 'price-path' lever — concentrate the forecast on the
+    trend-relevant price movement, de-emphasize near-unpredictable volume."""
+    return [1.0, 1.0, 1.0, float(close_weight), float(vol_weight)]
+
+
 def _suggest_ssl(trial, pretext='mask'):
     """Search the SSL knobs that govern generalization (maximizing the probe delta): optimizer,
-    capacity, and the pretext-specific knob — mask ratio (masked) or forecast horizon (seq2seq)."""
+    capacity, and pretext-specific knobs. Forecast (seq2seq) also searches the forecast horizon
+    AND the channel-weighted loss (close_weight up, vol_weight down = price-path) so Optuna finds
+    the weighting that best improves the FORWARD-predictive representation (not raw skill)."""
     d = dict(lr=trial.suggest_float('lr', 3e-5, 5e-4, log=True),
              weight_decay=trial.suggest_float('weight_decay', 0.01, 0.3, log=True),
              new_channels=trial.suggest_int('new_channels', 4, 12))
     if pretext == 'forecast':
         d['horizon'] = trial.suggest_int('horizon', 8, 32)
+        cw = trial.suggest_float('close_weight', 1.0, 3.0)    # emphasize the close (trend) channel
+        vw = trial.suggest_float('vol_weight', 0.0, 1.0)      # 0 = ignore volume (pure price path)
+        d['channel_weights'] = _ssl_channel_weights(cw, vw)
     else:
         d['mask_ratio'] = trial.suggest_float('mask_ratio', 0.2, 0.6)
     return d
+
+
+def _rebuild_channel_weights(params):
+    """study.best_params records close_weight/vol_weight (the raw suggestions) — turn them back
+    into the channel_weights vector the trainer consumes (mirrors _suggest_ssl)."""
+    p = dict(params)
+    if 'close_weight' in p and 'vol_weight' in p:
+        p['channel_weights'] = _ssl_channel_weights(p.pop('close_weight'), p.pop('vol_weight'))
+    return p
 
 
 def _tune_ssl(big, tr, va, base_cfg, *, n_trials=10, tune_epochs=8, tune_steps=80,
@@ -163,9 +184,11 @@ def _tune_ssl(big, tr, va, base_cfg, *, n_trials=10, tune_epochs=8, tune_steps=8
                                 sampler=optuna.samplers.TPESampler(seed=seed))
     study.optimize(objective, n_trials=n_trials)
     improved = study.best_value > base + 1e-4
-    best = dict(base_cfg, **study.best_params) if improved else dict(base_cfg)
+    # rebuild channel_weights from the raw close/vol suggestions before applying (forecast)
+    best = dict(base_cfg, **_rebuild_channel_weights(study.best_params)) if improved else dict(base_cfg)
     if verbose:
         print(f"  [optuna ssl] base_fwd={base:+.4f} best_fwd={study.best_value:+.4f} "
+              f"best_params={study.best_params} "
               f"{'-> use tuned' if improved else '-> keep defaults'}", flush=True)
     return best, {'base_delta': base, 'best_delta': study.best_value, 'improved': improved}
 
@@ -239,15 +262,16 @@ def _base_cfg(**kw):
              model_id='paris-noah/Mantis-8M', compile_model=False, device=None,
              seed=0, verbose=True,
              pretext='mask', horizon=16, backbone_ckpt=None,  # stage-2 seq2seq: forecast + warm-start
-             grad_clip=1.0, clamp=10.0)                       # stage-2 stability (forecast trainer)
+             grad_clip=1.0, clamp=10.0,                       # stage-2 stability (forecast trainer)
+             channel_weights=None)                            # stage-2 price-path weighting (None=equal)
     d.update({k: v for k, v in kw.items() if v is not None and k in d})
     return d
 
 
 def loop_ssl(data_dir=None, *, tickers=None, tfs=None, controls=('shuffle', 'random'),
              out_path='mantis_ssl_ohlcv.pt', probe=True, n_trials=10, max_iters=2,
-             probe_margin=0.0, dir_margin=0.0, holdout_start='2026-01-01', val_frac=0.1,
-             **cfg_over):
+             probe_margin=0.0, dir_margin=0.0, force_tune=False, holdout_start='2026-01-01',
+             val_frac=0.1, **cfg_over):
     """Probe-GATED, Optuna-tuned SSL. Each iter: train REAL -> PROBE vs vanilla -> gate on
     the PROBE (does it encode regime/vol/structure better than vanilla), NOT on the
     contrastive loss (which is blind — noise scores as well as real). If it doesn't pass,
@@ -286,11 +310,14 @@ def loop_ssl(data_dir=None, *, tickers=None, tfs=None, controls=('shuffle', 'ran
         if best is None or delta > best['delta']:
             best = {'state': state, 'probe': probe_res, 'cfg': dict(cfg), 'delta': delta,
                     'skill': fc_skill}
-        if ok or it == max_iters - 1:
+        # stop when the gate passes (unless force_tune: deliberately Optuna-scan anyway, e.g. to
+        # search channel weights "to be sure"), or when iterations are exhausted.
+        if (ok and not force_tune) or it == max_iters - 1:
             break
         if verbose:
             metric = 'forward_score' if pretext == 'forecast' else 'mean_core_delta'
-            print(f"[ssl-loop] {metric}={delta:+.4f} (gate not passed) -> Optuna", flush=True)
+            why = 'force_tune: scanning anyway' if ok else 'gate not passed'
+            print(f"[ssl-loop] {metric}={delta:+.4f} ({why}) -> Optuna", flush=True)
         cfg, _ = _tune_ssl(big, tr, va, cfg, n_trials=n_trials, seed=cfg['seed'], verbose=verbose)
         cfg = _base_cfg(**cfg)                            # re-fill any popped defaults
 

@@ -333,10 +333,17 @@ def train_ssl_forecast(big, train_starts, val_starts, *, seq=64, horizon=16, new
                        epochs=60, steps_per_epoch=200, batch=512, lr=1e-4, weight_decay=0.05,
                        patience=8, device=None, model_id='paris-noah/Mantis-8M',
                        backbone_ckpt=None, compile_model=False, control='real', seed=0,
-                       amp_dtype='fp16', grad_clip=1.0, clamp=10.0, verbose=True, **_ignore):
+                       amp_dtype='fp16', grad_clip=1.0, clamp=10.0, channel_weights=None,
+                       verbose=True, **_ignore):
     """Causal seq2seq forecasting: encode `seq` context bars, predict the next `horizon` bars
     (MSE, context-standardized). Returns (best_encoder_state, history). Warm-start the encoder
     from the masked-SSL stage-1 ckpt via backbone_ckpt.
+
+    channel_weights: optional length-C per-channel loss weights (O,H,L,C,V order), e.g.
+    [1,1,1,2,0] = price-path (emphasize close, ignore volume). None = equal (default; unchanged).
+    The SAME weights apply to the persistence baseline, so 'skill' stays consistent: with
+    volume zeroed, skill becomes pure PRICE skill. This focuses capacity on the trend-relevant
+    price path instead of diluting it with near-unpredictable volume.
 
     REAL/SHUFFLE/RANDOM controls are MEANINGFUL: only REAL has a future that follows from its
     past — SHUFFLE (time-scrambled) and RANDOM (noise) have no predictable continuation, so
@@ -365,6 +372,10 @@ def train_ssl_forecast(big, train_starts, val_starts, *, seq=64, horizon=16, new
                             lr=lr, weight_decay=weight_decay)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs)
     scaler = torch.amp.GradScaler('cuda', enabled=use_amp)
+    # per-channel loss weights (O,H,L,C,V). None -> equal. Applied to BOTH forecast and persist
+    # so 'skill' stays a like-for-like ratio under any weighting (volume=0 -> pure price skill).
+    w_t = (None if channel_weights is None else
+           torch.as_tensor(np.asarray(channel_weights, np.float32), device=dev).view(1, C, 1))
 
     def _ctx_fut(starts):
         b_idx = torch.randint(0, len(starts), (batch,), device=dev, generator=gen)
@@ -383,11 +394,14 @@ def train_ssl_forecast(big, train_starts, val_starts, *, seq=64, horizon=16, new
         trend content we actually want. ctx/fut are already context-z-scored."""
         return fut - ctx[:, :, -1:]                          # [B,C,horizon] forward delta path
 
+    def _wmean(se):                                          # (weighted) mean of a squared-error tensor
+        return (se * w_t).mean() if w_t is not None else se.mean()
+
     def _fc_loss(ctx, fut):
-        return ((net(ctx) - _target(ctx, fut)) ** 2).mean()  # MSE on the forward DELTA path
+        return _wmean((net(ctx) - _target(ctx, fut)) ** 2)   # (weighted) MSE on the forward DELTA path
 
     def _persist_loss(ctx, fut):
-        return (_target(ctx, fut) ** 2).mean()               # predict-zero = copy-last-bar baseline
+        return _wmean(_target(ctx, fut) ** 2)                # predict-zero = copy-last-bar baseline
 
     @torch.no_grad()
     def val_eval():
