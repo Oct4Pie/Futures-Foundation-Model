@@ -116,15 +116,52 @@ def test_probe_compare_flags_ssl_better():
 
 
 def test_passes_gate_on_probe_not_loss():
-    # GATE = probe (representation content) vs vanilla, NOT contrastive loss.
+    # GATE = probe (representation content) vs vanilla, NOT contrastive loss. ORIGINAL mask gate.
     good = {'mean_core_delta': 0.05, 'learns_regime_vol_structure': True}
-    ok, d = ssl._passes(good, std=0.5)
+    ok, d = ssl._passes(good, std=0.5)                    # default pretext='mask' (stage 1, unchanged)
     assert ok and d['learns_regime_vol_structure']
     # probe ties/loses vanilla -> fail even though training "looked fine"
     bad = {'mean_core_delta': -0.01, 'learns_regime_vol_structure': False}
     assert not ssl._passes(bad, std=0.5)[0]
     # collapse -> fail regardless of probe
     assert not ssl._passes(good, std=0.001)[0]
+
+
+def test_passes_forecast_gate_is_forward_centric_anti_shortcut():
+    """Stage-2 (forecast) gate: descriptive gains alone CANNOT pass — forward MOVE SIZE must
+    improve and forward DIRECTION must not regress. Stage-1 (mask) gate is unaffected."""
+    base = dict(mean_core_delta=0.05, learns_regime_vol_structure=True)
+    # shortcut: big descriptive lift, but forward targets flat/negative -> FAIL on forecast...
+    shortcut = dict(base, descriptive_delta=0.10, fwd_absmove_delta=0.0, fwd_dir_delta=-0.02,
+                    forward_score=-0.02)
+    assert not ssl._passes(shortcut, std=0.5, pretext='forecast')[0]
+    # ...yet the SAME probe passes the ORIGINAL mask gate (mean_core_delta>0) -> stage 1 intact
+    assert ssl._passes(shortcut, std=0.5, pretext='mask')[0]
+    # genuine forward learning: move size up, direction not worse -> PASS on forecast
+    genuine = dict(base, descriptive_delta=0.02, fwd_absmove_delta=0.03, fwd_dir_delta=0.01,
+                   forward_score=0.04)
+    ok, d = ssl._passes(genuine, std=0.5, pretext='forecast')
+    assert ok and d['fwd_size_ok'] and d['fwd_dir_ok'] and d['descriptive_ok']
+    # direction regresses -> FAIL even with forward move-size gain
+    dir_reg = dict(genuine, fwd_dir_delta=-0.01)
+    assert not ssl._passes(dir_reg, std=0.5, pretext='forecast')[0]
+    # descriptive regresses -> FAIL
+    desc_reg = dict(genuine, descriptive_delta=-0.01)
+    assert not ssl._passes(desc_reg, std=0.5, pretext='forecast')[0]
+
+
+def test_compare_exposes_forward_and_descriptive_deltas():
+    """compare() splits descriptive vs forward content so the stage-2 gate can be anti-shortcut."""
+    rng = np.random.default_rng(2)
+    core = ['vol', 'trend_eff', 'range_expand', 'fwd_absmove']
+    tgt = {k: rng.standard_normal(300).astype(np.float32) for k in core}
+    tgt['direction'] = rng.integers(0, 2, 300)
+    tgt['fwd_dir'] = rng.integers(0, 2, 300)
+    emb = rng.standard_normal((300, 4)).astype(np.float32)
+    out = ssl_probe.compare(emb, emb, tgt, seed=0)        # identical embeddings -> ~0 deltas
+    for k in ('descriptive_delta', 'fwd_absmove_delta', 'fwd_dir_delta', 'forward_score'):
+        assert k in out
+    assert abs(out['forward_score'] - (out['fwd_absmove_delta'] + out['fwd_dir_delta'])) < 1e-9
 
 
 def test_mantis_frozen_head_fit_predict():
@@ -295,6 +332,9 @@ def test_train_ssl_forecast_runs_and_warmstarts(tmp_path):
                                        new_channels=4, epochs=2, steps_per_epoch=3, batch=16,
                                        device='cpu', control='real', verbose=False)
     assert len(hist) >= 1 and np.isfinite(hist[-1]['val_loss']) and hist[-1]['std'] > 0
+    # anti-shortcut readout present: persistence (copy-last-bar) baseline + skill vs it
+    assert 'persist_loss' in hist[-1] and hist[-1]['persist_loss'] > 0
+    assert 'skill' in hist[-1] and np.isfinite(hist[-1]['skill'])
     ckpt = str(tmp_path / 'enc1.pt'); torch.save(state, ckpt)
     _, new_c = build_model(5, new_channels=4, device='cpu', backbone_ckpt=ckpt)
     assert new_c == 4

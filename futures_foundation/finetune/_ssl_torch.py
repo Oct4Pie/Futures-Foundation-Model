@@ -366,18 +366,31 @@ def train_ssl_forecast(big, train_starts, val_starts, *, seq=64, horizon=16, new
             w = torch.randn_like(w)
         return _standardize_ctx(w[:, :, :seq], w[:, :, seq:])
 
+    def _target(ctx, fut):
+        """Forecast the forward PATH relative to 'now' = future bars minus the last context bar.
+        This DELETES the persistence shortcut by construction: 'copy the last bar' (the trivial
+        MSE minimizer on absolute levels) becomes 'predict zero' here, which the loss punishes —
+        so the encoder is FORCED to learn signed forward movement (direction + magnitude), the
+        trend content we actually want. ctx/fut are already context-z-scored."""
+        return fut - ctx[:, :, -1:]                          # [B,C,horizon] forward delta path
+
     def _fc_loss(ctx, fut):
-        return ((net(ctx) - fut) ** 2).mean()                # MSE over all forecast bars
+        return ((net(ctx) - _target(ctx, fut)) ** 2).mean()  # MSE on the forward DELTA path
+
+    def _persist_loss(ctx, fut):
+        return (_target(ctx, fut) ** 2).mean()               # predict-zero = copy-last-bar baseline
 
     @torch.no_grad()
     def val_eval():
-        net.eval(); tot = 0.0; nb = min(20, max(1, len(va) // batch))
+        net.eval(); tot = 0.0; ptot = 0.0; nb = min(20, max(1, len(va) // batch))
         for _ in range(nb):
+            ctx, fut = _ctx_fut(va)
             with amp_ctx():
-                tot += float(_fc_loss(*_ctx_fut(va)))
+                tot += float(_fc_loss(ctx, fut))
+            ptot += float(_persist_loss(ctx, fut))
         estd = float(net.embed(_ctx_fut(va)[0]).std(0).mean())
         net.train()
-        return tot / nb, estd
+        return tot / nb, ptot / nb, estd
 
     best, best_state, bad, history = 1e18, None, 0, []
     for ep in range(epochs):
@@ -391,9 +404,10 @@ def train_ssl_forecast(big, train_starts, val_starts, *, seq=64, horizon=16, new
         sched.step()
         if dev == 'cuda':
             torch.cuda.empty_cache()
-        vloss, estd = val_eval()
+        vloss, ploss, estd = val_eval()
+        skill = float(1.0 - vloss / ploss) if ploss > 1e-12 else 0.0   # >0 => beats copy-last-bar
         history.append({'epoch': ep, 'train_loss': tr_tot / steps_per_epoch,
-                        'val_loss': vloss, 'std': estd})
+                        'val_loss': vloss, 'persist_loss': ploss, 'skill': skill, 'std': estd})
         improved = vloss < best - 1e-5
         if improved:
             best, bad = vloss, 0
@@ -403,7 +417,8 @@ def train_ssl_forecast(big, train_starts, val_starts, *, seq=64, horizon=16, new
             bad += 1
         if verbose:
             print(f"  ep{ep:>3} train={tr_tot / steps_per_epoch:.4f} val={vloss:.4f} "
-                  f"emb_std={estd:.4f}{'  *' if improved else ''}", flush=True)
+                  f"persist={ploss:.4f} skill={skill:+.3f} emb_std={estd:.4f}"
+                  f"{'  *' if improved else ''}", flush=True)
         if bad >= patience:
             break
     return best_state, history

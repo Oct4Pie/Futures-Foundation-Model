@@ -82,9 +82,12 @@ def probe_embedding(emb, y, kind, seed=0, test_frac=0.3):
 
 
 def compare(emb_ssl, emb_vanilla, targets, seed=0):
-    """Probe both embeddings on every target; return per-target {ssl, vanilla, delta}
-    plus a pass flag (SSL >= vanilla on the core regime/vol/structure targets)."""
-    res, core_deltas = {}, []
+    """Probe both embeddings on every target; return per-target {ssl, vanilla, delta} plus
+    aggregate deltas that the gate uses. We separate DESCRIPTIVE content (vol/trend_eff/
+    range_expand — easy in-window stats) from FORWARD predictive content (fwd_absmove size,
+    fwd_dir direction), because a shortcut embedding can lift the easy descriptive stats while
+    the forward (genuinely predictive) targets barely move. The gate keys on the FORWARD ones."""
+    res, core_deltas, desc_deltas = {}, [], []
     for name, y in targets.items():
         kind = _TARGET_KIND[name]
         a = probe_embedding(emb_ssl, y, kind, seed)
@@ -92,8 +95,16 @@ def compare(emb_ssl, emb_vanilla, targets, seed=0):
         res[name] = {'ssl': a, 'vanilla': b, 'delta': a - b, 'kind': kind}
         if name in _CORE_TARGETS:
             core_deltas.append(a - b)
+        if name in ('vol', 'trend_eff', 'range_expand'):
+            desc_deltas.append(a - b)
     mean_core = float(np.mean(core_deltas)) if core_deltas else 0.0
+    fwd_absmove_delta = float(res['fwd_absmove']['delta']) if 'fwd_absmove' in res else 0.0
+    fwd_dir_delta = float(res['fwd_dir']['delta']) if 'fwd_dir' in res else 0.0
     return {'per_target': res, 'mean_core_delta': mean_core,
+            'descriptive_delta': float(np.mean(desc_deltas)) if desc_deltas else 0.0,
+            'fwd_absmove_delta': fwd_absmove_delta,   # forward MOVE SIZE (R2) vs vanilla
+            'fwd_dir_delta': fwd_dir_delta,           # forward DIRECTION (AUC) vs vanilla
+            'forward_score': fwd_absmove_delta + fwd_dir_delta,   # combined forward relevance
             'learns_regime_vol_structure': bool(mean_core > 0.0)}
 
 

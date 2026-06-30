@@ -85,22 +85,41 @@ def _probe_state(big, va, seq, state, *, model_id, device, seed, verbose=True):
         os.remove(tmp)
 
 
-def _passes(probe_res, std, margin=0.0):
-    """GATE on the PROBE (representation content), NOT the contrastive loss.
+def _passes(probe_res, std, margin=0.0, dir_margin=0.0, pretext='mask'):
+    """GATE on the PROBE (representation content), NOT the loss.
 
-    The loss-based REAL/SHUFFLE/RANDOM control is BLIND for instance-discrimination
-    contrastive — pure noise scores as low as (or lower than) real, because the loss
-    measures distinguishability, not useful structure. So we gate on the probe: REAL must
-    encode regime/vol/structure BETTER than the vanilla backbone (mean_core_delta > margin)
-    and not collapse. The loss controls are reported only as diagnostics.
+    pretext='mask' (ORIGINAL stage-1, UNCHANGED): REAL must encode regime/vol/structure better
+    than vanilla (mean_core_delta > margin) and not collapse.
+
+    pretext='forecast' (stage-2, ANTI-SHORTCUT): a shortcut embedding can lift the easy in-window
+    DESCRIPTIVE stats (vol/trend_eff/range_expand) while the genuinely predictive FORWARD targets
+    barely move — so the descriptive average is not enough. We additionally require, vs vanilla:
+      * descriptive content does NOT regress      (descriptive_delta >= 0)
+      * FORWARD MOVE SIZE improves                 (fwd_absmove_delta > margin)
+      * FORWARD DIRECTION does NOT regress         (fwd_dir_delta >= dir_margin; default 0 =
+        non-regression — directional AUC is noisy, so the floor is 'don't get worse', with the
+        actual value always reported for the human / downstream-edge verdict)
     """
     no_collapse = bool(std > 0.01)
+    detail = {'no_collapse': no_collapse}
     if probe_res is None:
-        return no_collapse, {'no_collapse': no_collapse, 'probe': None}
-    ok = bool(probe_res['mean_core_delta'] > margin and no_collapse)
-    return ok, {'no_collapse': no_collapse,
-                'mean_core_delta': float(probe_res['mean_core_delta']),
-                'learns_regime_vol_structure': bool(probe_res['learns_regime_vol_structure'])}
+        return no_collapse, {**detail, 'probe': None}
+    detail.update({'mean_core_delta': float(probe_res['mean_core_delta']),
+                   'descriptive_delta': float(probe_res.get('descriptive_delta', 0.0)),
+                   'fwd_absmove_delta': float(probe_res.get('fwd_absmove_delta', 0.0)),
+                   'fwd_dir_delta': float(probe_res.get('fwd_dir_delta', 0.0)),
+                   'forward_score': float(probe_res.get('forward_score', 0.0)),
+                   'learns_regime_vol_structure': bool(probe_res['learns_regime_vol_structure'])})
+    if pretext == 'forecast':
+        desc_ok = bool(probe_res.get('descriptive_delta', 0.0) >= -1e-9)
+        fwd_size_ok = bool(probe_res.get('fwd_absmove_delta', 0.0) > margin)
+        fwd_dir_ok = bool(probe_res.get('fwd_dir_delta', 0.0) >= dir_margin)
+        ok = bool(no_collapse and desc_ok and fwd_size_ok and fwd_dir_ok)
+        detail.update({'descriptive_ok': desc_ok, 'fwd_size_ok': fwd_size_ok,
+                       'fwd_dir_ok': fwd_dir_ok})
+        return ok, detail
+    ok = bool(probe_res['mean_core_delta'] > margin and no_collapse)   # original mask gate
+    return ok, detail
 
 
 # ------------------------------------------------------------------------------- optuna
@@ -119,19 +138,21 @@ def _suggest_ssl(trial, pretext='mask'):
 
 def _tune_ssl(big, tr, va, base_cfg, *, n_trials=10, tune_epochs=8, tune_steps=80,
               seed=0, verbose=True):
-    """Optuna MAXIMIZING the probe delta (regime/vol/structure vs vanilla) on short REAL
-    runs — searching for a config that yields a more USEFUL representation, NOT a lower
-    contrastive loss (loss is blind: noise scores as well as real). Returns best config if
-    it beats the base probe delta, else base."""
+    """Optuna MAXIMIZING the probe — NOT a lower loss (loss is blind: noise scores as well as
+    real). Objective is pretext-matched: forecast (stage 2) maximizes the FORWARD-predictive
+    score (fwd move size + direction vs vanilla; anti-shortcut — the easy descriptive average
+    can't carry it); mask (stage 1, ORIGINAL) maximizes mean_core_delta as before. Returns the
+    best config if it beats the base, else base."""
     import optuna
     optuna.logging.set_verbosity(optuna.logging.WARNING)
+    pretext = base_cfg.get('pretext', 'mask')
 
     def delta_of(cfg):
         st, _ = _train(big, tr, va, dict(cfg, epochs=tune_epochs,
                                          steps_per_epoch=tune_steps, verbose=False), 'real')
         r = _probe_state(big, va, cfg['seq'], st, model_id=cfg['model_id'],
                          device=cfg['device'], seed=seed, verbose=False)
-        return float(r['mean_core_delta'])
+        return float(r['forward_score'] if pretext == 'forecast' else r['mean_core_delta'])
 
     base = delta_of(base_cfg)
 
@@ -144,7 +165,7 @@ def _tune_ssl(big, tr, va, base_cfg, *, n_trials=10, tune_epochs=8, tune_steps=8
     improved = study.best_value > base + 1e-4
     best = dict(base_cfg, **study.best_params) if improved else dict(base_cfg)
     if verbose:
-        print(f"  [optuna ssl] base_probe={base:+.4f} best_probe={study.best_value:+.4f} "
+        print(f"  [optuna ssl] base_fwd={base:+.4f} best_fwd={study.best_value:+.4f} "
               f"{'-> use tuned' if improved else '-> keep defaults'}", flush=True)
     return best, {'base_delta': base, 'best_delta': study.best_value, 'improved': improved}
 
@@ -224,7 +245,8 @@ def _base_cfg(**kw):
 
 def loop_ssl(data_dir=None, *, tickers=None, tfs=None, controls=('shuffle', 'random'),
              out_path='mantis_ssl_ohlcv.pt', probe=True, n_trials=10, max_iters=2,
-             probe_margin=0.0, holdout_start='2026-01-01', val_frac=0.1, **cfg_over):
+             probe_margin=0.0, dir_margin=0.0, holdout_start='2026-01-01', val_frac=0.1,
+             **cfg_over):
     """Probe-GATED, Optuna-tuned SSL. Each iter: train REAL -> PROBE vs vanilla -> gate on
     the PROBE (does it encode regime/vol/structure better than vanilla), NOT on the
     contrastive loss (which is blind — noise scores as well as real). If it doesn't pass,
@@ -245,20 +267,29 @@ def loop_ssl(data_dir=None, *, tickers=None, tfs=None, controls=('shuffle', 'ran
         if verbose:
             print(f"\n[ssl-loop] iter {it} · {src} config", flush=True)
         state, hist = _train(big, tr, va, cfg, 'real')
-        std = float(hist[-1]['std']); best_val = float(min(h['val_loss'] for h in hist))
+        std = float(hist[-1]['std'])
+        best_ep = min(hist, key=lambda h: h['val_loss'])
+        best_val = float(best_ep['val_loss'])
+        fc_skill = best_ep.get('skill')               # forecast skill vs copy-last-bar (None for mask)
         probe_res = (_probe_state(big, va, cfg['seq'], state, model_id=cfg['model_id'],
                                   device=cfg['device'], seed=cfg['seed'], verbose=verbose)
                      if probe else None)
-        ok, detail = _passes(probe_res, std, probe_margin)
-        history.append({'iter': it, 'source': src, 'best_val': best_val, 'std': std, **detail})
-        delta = (probe_res['mean_core_delta'] if probe_res else -1e9)
+        pretext = cfg.get('pretext', 'mask')
+        ok, detail = _passes(probe_res, std, probe_margin, dir_margin, pretext)
+        history.append({'iter': it, 'source': src, 'best_val': best_val, 'std': std,
+                        'forecast_skill': fc_skill, **detail})
+        # rank iters by the SAME quantity the gate keys on: forecast (stage 2) = FORWARD-
+        # predictive score (anti-shortcut); mask (stage 1, original) = descriptive mean_core.
+        delta = (-1e9 if probe_res is None else
+                 probe_res['forward_score'] if pretext == 'forecast' else probe_res['mean_core_delta'])
         if best is None or delta > best['delta']:
-            best = {'state': state, 'probe': probe_res, 'cfg': dict(cfg), 'delta': delta}
+            best = {'state': state, 'probe': probe_res, 'cfg': dict(cfg), 'delta': delta,
+                    'skill': fc_skill}
         if ok or it == max_iters - 1:
             break
         if verbose:
-            print(f"[ssl-loop] probe delta={delta:+.4f} <= {probe_margin} -> Optuna "
-                  f"(maximize probe)", flush=True)
+            metric = 'forward_score' if pretext == 'forecast' else 'mean_core_delta'
+            print(f"[ssl-loop] {metric}={delta:+.4f} (gate not passed) -> Optuna", flush=True)
         cfg, _ = _tune_ssl(big, tr, va, cfg, n_trials=n_trials, seed=cfg['seed'], verbose=verbose)
         cfg = _base_cfg(**cfg)                            # re-fill any popped defaults
 
@@ -266,6 +297,12 @@ def loop_ssl(data_dir=None, *, tickers=None, tfs=None, controls=('shuffle', 'ran
                         out_path=out_path, controls=controls, holdout_start=holdout_start,
                         val_frac=val_frac, streams=streams, history=history, verbose=verbose)
     verdict['history'] = history
+    if cfg.get('pretext') == 'forecast':                 # stage-2: forward-predictive diagnostics
+        verdict['forecast_skill'] = best.get('skill')    # >0 => beat copy-last-bar (anti-shortcut)
+        verdict['forward_score'] = best.get('delta')
+        if best.get('probe') is not None:
+            verdict['fwd_absmove_delta'] = float(best['probe'].get('fwd_absmove_delta', 0.0))
+            verdict['fwd_dir_delta'] = float(best['probe'].get('fwd_dir_delta', 0.0))
     return verdict
 
 
@@ -289,6 +326,7 @@ def main():
                    choices=['mask', 'forecast'])   # stage 1 = mask (BERT); stage 2 = seq2seq forecast
     p.add_argument('--horizon', type=int, default=int(os.environ.get('HORIZON', '16')))
     p.add_argument('--backbone-ckpt', default=os.environ.get('BACKBONE_CKPT'))  # warm-start (stage 2)
+    p.add_argument('--dir-margin', type=float, default=float(os.environ.get('DIR_MARGIN', '0.0')))
     p.add_argument('--seq', type=int, default=int(os.environ.get('SEQ', '64')))
     p.add_argument('--max-jitter', type=int, default=int(os.environ.get('MAX_JITTER', '8')))
     p.add_argument('--new-channels', type=int, default=int(os.environ.get('NEW_C', '8')))
@@ -313,7 +351,8 @@ def main():
              val_frac=a.val_frac, seq=a.seq, max_jitter=a.max_jitter,
              new_channels=a.new_channels, batch=a.batch, epochs=a.epochs,
              steps_per_epoch=a.steps, lr=a.lr, device=a.device, compile_model=a.compile,
-             seed=a.seed, pretext=a.pretext, horizon=a.horizon, backbone_ckpt=a.backbone_ckpt)
+             seed=a.seed, pretext=a.pretext, horizon=a.horizon, backbone_ckpt=a.backbone_ckpt,
+             dir_margin=a.dir_margin)
 
 
 if __name__ == '__main__':
