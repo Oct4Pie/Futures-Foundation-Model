@@ -52,6 +52,7 @@ print('Cloned')
 os.chdir('/content/Futures-Foundation-Model')
 os.system('pip install -e . -q 2>&1 | tail -1')
 os.system('pip install mantis-tsfm -q 2>&1 | tail -1')
+os.system('pip install optuna -q 2>&1 | tail -1')      # OPTUNA_SCAN / probe-gate tuning
 
 try:
     from futures_foundation.finetune import ssl, ssl_data
