@@ -299,13 +299,27 @@ def test_standardize_ctx_is_leak_safe():
     rng = np.random.default_rng(0)
     ctx = torch.as_tensor(rng.standard_normal((4, 5, 32)).astype(np.float32) * 3 + 7)
     fut = ctx[:, :, :8] * 10.0 + 100.0                             # very different level/scale
-    cs, fs = S._standardize_ctx(ctx, fut)
+    cs, fs = S._standardize_ctx(ctx, fut, clamp=100.0)       # high clamp: no saturation here
     assert torch.allclose(cs.mean(2), torch.zeros(4, 5), atol=1e-4)
     assert torch.allclose(cs.std(2, unbiased=True), torch.ones(4, 5), atol=1e-2)  # unbiased: matches code
     # fut standardized with context stats: recompute and compare (NOT standardized by its own)
     m = ctx.mean(2, keepdim=True); s = ctx.std(2, keepdim=True) + 1e-6
-    assert torch.allclose(fs, (fut - m) / s, atol=1e-5)
+    assert torch.allclose(fs, ((fut - m) / s).clamp(-100, 100), atol=1e-5)
     assert not torch.allclose(fs.mean(2), torch.zeros(4, 5), atol=1e-2)   # fut not self-normalized
+
+
+@torch_test
+def test_standardize_ctx_clamps_flat_context_blowup():
+    """The bug that detonated stage-2 training: a FLAT context window (near-zero std) divides a
+    real future move by ~0 -> astronomical standardized target. Clamp must bound it."""
+    import torch
+    from futures_foundation.finetune import _ssl_torch as S
+    ctx = torch.full((2, 5, 32), 100.0)                      # perfectly flat -> std ~ 0
+    ctx += torch.randn(2, 5, 32) * 1e-7                       # microscopic jitter (tiny std)
+    fut = torch.full((2, 5, 8), 130.0)                       # a real 30-pt move after compression
+    cs, fs = S._standardize_ctx(ctx, fut, clamp=10.0)
+    assert torch.isfinite(cs).all() and torch.isfinite(fs).all()
+    assert cs.abs().max() <= 10.0 + 1e-4 and fs.abs().max() <= 10.0 + 1e-4   # bounded, no blowup
 
 
 @torch_test

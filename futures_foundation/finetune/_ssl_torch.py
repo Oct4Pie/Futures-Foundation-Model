@@ -284,13 +284,22 @@ def train_ssl_mask(big, train_starts, val_starts, *, seq=64, new_channels=8, mas
 
 
 # ====================================== SEQ2SEQ FORECASTING (causal pretext, SSL stage 2)
-def _standardize_ctx(ctx, fut):
+def _standardize_ctx(ctx, fut, clamp=10.0):
     """z-score the CONTEXT window per channel, apply the SAME shift/scale to the future bars.
     Standardizing the future by its own stats would leak its mean/scale into the target —
-    using the context's stats keeps the forecast target strictly causal."""
+    using the context's stats keeps the forecast target strictly causal.
+
+    CLAMP (anti-blowup): a FLAT/compressed context window has near-zero std, so a real future
+    move divided by that tiny std explodes to astronomical standardized values -> exploding
+    gradients -> training diverges (train loss 5e4, val/persist blow up). Compressed windows
+    before a breakout are exactly the setups we care about, so this is the common case, not an
+    edge case. Clamping to +/-clamp bounds it: a big move out of compression saturates at
+    'large move' (direction preserved, magnitude capped) instead of detonating the loss."""
     m = ctx.mean(dim=2, keepdim=True)
     s = ctx.std(dim=2, keepdim=True) + 1e-6
-    return (ctx - m) / s, (fut - m) / s
+    cs = ((ctx - m) / s).clamp(-clamp, clamp)
+    fs = ((fut - m) / s).clamp(-clamp, clamp)
+    return cs, fs
 
 
 class ForecastNetwork(nn.Module):
@@ -324,7 +333,7 @@ def train_ssl_forecast(big, train_starts, val_starts, *, seq=64, horizon=16, new
                        epochs=60, steps_per_epoch=200, batch=512, lr=1e-4, weight_decay=0.05,
                        patience=8, device=None, model_id='paris-noah/Mantis-8M',
                        backbone_ckpt=None, compile_model=False, control='real', seed=0,
-                       amp_dtype='fp16', verbose=True, **_ignore):
+                       amp_dtype='fp16', grad_clip=1.0, clamp=10.0, verbose=True, **_ignore):
     """Causal seq2seq forecasting: encode `seq` context bars, predict the next `horizon` bars
     (MSE, context-standardized). Returns (best_encoder_state, history). Warm-start the encoder
     from the masked-SSL stage-1 ckpt via backbone_ckpt.
@@ -364,7 +373,7 @@ def train_ssl_forecast(big, train_starts, val_starts, *, seq=64, horizon=16, new
             w = _time_shuffle(w)                             # no causal continuation survives
         elif control == 'random':
             w = torch.randn_like(w)
-        return _standardize_ctx(w[:, :, :seq], w[:, :, seq:])
+        return _standardize_ctx(w[:, :, :seq], w[:, :, seq:], clamp=clamp)
 
     def _target(ctx, fut):
         """Forecast the forward PATH relative to 'now' = future bars minus the last context bar.
@@ -399,7 +408,11 @@ def train_ssl_forecast(big, train_starts, val_starts, *, seq=64, horizon=16, new
             opt.zero_grad(set_to_none=True)
             with amp_ctx():
                 loss = _fc_loss(*_ctx_fut(tr))
-            scaler.scale(loss).backward(); scaler.step(opt); scaler.update()
+            scaler.scale(loss).backward()
+            scaler.unscale_(opt)                              # unscale before clipping (AMP)
+            torch.nn.utils.clip_grad_norm_(                   # stability: cap gradient norm
+                [p for p in net.parameters() if p.requires_grad], grad_clip)
+            scaler.step(opt); scaler.update()
             tr_tot += float(loss.detach())
         sched.step()
         if dev == 'cuda':
