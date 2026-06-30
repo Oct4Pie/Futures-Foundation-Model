@@ -377,41 +377,46 @@ def train_ssl_forecast(big, train_starts, val_starts, *, seq=64, horizon=16, new
     w_t = (None if channel_weights is None else
            torch.as_tensor(np.asarray(channel_weights, np.float32), device=dev).view(1, C, 1))
 
-    def _ctx_fut(starts):
+    def _batch(starts):
+        """Return (model_ctx, target) for a batch. APPLES-TO-APPLES controls: the TARGET and the
+        persistence baseline are ALWAYS the REAL forward delta (fut - real last context bar) —
+        only the MODEL'S INPUT context is corrupted per control. So real/shuffle/random solve the
+        identical task against the identical baseline, differing only in whether the model gets
+        real temporal info -> skill is directly comparable (expected: real > shuffle > random~0).
+        The 'real' path (and thus the saved checkpoint) is unchanged by this."""
         b_idx = torch.randint(0, len(starts), (batch,), device=dev, generator=gen)
-        w = _gather_batch(big_t, starts, b_idx, parent)      # [B,C,seq+horizon] raw
+        w = _gather_batch(big_t, starts, b_idx, parent)      # [B,C,seq+horizon] REAL raw
+        cs, fs = _standardize_ctx(w[:, :, :seq], w[:, :, seq:], clamp=clamp)
+        # TARGET = forward PATH relative to 'now' = future minus the REAL last context bar. This
+        # kills the persistence shortcut ('copy last bar' -> 'predict zero', which the loss
+        # punishes) so the encoder must learn signed forward movement. Identical across controls.
+        target = fs - cs[:, :, -1:]                          # [B,C,horizon]
         if control == 'shuffle':
-            w = _time_shuffle(w)                             # no causal continuation survives
+            model_ctx = _time_shuffle(cs)                    # scramble ONLY the input's time order
         elif control == 'random':
-            w = torch.randn_like(w)
-        return _standardize_ctx(w[:, :, :seq], w[:, :, seq:], clamp=clamp)
-
-    def _target(ctx, fut):
-        """Forecast the forward PATH relative to 'now' = future bars minus the last context bar.
-        This DELETES the persistence shortcut by construction: 'copy the last bar' (the trivial
-        MSE minimizer on absolute levels) becomes 'predict zero' here, which the loss punishes —
-        so the encoder is FORCED to learn signed forward movement (direction + magnitude), the
-        trend content we actually want. ctx/fut are already context-z-scored."""
-        return fut - ctx[:, :, -1:]                          # [B,C,horizon] forward delta path
+            model_ctx = torch.randn_like(cs)                 # input carries no real info
+        else:
+            model_ctx = cs                                   # real (unchanged)
+        return model_ctx, target
 
     def _wmean(se):                                          # (weighted) mean of a squared-error tensor
         return (se * w_t).mean() if w_t is not None else se.mean()
 
-    def _fc_loss(ctx, fut):
-        return _wmean((net(ctx) - _target(ctx, fut)) ** 2)   # (weighted) MSE on the forward DELTA path
+    def _fc_loss(model_ctx, target):
+        return _wmean((net(model_ctx) - target) ** 2)        # (weighted) MSE on the forward DELTA path
 
-    def _persist_loss(ctx, fut):
-        return _wmean(_target(ctx, fut) ** 2)                # predict-zero = copy-last-bar baseline
+    def _persist_loss(target):
+        return _wmean(target ** 2)                           # predict-zero = copy-last-bar (same baseline)
 
     @torch.no_grad()
     def val_eval():
         net.eval(); tot = 0.0; ptot = 0.0; nb = min(20, max(1, len(va) // batch))
         for _ in range(nb):
-            ctx, fut = _ctx_fut(va)
+            mc, tg = _batch(va)
             with amp_ctx():
-                tot += float(_fc_loss(ctx, fut))
-            ptot += float(_persist_loss(ctx, fut))
-        estd = float(net.embed(_ctx_fut(va)[0]).std(0).mean())
+                tot += float(_fc_loss(mc, tg))
+            ptot += float(_persist_loss(tg))
+        estd = float(net.embed(_batch(va)[0]).std(0).mean())
         net.train()
         return tot / nb, ptot / nb, estd
 
@@ -421,7 +426,7 @@ def train_ssl_forecast(big, train_starts, val_starts, *, seq=64, horizon=16, new
         for _ in range(steps_per_epoch):
             opt.zero_grad(set_to_none=True)
             with amp_ctx():
-                loss = _fc_loss(*_ctx_fut(tr))
+                loss = _fc_loss(*_batch(tr))
             scaler.scale(loss).backward()
             scaler.unscale_(opt)                              # unscale before clipping (AMP)
             torch.nn.utils.clip_grad_norm_(                   # stability: cap gradient norm

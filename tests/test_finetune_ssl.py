@@ -390,6 +390,26 @@ def test_train_ssl_forecast_runs_and_warmstarts(tmp_path):
 
 
 @torch_test
+def test_forecast_controls_share_real_persistence_baseline():
+    """Apples-to-apples controls: real/shuffle/random must share the SAME persistence baseline
+    (the target = real forward delta is identical; only the model's INPUT context is corrupted).
+    A control whose persist baseline differed from real would make skill non-comparable."""
+    import torch
+    from futures_foundation.finetune import _ssl_torch as S
+    rng = np.random.default_rng(3)
+    big = (100 + np.cumsum(rng.standard_normal((1500, 5)) * 0.1, 0)).astype(np.float32)
+    starts = np.arange(0, 1400, 4)
+    p = {}
+    for ctrl in ('real', 'shuffle', 'random'):
+        _, hist = S.train_ssl_forecast(big, starts, starts[-60:], seq=32, horizon=16,
+                                       new_channels=4, epochs=1, steps_per_epoch=2, batch=32,
+                                       device='cpu', control=ctrl, seed=0, verbose=False)
+        p[ctrl] = np.mean([h['persist_loss'] for h in hist])
+    # same seed -> same val batches -> identical persistence baseline across controls (target is real)
+    assert abs(p['real'] - p['shuffle']) < 1e-4 and abs(p['real'] - p['random']) < 1e-4
+
+
+@torch_test
 def test_train_ssl_forecast_channel_weighted(tmp_path):
     """Channel-weighted loss (price-path) runs; skill stays finite. With volume zeroed, the
     loss/skill exclude volume -> pure price skill, and the encoder ckpt still loads downstream."""
