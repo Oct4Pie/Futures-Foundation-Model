@@ -58,8 +58,8 @@ The flow is two stages over one shared backbone:
 raw OHLCV (9 tickers × 1/3/5/15min)
         │
         ▼  Stage 1 — SELF-SUPERVISED PRETRAIN  (finetune/ssl.py, GPU/Colab)
-   temporal contrastive learning  ──►  adapted backbone checkpoint
-        │                               (learns regime / structure / volatility)
+   masked modeling: mask bars → reconstruct  ──►  adapted backbone checkpoint
+        │                                          (learns regime / structure / volatility)
         ▼  Stage 2 — FINETUNE  (finetune/wf.py → produce.py)
    strategy labeler + light classifier head  ──►  ONNX bundle the bot loads
 ```
@@ -72,21 +72,21 @@ raw OHLCV (9 tickers × 1/3/5/15min)
 
 ## Self-Supervised Pretraining (the BERT stage)
 
-**`futures_foundation/finetune/ssl.py` — generic temporal contrastive learning that adapts the backbone to our markets, with the same generalization discipline as the strategy pipeline.**
+**`futures_foundation/finetune/ssl.py` — generic *masked modeling* on raw OHLCV (literally BERT's pretext), adapting the backbone to our markets with the same generalization discipline as the strategy pipeline.**
 
-Two augmented views of the *same* OHLCV window (slight time shifts, different window sizes, jitter, scale, magnitude-warp) are pulled together with an **NT-Xent** contrastive loss; all other windows in the (large) batch are pushed apart. To tell windows apart, the encoder must encode their temporal shape — so it learns volatility, regime, and compression→expansion structure. It runs GPU-maximized (data resident on GPU, vectorized GPU augmentations, large batch, AMP).
+A random fraction of bars in each OHLCV window is **masked**, and the encoder must **reconstruct the masked bars from their surrounding context** (MSE on the masked positions only). To fill a gap, the model has to know what *normally* comes next given the local regime — so it learns volatility, structure, and compression→expansion dynamics. (Masked positions are filled with noise rather than zeroed, so the backbone's per-patch instance-norm never divides by zero.) It runs GPU-maximized (data resident on GPU, large batch, AMP).
+
+We chose masked modeling over contrastive learning deliberately: contrastive proved **gameable** here — shuffled and noise windows scored as well as real ones, so the loss wasn't certifying that real temporal structure was learned. Masked reconstruction has a clean, shortcut-proof control (below).
 
 It is **overfit-gated and Optuna-tuned**, mirroring the strategy pipeline:
 
 | Gate | What it checks |
 |---|---|
 | Time-split val early-stop | generalizes forward in time (2026 excluded) |
-| REAL vs SHUFFLE vs RANDOM | REAL must reach a lower val loss than time-shuffled and noise windows → it learned *real* temporal structure |
-| Collapse guard | embedding std / alignment / uniformity — the contrastive failure mode |
-| Optuna | if it doesn't generalize, tune lr / temperature / regularization / augmentation strength until it does |
-| **Final probe** | a linear probe shows the frozen embedding predicts **regime / volatility / structure** better than the un-adapted backbone — the "useful for downstream" check |
-
-**Output:** an adapted backbone checkpoint (saved to Drive on Colab). Downstream finetuning initializes from it via `backbone_ckpt`. A Colab runner under [`colab/`](colab/) handles clone → install → Drive data path → run.
+| **REAL vs SHUFFLE vs RANDOM reconstruction** | the decisive pretext control: REAL must reach a far lower masked-reconstruction loss than time-shuffled and pure-noise windows. Observed REAL ≈ 0.35 vs SHUFFLE/RANDOM ≈ 0.97/0.98 → the encoder is reconstructing from genuine temporal structure, not a copy trick |
+| NaN / variance guard | masked bars noise-filled so per-patch instance-norm stays finite |
+| Optuna | if it doesn't generalize, tune lr / weight-decay / mask-ratio / channel-adapter width until it does |
+| Linear probe (soft) | a linear probe reads regime / vol / structure off the frozen embedding — *informative but non-discriminating on its own* (generic domain-adaptation can pass it even for a noise-trained backbone). The **reconstruction control above** is the valid temporal test; the **downstream walk-forward A/B** is the decisive one |
 
 ---
 
@@ -100,7 +100,14 @@ from futures_foundation.finetune.classifier import get_classifier
 clf = get_classifier(BACKBONE, backbone_ckpt='ssl_ohlcv.pt', ft_mode='partial')
 ```
 
-- **Pretrained classification backbone** — a foundation model + a per-strategy channel adapter + a light head, finetuned end-to-end and initialized from the SSL checkpoint via `backbone_ckpt`. It runs in an **isolated torch subprocess** (the parent stays torch-free) so torch never collides with other native libraries in one process. **Currently supported:** one such backbone (installed via its own package); **additional pretrained classification foundation models are planned behind the same interface.**
+Two ways to attach the backbone — both initialize from the SSL checkpoint via `backbone_ckpt`, both run torch in an **isolated subprocess** (the parent stays torch-free, so torch never collides with other native libraries in one process):
+
+- **End-to-end fine-tune** — foundation model + per-strategy channel adapter + light head, all trained together. Maximum capacity; the backbone specializes to the task.
+- **Frozen head-only** — embed each window **once** through the frozen encoder, then train a cheap **logistic or MLP head** per fold on the cached embedding (optionally concatenated with hand-crafted geometry features). This is the "embed once → head per fold" pattern: fast enough to iterate on local hardware, and a clean linear/​shallow probe of what the representation actually carries.
+  - **Cross-run embedding cache** — the frozen embedding is deterministic in `(backbone_ckpt, bars, window spec)`, so it's cached to disk keyed on exactly those. The expensive embed cost is **paid once per backbone**: reruns, head swaps (logistic↔MLP), and interpretability checks reuse the cached vectors instead of re-embedding. `EMBED_CACHE=0` disables; `EMBED_CACHE_DIR` relocates it.
+
+**Currently supported:** one pretrained classification backbone (installed via its own package), in both attach modes; **additional pretrained classification foundation models are planned behind the same interface.**
+
 - **`logistic`** — a torch-free baseline / test vehicle for the whole pipeline.
 - **Add your own backbone** by implementing `featurize()` + `fit_predict()` and registering it — the walk-forward, produce, and ONNX paths are all classifier-agnostic.
 
@@ -191,11 +198,11 @@ Raw OHLCV is the backbone's input. For strategies that fuse hand-crafted geometr
 Futures-Foundation-Model/
 ├── futures_foundation/                # Foundation package (torch-free to import)
 │   ├── finetune/                      # ★ The model-agnostic classification pipeline
-│   │   ├── ssl.py / ssl_data.py       #   SSL temporal-contrastive pretraining (BERT stage)
-│   │   ├── _ssl_torch.py              #   GPU-max contrastive trainer (subprocess/Colab)
-│   │   ├── ssl_probe.py               #   linear probe: regime / vol / structure
+│   │   ├── ssl.py / ssl_data.py       #   SSL masked-modeling pretraining (BERT stage)
+│   │   ├── _ssl_torch.py              #   GPU-max masked trainer + frozen embed_windows (subprocess/Colab)
+│   │   ├── ssl_probe.py               #   linear probe: regime / vol / structure (soft signal)
 │   │   ├── classifier.py              #   Classifier ABC + get_classifier registry (the seam)
-│   │   ├── classifiers/               #   pluggable pretrained backbones + logistic baseline
+│   │   ├── classifiers/               #   end-to-end FT + frozen head-only (cached embeddings) + logistic
 │   │   ├── wf.py                      #   streamed walk-forward honest ruler + overfit→Optuna
 │   │   ├── produce.py                 #   production trainer + 2026 OOS + ONNX + contract
 │   │   ├── tune.py / loop.py          #   Optuna search + overfit-driven loop
@@ -210,17 +217,6 @@ Futures-Foundation-Model/
 ├── tests/                             # Unit tests (pre-commit gated; torch-free by contract)
 └── data/                              # Raw OHLCV CSVs (gitignored)
 ```
-
----
-
-## Roadmap
-
-- [x] Model-agnostic classifier seam (`finetune.classifier`) — backbone swappable behind one interface
-- [x] Self-supervised temporal-contrastive pretraining on raw OHLCV (BERT stage), overfit-gated + Optuna + probe
-- [ ] Pretrain the backbone on the full corpus (GPU/Colab) → downstream strategy walk-forward A/B vs the un-adapted backbone
-- [ ] Additional pretrained classification foundation models behind the same seam
-- [ ] Multivariate context beyond OHLCV (order-flow) as the next information rung
-
 ---
 
 ## License
