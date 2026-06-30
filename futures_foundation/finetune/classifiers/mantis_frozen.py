@@ -171,8 +171,15 @@ class MantisFrozenClassifier(Classifier):
     def _with_features(self, labeler, keys, emb):
         # concat the strategy's handcraft features (HTF dir / session / structure / ...) ->
         # [emb | handcraft], like the old Chronos fractal. Off via with_features=False.
+        # keep_handcraft=[names] -> LEAN: keep only those handcraft columns (drop the rest).
         if self.cfg.get('with_features', True) and hasattr(labeler, 'features'):
             feats = np.nan_to_num(np.asarray(labeler.features(keys), np.float32))
+            keep = self.cfg.get('keep_handcraft')
+            if keep and hasattr(labeler, 'feature_names'):
+                names = list(labeler.feature_names())
+                keepset = set(keep)
+                idx = [i for i, n in enumerate(names) if n in keepset]
+                feats = feats[:, idx]                       # lean handcraft block
             emb = np.concatenate([emb, feats], axis=1)     # [N, emb_dim + F]
         return emb[:, :, None]                             # -> [N, D, 1] for the memmap
 
