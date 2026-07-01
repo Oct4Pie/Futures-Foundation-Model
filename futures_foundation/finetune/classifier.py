@@ -25,6 +25,14 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 
+# ── BASE FOUNDATION CHECKPOINT — the default starting point for ANY new strategy finetune ──
+# New strategies finetune ON TOP of the best SSL foundation, never from vanilla Mantis. This is
+# the SINGLE source of truth: point it at whichever SSL checkpoint currently wins the OHLCV-only
+# WR@3R benchmark, and every strategy inherits the lift automatically. Update in ONE place.
+#   stage-2 (ctx200 candle seq2seq)      = mantis_ssl_seq2seq.pt     ← current base (+4.8 vs vanilla)
+#   stage-3 (trend contrastive)          = mantis_ssl_contrastive.pt ← promote here IFF it beats stage-2
+BASE_BACKBONE_CKPT = 'checkpoints/mantis_ssl_seq2seq.pt'
+
 
 class Classifier(ABC):
     n_classes: int = 2

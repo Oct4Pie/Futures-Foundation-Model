@@ -211,6 +211,10 @@ __marimo__/
 # Local outputs (model files, exports, results)
 output/
 checkpoints/*.pt
+# ...but the SSL FOUNDATION checkpoints ARE tracked (the base starting point for strategies)
+!checkpoints/mantis_ssl_ohlcv.pt
+!checkpoints/mantis_ssl_seq2seq.pt
+!checkpoints/mantis_ssl_contrastive.pt
 *.joblib
 
 # Claude Code memory
