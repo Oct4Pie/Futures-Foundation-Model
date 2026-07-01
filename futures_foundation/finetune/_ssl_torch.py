@@ -398,14 +398,19 @@ def train_ssl_forecast(big, train_starts, val_starts, *, horizons=(5, 10, 20, 25
     @torch.no_grad()
     def val_eval():
         net.eval(); tot = 0.0; ptot = 0.0; nb = min(20, max(1, len(va) // batch))
+        toth = torch.zeros(len(hlist), device=dev)       # per-horizon accum: is 20/25 learning?
+        ptoth = torch.zeros(len(hlist), device=dev)
         for _ in range(nb):
             mc, tg = _batch(va)
             with amp_ctx():
-                tot += float(_fc_loss(mc, tg))
-            ptot += float(_persist_loss(tg))
+                pred = net(mc)                            # [B,C,nH] — one forward, split by horizon
+            se = (pred.float() - tg) ** 2                 # [B,C,nH]
+            tot += float(se.mean()); ptot += float((tg ** 2).mean())
+            toth += se.mean(dim=(0, 1)); ptoth += (tg ** 2).mean(dim=(0, 1))
         estd = float(net.embed(_batch(va)[0]).std(0).mean())
         net.train()
-        return tot / nb, ptot / nb, estd
+        skill_h = (1.0 - toth / ptoth.clamp_min(1e-12)).cpu().tolist()   # skill per horizon
+        return tot / nb, ptot / nb, estd, skill_h
 
     best, best_state, bad, history = 1e18, None, 0, []
     for ep in range(epochs):
@@ -423,10 +428,11 @@ def train_ssl_forecast(big, train_starts, val_starts, *, horizons=(5, 10, 20, 25
         sched.step()
         if dev == 'cuda':
             torch.cuda.empty_cache()
-        vloss, ploss, estd = val_eval()
+        vloss, ploss, estd, skill_h = val_eval()
         skill = float(1.0 - vloss / ploss) if ploss > 1e-12 else 0.0   # >0 => beats copy-last-bar
         history.append({'epoch': ep, 'train_loss': tr_tot / steps_per_epoch,
-                        'val_loss': vloss, 'persist_loss': ploss, 'skill': skill, 'std': estd})
+                        'val_loss': vloss, 'persist_loss': ploss, 'skill': skill,
+                        'skill_per_h': dict(zip(hlist, skill_h)), 'std': estd})
         improved = vloss < best - 1e-5
         if improved:
             best, bad = vloss, 0
@@ -435,8 +441,9 @@ def train_ssl_forecast(big, train_starts, val_starts, *, horizons=(5, 10, 20, 25
         else:
             bad += 1
         if verbose:
+            ph = ' '.join(f"h{h}={s:+.2f}" for h, s in zip(hlist, skill_h))   # per-horizon: 20/25?
             print(f"  ep{ep:>3} train={tr_tot / steps_per_epoch:.4f} val={vloss:.4f} "
-                  f"persist={ploss:.4f} skill={skill:+.3f} emb_std={estd:.4f}"
+                  f"persist={ploss:.4f} skill={skill:+.3f} [{ph}] emb_std={estd:.4f}"
                   f"{'  *' if improved else ''}", flush=True)
         if bad >= patience:
             break
