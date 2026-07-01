@@ -6,9 +6,8 @@
 # Warm-starts from the stage-1 masked-SSL encoder (mantis_ssl_ohlcv.pt) and continues
 # training with a forecasting objective:
 #
-#   * VARIABLE CONTEXT  — each step samples a context length (128/256/384/512 bars), so the
-#     encoder learns short AND long history (512 = Mantis native, 1:1; shorter interpolated up).
-#     Long context gives the FAR horizons (20/25) the history to call trend vs chop.
+#   * VARIABLE CONTEXT  — each step samples a context length (64/100/150/200 bars), so the
+#     encoder learns short AND long history (scale-invariant; interpolated to Mantis's 512).
 #   * MULTI-HORIZON     — predict the future CANDLE (OHLCV) at EACH horizon 5/10/20/25 bars ahead
 #     (near AND far), forcing multi-timescale trend understanding.
 #   * CANDLE TARGET      — predict the actual future candles, CONTEXT-STANDARDIZED (per-channel
@@ -68,7 +67,7 @@ VAL_FRAC      = 0.1
 
 # ── MULTI-HORIZON / VARIABLE-CONTEXT candle forecast ──
 HORIZONS        = (5, 10, 20, 25)             # predict the CANDLE at each (near..far), in bars
-CONTEXT_LENGTHS = (128, 256, 384, 512)        # sample a context length per step (short..long); 512 = Mantis native (1:1, no interp)
+CONTEXT_LENGTHS = (64, 100, 150, 200)         # sample a context length per step (short..long)
 NEW_CHANNELS    = 8                            # channel-combiner output (OHLCV=5 -> NEW_CHANNELS)
 
 # ── TRAINING (GPU-max) ──
