@@ -478,3 +478,36 @@ def test_contrastive_save_resume_and_control_guard(tmp_path):
                             epochs=1, steps_per_epoch=2, batch=16, device='cpu', control='shuffle',
                             ckpt_path=ck, verbose=False)
     assert os.path.getmtime(ck) == before                              # shuffle control didn't save
+
+
+# ---------------------------------------------- stage-2 forecast: optional DIRECTION-head squeeze
+def test_base_cfg_has_direction_keys():
+    cfg = ssl._base_cfg()
+    assert cfg['dir_weight'] == 0.0 and cfg['dir_close_ch'] == 3      # off by default (backward-compat)
+    assert ssl._base_cfg(dir_weight=0.5)['dir_weight'] == 0.5
+
+
+@torch_test
+def test_forecast_direction_head_optional_and_backcompat():
+    """dir_weight=0 -> net returns candles only (backward-compat); use_direction=True -> net returns
+    (candles, dir_logits [B,nH]); trainer with dir_weight>0 reports a val 'dir_acc'."""
+    import torch
+    from futures_foundation.finetune import _ssl_torch as S
+    # backward-compat: default net returns candles ONLY
+    net0 = S.MultiHorizonForecastNet(C=5, new_channels=4, horizons=(5, 10, 20)).to('cpu')
+    out0 = net0(torch.randn(6, 5, 64))
+    assert isinstance(out0, torch.Tensor) and out0.shape == (6, 5, 3)
+    # direction on: net returns (candles, dir_logits)
+    netd = S.MultiHorizonForecastNet(C=5, new_channels=4, horizons=(5, 10, 20), use_direction=True).to('cpu')
+    candles, dir_logits = netd(torch.randn(6, 5, 64))
+    assert candles.shape == (6, 5, 3) and dir_logits.shape == (6, 3)
+    # trainer with dir_weight>0 runs + reports dir_acc in history
+    rng = np.random.default_rng(0)
+    big = (100 + np.cumsum(rng.standard_normal((3000, 5)) * 0.1, 0)).astype(np.float32)
+    big[:, 4] = np.abs(big[:, 4]) * 100 + 500
+    hz, cl = (5, 10, 20), (32, 48); starts = np.arange(0, 3000 - 68 - 1, 4)
+    _, hist = S.train_ssl_forecast(big, starts, starts[-50:], horizons=hz, context_lengths=cl,
+                                   new_channels=4, epochs=2, steps_per_epoch=3, batch=16, device='cpu',
+                                   control='real', dir_weight=0.5, verbose=False)
+    assert 'dir_acc' in hist[-1] and 0.0 <= hist[-1]['dir_acc'] <= 1.0
+    assert np.isfinite(hist[-1]['val_loss']) and 'skill' in hist[-1]    # candle metrics still there

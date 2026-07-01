@@ -69,6 +69,11 @@ VAL_FRAC      = 0.1
 HORIZONS        = (5, 10, 20, 25)             # predict the CANDLE at each (near..far), in bars
 CONTEXT_LENGTHS = (64, 100, 150, 200)         # sample a context length per step (short..long)
 NEW_CHANNELS    = 8                            # channel-combiner output (OHLCV=5 -> NEW_CHANNELS)
+DIR_WEIGHT      = 0.5                          # >0 = ADD a DIRECTION-head squeeze: BCE on sign(fwd close
+                                              # move) alongside the candle MSE -> trains the encoder to
+                                              # be DIRECTION-aware (WR is sign-dominated; MSE alone
+                                              # mean-regresses the sign away). Watch val 'dir'>0.5.
+                                              # 0 = original pure-candle stage-2 (backward-compat).
 
 # ── TRAINING (GPU-max) ──
 BATCH   = 1024        # drop to 512/768 if OOM
@@ -116,7 +121,7 @@ verdict = ssl.loop_ssl(
     new_channels=NEW_CHANNELS, batch=BATCH, epochs=EPOCHS, steps_per_epoch=STEPS, lr=LR,
     patience=PATIENCE, clamp=CLAMP, grad_clip=GRAD_CLIP, val_frac=VAL_FRAC,
     holdout_start=HOLDOUT_START, controls=CONTROLS, probe=PROBE,
-    resume=RESUME, freeze_encoder_layers=FREEZE_ENCODER_LAYERS,
+    resume=RESUME, freeze_encoder_layers=FREEZE_ENCODER_LAYERS, dir_weight=DIR_WEIGHT,
     device=device.type, seed=SEED)
 
 print('\n' + '=' * 60 + '\n  SSL STAGE 2 (multi-horizon seq2seq) VERDICT\n' + '=' * 60)
