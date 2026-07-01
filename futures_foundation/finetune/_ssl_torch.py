@@ -55,6 +55,18 @@ def _time_shuffle(x):
     return torch.gather(x, 2, perm[:, None, :].expand(B, C, T))
 
 
+def _apply_control(x, control):
+    """Corrupt ONLY the model INPUT per the apples-to-apples control: 'shuffle' scrambles the time
+    axis, 'random' replaces with noise, else (real) passes through. The target/trend-key is always
+    computed from the REAL context by the caller -> real must beat shuffle/random. Shared by every
+    pretext trainer (mask/forecast/contrastive) so the control logic lives in one place."""
+    if control == 'shuffle':
+        return _time_shuffle(x)
+    if control == 'random':
+        return torch.randn_like(x)
+    return x
+
+
 def _gather_batch(big, starts, b_idx, length):
     """big [T, C] -> windows [B, C, length] for the start positions starts[b_idx]."""
     s = starts[b_idx]                                    # [B]
@@ -228,11 +240,7 @@ def train_ssl_mask(big, train_starts, val_starts, *, seq=64, new_channels=8, mas
     def _win(starts):
         b_idx = torch.randint(0, len(starts), (batch,), device=dev, generator=gen)
         w = _gather_batch(big_t, starts, b_idx, seq)         # [B,C,seq] raw
-        if control == 'shuffle':
-            w = _time_shuffle(w)
-        elif control == 'random':
-            w = torch.randn_like(w)
-        return _standardize(w)                               # per-window z-score
+        return _standardize(_apply_control(w, control))      # corrupt input per control, then z-score
 
     def _recon_loss(w):
         m = torch.rand(w.shape[0], seq, device=dev, generator=gen) < mask_ratio   # [B,seq]
@@ -381,12 +389,7 @@ def train_ssl_forecast(big, train_starts, val_starts, *, horizons=(5, 10, 20, 25
         fs = ((fut_raw - m) / s).clamp(-clamp, clamp)        # standardized future candles
         # TARGET = future candle at each horizon, as a move FROM 'now' (anti-shortcut: copy-now == 0).
         target = fs[:, :, h_off] - cs[:, :, -1:]             # [B,C,nH]
-        if control == 'shuffle':
-            model_ctx = _time_shuffle(cs)                    # scramble ONLY the input's time order
-        elif control == 'random':
-            model_ctx = torch.randn_like(cs)                 # input carries no real info
-        else:
-            model_ctx = cs                                   # real
+        model_ctx = _apply_control(cs, control)              # corrupt ONLY the input (apples-to-apples)
         return model_ctx, target
 
     def _fc_loss(model_ctx, target):
@@ -453,3 +456,165 @@ def train_ssl_forecast(big, train_starts, val_starts, *, horizons=(5, 10, 20, 25
 class _nullctx:
     def __enter__(self): return None
     def __exit__(self, *a): return False
+
+
+# ============================================================ STAGE-3 (experiment): TREND CONTRASTIVE
+# Reuses Mantis's InfoNCE machinery (normalized-sim + temperature + projection head +
+# RandomCropResize) but ADAPTS the objective for TREND DETECTION: single-positive instance
+# discrimination -> MULTI-POSITIVE (SupCon mechanics) grouped by a SELF-SUPERVISED CAUSAL trend
+# key. Same-trend windows become POSITIVES (pulled together), not negatives -> fixes the
+# false-negative problem that makes plain InfoNCE fail at grouping. Warm-start from stage-2
+# (ctx200). Fallback = stage-2 if it doesn't beat the ctx200 trend-AUC/WR@3R baseline (judged
+# offline via scratchpad/trend_learn_analysis.py + ridgeR_2026_wr_lean.py).
+
+def _random_crop_resize(x, crop_max=0.2):
+    """Mantis RandomCropResize (multichannel): crop a random 0..crop_max fraction off the time
+    axis (random start), interpolate back to the original length. Preserves trend SHAPE while
+    varying crop position/scale = the nuisance we want invariance to. One augmented VIEW."""
+    B, C, L = x.shape
+    cr = float(torch.empty(1, device=x.device).uniform_(0.0, float(crop_max)).item())
+    cl = max(8, int(L * (1.0 - cr)))
+    start = int(torch.randint(0, L - cl + 1, (1,)).item())
+    return F.interpolate(x[:, :, start:start + cl], size=L, mode='linear', align_corners=False)
+
+
+def _trend_key(ctx, close_ch=3):
+    """SELF-SUPERVISED, CAUSAL trend key per window from PAST bars ONLY (no future, no label).
+    Signature = (direction bucket, magnitude bucket) of the trailing least-squares slope on the
+    CLOSE channel over the window the model sees (ends at 'now'). Windows sharing a key = 'same
+    trend character' = POSITIVES for the multi-positive InfoNCE. Leak-free: uses only context."""
+    B, C, L = ctx.shape
+    close = ctx[:, min(close_ch, C - 1), :]                # [B, L] standardized close
+    t = torch.linspace(-1, 1, L, device=ctx.device); tc = t - t.mean()
+    slope = (close * tc).sum(1) / (tc * tc).sum().clamp_min(1e-6)     # [B] causal trailing slope
+    dz = slope.abs().median().clamp_min(1e-6) * 0.5        # deadzone -> a flat/chop bucket
+    dir_b = (torch.sign(slope) * (slope.abs() > dz)).long() + 1       # 0/1/2 = down/flat/up
+    mag = slope.abs()
+    q1 = torch.quantile(mag, 0.5); q2 = torch.quantile(mag, 0.85)
+    mag_b = (mag > q1).long() + (mag > q2).long()          # 0/1/2 = weak/med/strong
+    return (dir_b * 3 + mag_b).long()                      # [B] key in [0,9)
+
+
+def _multi_positive_infonce(z, key, inst, temperature):
+    """SupCon-style multi-positive InfoNCE over a 2-view batch. z:[N,D] L2-normalized. key:[N]
+    self-supervised trend key; inst:[N] instance id (the two crop views share it). Positive(i) =
+    {j!=i : key[j]==key[i] OR inst[j]==inst[i]}. Trend-key positives PULL same-trend windows
+    together (fixes false-negatives); instance positives keep the crop-invariance. Anchors with
+    no positive contribute 0."""
+    N = z.shape[0]
+    sim = (z @ z.t()) / temperature
+    eye = torch.eye(N, dtype=torch.bool, device=z.device)
+    sim = sim.masked_fill(eye, -1e9)                       # drop self-similarity
+    logp = sim - torch.logsumexp(sim, dim=1, keepdim=True) # log-softmax over the N-1 others
+    pos = ((key[:, None] == key[None, :]) | (inst[:, None] == inst[None, :])) & ~eye
+    cnt = pos.sum(1)
+    loss = -(logp * pos).sum(1) / cnt.clamp_min(1)         # avg positive log-prob per anchor
+    valid = cnt > 0
+    return loss[valid].mean() if valid.any() else (z.sum() * 0.0)
+
+
+class ContrastiveTrendNet(nn.Module):
+    """Mantis encoder + channel adapter + SimCLR-style projection head (Mantis 'prj'). embed(x) =
+    per-channel encode + concat (the SAME embedding downstream consumes via backbone_ckpt);
+    forward(x) = L2-normalized projection for the contrastive loss (head discarded after)."""
+    def __init__(self, C=5, new_channels=8, proj_dim=128, model_id='paris-noah/Mantis-8M'):
+        super().__init__()
+        from mantis.architecture import Mantis8M
+        from mantis.adapters import LinearChannelCombiner
+        self.encoder = Mantis8M.from_pretrained(model_id)
+        hidden = getattr(self.encoder, 'hidden_dim', 256)
+        self.new_c = min(new_channels, C)
+        self.adapter = LinearChannelCombiner(num_channels=C, new_num_channels=self.new_c)
+        self.C = C
+        emb = hidden * self.new_c
+        self.prj = nn.Sequential(nn.LayerNorm(emb), nn.Linear(emb, emb), nn.GELU(),
+                                 nn.Linear(emb, proj_dim))
+
+    def embed(self, x):                                    # [B,C,L] -> [B, new_c*hidden]
+        a = self.adapter(x)
+        return torch.cat([_enc(self.encoder, a[:, [i], :]) for i in range(a.shape[1])], dim=-1)
+
+    def forward(self, x):                                  # [B,C,L] -> [B, proj_dim] (normalized)
+        return F.normalize(self.prj(self.embed(x)), dim=1)
+
+
+def train_ssl_contrastive(big, train_starts, val_starts, *, context_lengths=(64, 100, 150, 200),
+                          new_channels=8, proj_dim=128, temperature=0.1, crop_max=0.2,
+                          epochs=60, steps_per_epoch=200, batch=512, lr=2e-3, weight_decay=0.05,
+                          patience=8, device=None, model_id='paris-noah/Mantis-8M',
+                          backbone_ckpt=None, control='real', seed=0, clamp=10.0, grad_clip=1.0,
+                          verbose=True, **_ignore):
+    """STAGE-3 (experiment): TREND CONTRASTIVE. Multi-positive InfoNCE (SupCon mechanics) with a
+    SELF-SUPERVISED causal trend key -> groups same-trend windows, sharpens trend/chop separation.
+    Warm-start the encoder from stage-2 (backbone_ckpt=ctx200). Returns (best_encoder_state, history).
+    APPLES-TO-APPLES controls: trend key is ALWAYS from the real context; only the model INPUT is
+    corrupted (shuffle=scramble time, random=noise) -> real should cluster, shuffle/random shouldn't."""
+    os.environ.setdefault('PYTORCH_ENABLE_MPS_FALLBACK', '1')
+    dev = device or ('cuda' if torch.cuda.is_available()
+                     else 'mps' if torch.backends.mps.is_available() else 'cpu')
+    torch.manual_seed(seed); gen = torch.Generator(device=dev); gen.manual_seed(seed)
+    C = int(big.shape[1]); clens = [int(x) for x in context_lengths]
+    max_ctx = max(clens); clens_t = torch.as_tensor(clens, dtype=torch.long, device=dev)
+    big_t = torch.as_tensor(np.asarray(big, np.float32), device=dev)
+    tr = torch.as_tensor(np.asarray(train_starts, np.int64), device=dev)
+    va = torch.as_tensor(np.asarray(val_starts, np.int64), device=dev)
+
+    net = ContrastiveTrendNet(C=C, new_channels=new_channels, proj_dim=proj_dim,
+                              model_id=model_id).to(dev)
+    if backbone_ckpt:                                      # warm-start from stage-2 (ctx200)
+        net.encoder.load_state_dict(torch.load(backbone_ckpt, map_location='cpu'))
+    opt = torch.optim.AdamW([p for p in net.parameters() if p.requires_grad],
+                            lr=lr, betas=(0.9, 0.999), weight_decay=weight_decay)
+    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs)
+
+    def _batch(starts):
+        b_idx = torch.randint(0, len(starts), (batch,), device=dev, generator=gen)
+        L = int(clens_t[torch.randint(0, len(clens_t), (1,), device=dev, generator=gen)].item())
+        w = _gather_batch(big_t, starts, b_idx, max_ctx)   # [B,C,max_ctx] real, ends at 'now'
+        cs = _standardize(w[:, :, max_ctx - L:]).clamp(-clamp, clamp)   # [B,C,L] per-window z-score
+        key = _trend_key(cs)                               # SS causal trend key from REAL context
+        model_in = _apply_control(cs, control)             # corrupt ONLY the input (apples-to-apples)
+        return model_in, key
+
+    def _step_loss(model_in, key):
+        z1, z2 = net(_random_crop_resize(model_in, crop_max)), net(_random_crop_resize(model_in, crop_max))
+        z = torch.cat([z1, z2], 0)
+        key2 = torch.cat([key, key], 0)
+        ids = torch.arange(len(key), device=dev)
+        inst = torch.cat([ids, ids], 0)                    # crop-pair shares instance id
+        return _multi_positive_infonce(z, key2, inst, temperature)
+
+    @torch.no_grad()
+    def val_eval():
+        net.eval(); tot = 0.0; nb = min(10, max(1, len(va) // batch))
+        for _ in range(nb):
+            tot += float(_step_loss(*_batch(va)))
+        estd = float(net.embed(_batch(va)[0]).std(0).mean())
+        net.train()
+        return tot / nb, estd
+
+    best, best_state, bad, history = 1e18, None, 0, []
+    for ep in range(epochs):
+        net.train(); tr_tot = 0.0
+        for _ in range(steps_per_epoch):
+            opt.zero_grad(set_to_none=True)
+            loss = _step_loss(*_batch(tr))
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_([p for p in net.parameters() if p.requires_grad], grad_clip)
+            opt.step(); tr_tot += float(loss.detach())
+        sched.step()
+        vloss, estd = val_eval()
+        history.append({'epoch': ep, 'train_loss': tr_tot / steps_per_epoch,
+                        'val_loss': vloss, 'std': estd})
+        improved = vloss < best - 1e-5
+        if improved:
+            best, bad = vloss, 0
+            best_state = {k: v.detach().cpu().clone() for k, v in net.encoder.state_dict().items()}
+        else:
+            bad += 1
+        if verbose:
+            print(f"  ep{ep:>3} train={tr_tot / steps_per_epoch:.4f} val={vloss:.4f} "
+                  f"emb_std={estd:.4f}{'  *' if improved else ''}", flush=True)
+        if bad >= patience:
+            break
+    return best_state, history

@@ -57,17 +57,107 @@ def assemble(streams, *, seq, max_jitter, val_frac, holdout_start, forecast_pare
 
 
 # --------------------------------------------------------------------------- train + probe
+# ================================================================= PRETEXT TASKS (pluggable SSL)
+class PretextTask:
+    """A pluggable SSL pretraining objective. Subclass to add a new pretrain experiment WITHOUT
+    editing the orchestrator (no pretext if-chains). Each task owns three things: how much window
+    to RESERVE per window, how to TRAIN (which _ssl_torch trainer), and its report-only GATE.
+    Trainers swallow unknown kwargs (**_ignore), so the shared cfg is safe to pass to any task."""
+    name = 'base'
+    trainer = None                                        # _ssl_torch trainer fn name
+
+    def reserve(self, cfg):
+        """Extra bars reserved per window beyond `seq` (0 = none)."""
+        return 0
+
+    def train(self, big, tr, va, cfg, control):
+        """-> (best_encoder_state, history) under a control ('real'|'shuffle'|'random')."""
+        from . import _ssl_torch
+        kw = {k: v for k, v in cfg.items() if k != 'pretext'}
+        return getattr(_ssl_torch, self.trainer)(big, tr, va, control=control, **kw)
+
+    def gate(self, probe_res, std, margin, dir_margin):
+        """Report-only gate on the PROBE (representation content), NOT the loss. Builds the shared
+        detail dict, then defers the pass/fail to `_decide`."""
+        no_collapse = bool(std > 0.01)
+        detail = {'no_collapse': no_collapse}
+        if probe_res is None:
+            return no_collapse, {**detail, 'probe': None}
+        detail.update({'mean_core_delta': float(probe_res['mean_core_delta']),
+                       'descriptive_delta': float(probe_res.get('descriptive_delta', 0.0)),
+                       'fwd_absmove_delta': float(probe_res.get('fwd_absmove_delta', 0.0)),
+                       'fwd_dir_delta': float(probe_res.get('fwd_dir_delta', 0.0)),
+                       'forward_score': float(probe_res.get('forward_score', 0.0)),
+                       'learns_regime_vol_structure': bool(probe_res['learns_regime_vol_structure'])})
+        return self._decide(probe_res, no_collapse, margin, dir_margin, detail)
+
+    def _decide(self, probe_res, no_collapse, margin, dir_margin, detail):
+        raise NotImplementedError
+
+    def finalize_verdict(self, verdict, fc_skill, probe_res):
+        """Add any pretext-specific fields to the saved verdict (default: none)."""
+        return verdict
+
+
+class MaskTask(PretextTask):
+    """Stage-1 (UNCHANGED): BERT-style masked modeling. Gate = REAL encodes regime/vol/structure
+    better than vanilla (mean_core_delta > margin) and doesn't collapse."""
+    name, trainer = 'mask', 'train_ssl_mask'
+
+    def _decide(self, probe_res, no_collapse, margin, dir_margin, detail):
+        return bool(probe_res['mean_core_delta'] > margin and no_collapse), detail
+
+
+class ForecastTask(PretextTask):
+    """Stage-2: multi-horizon / variable-context candle seq2seq (ANTI-SHORTCUT). Reserves
+    context+horizon. Gate additionally requires forward-move size up + forward-dir non-regress
+    (a shortcut can lift easy descriptive stats while the predictive targets barely move)."""
+    name, trainer = 'forecast', 'train_ssl_forecast'
+
+    def reserve(self, cfg):
+        return max(int(x) for x in cfg['context_lengths']) + max(int(h) for h in cfg['horizons'])
+
+    def _decide(self, probe_res, no_collapse, margin, dir_margin, detail):
+        desc_ok = bool(probe_res.get('descriptive_delta', 0.0) >= -1e-9)
+        fwd_size_ok = bool(probe_res.get('fwd_absmove_delta', 0.0) > margin)
+        fwd_dir_ok = bool(probe_res.get('fwd_dir_delta', 0.0) >= dir_margin)
+        detail.update({'descriptive_ok': desc_ok, 'fwd_size_ok': fwd_size_ok, 'fwd_dir_ok': fwd_dir_ok})
+        return bool(no_collapse and desc_ok and fwd_size_ok and fwd_dir_ok), detail
+
+    def finalize_verdict(self, verdict, fc_skill, probe_res):
+        verdict['forecast_skill'] = fc_skill
+        if probe_res is not None:
+            verdict['fwd_absmove_delta'] = float(probe_res.get('fwd_absmove_delta', 0.0))
+            verdict['fwd_dir_delta'] = float(probe_res.get('fwd_dir_delta', 0.0))
+        return verdict
+
+
+class ContrastiveTask(PretextTask):
+    """Stage-3 (EXPERIMENT): trend contrastive (multi-positive InfoNCE by self-supervised trend
+    key). Reserves the context. Gate is report-only (descriptive content doesn't regress + no
+    collapse); the REAL gate = trend-AUC + WR@3R vs the ctx200 baseline, judged offline."""
+    name, trainer = 'contrastive', 'train_ssl_contrastive'
+
+    def reserve(self, cfg):
+        return max(int(x) for x in cfg['context_lengths'])
+
+    def _decide(self, probe_res, no_collapse, margin, dir_margin, detail):
+        desc_ok = bool(probe_res.get('descriptive_delta', probe_res['mean_core_delta']) >= -1e-9)
+        detail.update({'descriptive_ok': desc_ok})
+        return bool(no_collapse and desc_ok), detail
+
+
+PRETEXTS = {t.name: t for t in (MaskTask(), ForecastTask(), ContrastiveTask())}
+
+
+def get_pretext(name):
+    """Resolve the pretext task by name (None -> 'mask'). Unknown name -> KeyError (fail fast)."""
+    return PRETEXTS[name or 'mask']
+
+
 def _train(big, tr, va, cfg, control='real'):
-    """Train one config under a control ('real'|'shuffle'|'random'). pretext='mask' = BERT-
-    style masked modeling (stage 1); pretext='forecast' = causal seq2seq forecasting (stage 2,
-    warm-started via backbone_ckpt). Both trainers swallow unknown kwargs (**_ignore), so the
-    shared cfg (carrying both mask_ratio and horizon) is safe to pass either way. Returns
-    (best_encoder_state, history)."""
-    from . import _ssl_torch
-    kw = {k: v for k, v in cfg.items() if k != 'pretext'}
-    if cfg.get('pretext', 'mask') == 'forecast':
-        return _ssl_torch.train_ssl_forecast(big, tr, va, control=control, **kw)
-    return _ssl_torch.train_ssl_mask(big, tr, va, control=control, **kw)
+    """Train one config under a control via its pretext task -> (best_encoder_state, history)."""
+    return get_pretext(cfg.get('pretext', 'mask')).train(big, tr, va, cfg, control)
 
 
 def _probe_state(big, va, seq, state, *, model_id, device, seed, folds=1, verbose=True):
@@ -87,40 +177,10 @@ def _probe_state(big, va, seq, state, *, model_id, device, seed, folds=1, verbos
 
 
 def _passes(probe_res, std, margin=0.0, dir_margin=0.0, pretext='mask'):
-    """GATE on the PROBE (representation content), NOT the loss.
-
-    pretext='mask' (ORIGINAL stage-1, UNCHANGED): REAL must encode regime/vol/structure better
-    than vanilla (mean_core_delta > margin) and not collapse.
-
-    pretext='forecast' (stage-2, ANTI-SHORTCUT): a shortcut embedding can lift the easy in-window
-    DESCRIPTIVE stats (vol/trend_eff/range_expand) while the genuinely predictive FORWARD targets
-    barely move — so the descriptive average is not enough. We additionally require, vs vanilla:
-      * descriptive content does NOT regress      (descriptive_delta >= 0)
-      * FORWARD MOVE SIZE improves                 (fwd_absmove_delta > margin)
-      * FORWARD DIRECTION does NOT regress         (fwd_dir_delta >= dir_margin; default 0 =
-        non-regression — directional AUC is noisy, so the floor is 'don't get worse', with the
-        actual value always reported for the human / downstream-edge verdict)
-    """
-    no_collapse = bool(std > 0.01)
-    detail = {'no_collapse': no_collapse}
-    if probe_res is None:
-        return no_collapse, {**detail, 'probe': None}
-    detail.update({'mean_core_delta': float(probe_res['mean_core_delta']),
-                   'descriptive_delta': float(probe_res.get('descriptive_delta', 0.0)),
-                   'fwd_absmove_delta': float(probe_res.get('fwd_absmove_delta', 0.0)),
-                   'fwd_dir_delta': float(probe_res.get('fwd_dir_delta', 0.0)),
-                   'forward_score': float(probe_res.get('forward_score', 0.0)),
-                   'learns_regime_vol_structure': bool(probe_res['learns_regime_vol_structure'])})
-    if pretext == 'forecast':
-        desc_ok = bool(probe_res.get('descriptive_delta', 0.0) >= -1e-9)
-        fwd_size_ok = bool(probe_res.get('fwd_absmove_delta', 0.0) > margin)
-        fwd_dir_ok = bool(probe_res.get('fwd_dir_delta', 0.0) >= dir_margin)
-        ok = bool(no_collapse and desc_ok and fwd_size_ok and fwd_dir_ok)
-        detail.update({'descriptive_ok': desc_ok, 'fwd_size_ok': fwd_size_ok,
-                       'fwd_dir_ok': fwd_dir_ok})
-        return ok, detail
-    ok = bool(probe_res['mean_core_delta'] > margin and no_collapse)   # original mask gate
-    return ok, detail
+    """Report-only gate on the PROBE (representation content), delegated to the pretext task.
+    Each task (MaskTask/ForecastTask/ContrastiveTask) owns its own pass/fail rule — see
+    PretextTask.gate + `_decide`. Kept as a thin function for callers/tests."""
+    return get_pretext(pretext).gate(probe_res, std, margin, dir_margin)
 
 
 # ------------------------------------------------------------------------------- save/probe
@@ -192,10 +252,12 @@ def _base_cfg(**kw):
              steps_per_epoch=200, batch=1024, lr=1e-4, weight_decay=0.05, patience=8,
              model_id='paris-noah/Mantis-8M', compile_model=False, device=None,
              seed=0, verbose=True, backbone_ckpt=None,
-             pretext='mask',                                  # 'mask' (stage 1) | 'forecast' (stage 2)
+             pretext='mask',                                  # 'mask' (1) | 'forecast' (2) | 'contrastive' (3)
              # stage-2 multi-horizon / variable-context candle forecasting:
              horizons=(5, 10, 20, 25), context_lengths=(64, 100, 150, 200),
              grad_clip=1.0, clamp=10.0,
+             # stage-3 trend contrastive (experiment): InfoNCE multi-positive by self-supervised trend key
+             temperature=0.1, crop_max=0.2, proj_dim=128,
              probe_folds=1)                                   # k-fold CV per probe (robust)
     d.update({k: v for k, v in kw.items() if v is not None and k in d})
     return d
@@ -211,9 +273,9 @@ def loop_ssl(data_dir=None, *, tickers=None, tfs=None, controls=('shuffle', 'ran
     cfg = _base_cfg(**cfg_over)
     verbose = cfg['verbose']
     pretext = cfg.get('pretext', 'mask')
-    # forecast reserves context+horizon room per window; mask reserves only the probe horizon.
-    fc_reserve = (max(int(x) for x in cfg['context_lengths']) + max(int(h) for h in cfg['horizons'])
-                  if pretext == 'forecast' else 0)
+    # each pretext task declares how much window to reserve (forecast: ctx+horizon;
+    # contrastive: ctx; mask: none) — no pretext if-chain here.
+    fc_reserve = get_pretext(pretext).reserve(cfg)
     streams, big, tr, va = _load_assemble(data_dir, tickers, tfs, cfg['seq'], cfg['max_jitter'],
                                            val_frac, holdout_start, verbose, forecast_parent=fc_reserve)
     state, hist = _train(big, tr, va, cfg, 'real')
@@ -230,11 +292,7 @@ def loop_ssl(data_dir=None, *, tickers=None, tfs=None, controls=('shuffle', 'ran
                         holdout_start=holdout_start, val_frac=val_frac, streams=streams,
                         history=history, verbose=verbose)
     verdict['history'] = history
-    if pretext == 'forecast':
-        verdict['forecast_skill'] = fc_skill
-        if probe_res is not None:
-            verdict['fwd_absmove_delta'] = float(probe_res.get('fwd_absmove_delta', 0.0))
-            verdict['fwd_dir_delta'] = float(probe_res.get('fwd_dir_delta', 0.0))
+    get_pretext(pretext).finalize_verdict(verdict, fc_skill, probe_res)   # pretext-specific fields
     return verdict
 
 

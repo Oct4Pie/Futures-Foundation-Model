@@ -245,6 +245,58 @@ def test_train_dispatches_on_pretext(monkeypatch):
     assert st2 == 'mask_state' and calls['fn'] == 'mask' and 'pretext' not in calls['kw']
 
 
+# ------------------------------------------ pretext-task registry (pluggable, no if-chains) — torch-free
+def test_pretext_registry_resolves_all_tasks():
+    """Every pretext resolves to its task; unknown fails fast; None -> mask (default)."""
+    assert ssl.get_pretext('mask').__class__.__name__ == 'MaskTask'
+    assert ssl.get_pretext('forecast').__class__.__name__ == 'ForecastTask'
+    assert ssl.get_pretext('contrastive').__class__.__name__ == 'ContrastiveTask'
+    assert ssl.get_pretext(None).name == 'mask'
+    with pytest.raises(KeyError):
+        ssl.get_pretext('does_not_exist')
+
+
+def test_pretext_reserve_per_task():
+    """Each task declares its own window reserve — no pretext if-chain in the orchestrator."""
+    cfg = ssl._base_cfg(context_lengths=(64, 200), horizons=(5, 25))
+    assert ssl.get_pretext('mask').reserve(cfg) == 0                 # stage-1: none
+    assert ssl.get_pretext('forecast').reserve(cfg) == 200 + 25      # stage-2: ctx + horizon
+    assert ssl.get_pretext('contrastive').reserve(cfg) == 200        # stage-3: ctx only
+
+
+def test_base_cfg_has_contrastive_keys():
+    cfg = ssl._base_cfg()
+    assert cfg['temperature'] == 0.1 and cfg['crop_max'] == 0.2 and cfg['proj_dim'] == 128
+    over = ssl._base_cfg(pretext='contrastive', temperature=0.07, crop_max=0.1)
+    assert over['pretext'] == 'contrastive' and over['temperature'] == 0.07 and over['crop_max'] == 0.1
+
+
+def test_passes_contrastive_gate_report_only():
+    """Stage-3 gate is report-only: no-collapse + descriptive content doesn't regress (the REAL
+    gate = trend-AUC + WR@3R offline). Stage-1/2 gates are unaffected."""
+    good = dict(mean_core_delta=0.03, descriptive_delta=0.02, learns_regime_vol_structure=True)
+    ok, d = ssl._passes(good, std=0.5, pretext='contrastive')
+    assert ok and d['descriptive_ok'] and d['no_collapse']
+    assert not ssl._passes(good, std=0.001, pretext='contrastive')[0]        # collapse -> fail
+    desc_reg = dict(good, descriptive_delta=-0.01)
+    assert not ssl._passes(desc_reg, std=0.5, pretext='contrastive')[0]      # regress -> fail
+
+
+def test_train_dispatches_contrastive(monkeypatch):
+    """_train routes pretext='contrastive' to train_ssl_contrastive via the task (no if-chain),
+    stripping 'pretext'. Fake _ssl_torch — no torch."""
+    import sys, types
+    calls = {}
+    fake = types.ModuleType('futures_foundation.finetune._ssl_torch')
+    fake.train_ssl_contrastive = lambda big, tr, va, control='real', **kw: (
+        calls.setdefault('fn', 'contrastive'), calls.setdefault('kw', kw), ('c_state', []))[-1]
+    monkeypatch.setitem(sys.modules, 'futures_foundation.finetune._ssl_torch', fake)
+    cfg = ssl._base_cfg(pretext='contrastive', temperature=0.05)
+    st, _ = ssl._train(None, None, None, cfg, control='real')
+    assert st == 'c_state' and calls['fn'] == 'contrastive'
+    assert 'pretext' not in calls['kw'] and calls['kw']['temperature'] == 0.05
+
+
 # ------------------------------------------------------------- masked-modeling trainer (gated)
 @torch_test
 def test_embed_windows_frozen():
@@ -315,3 +367,69 @@ def test_train_multihorizon_runs_variable_context_and_warmstart(tmp_path):
 
 
 
+
+
+# ----------------------------------------------- stage-3 trend contrastive: torch components (gated)
+@torch_test
+def test_trend_key_separates_up_down_chop():
+    """Self-supervised CAUSAL trend key buckets by direction: up-trends, down-trends and chop land
+    in DIFFERENT direction buckets (key // 3 = 0 down / 1 flat / 2 up) — the trend-vs-chop signal."""
+    import torch
+    from futures_foundation.finetune import _ssl_torch as S
+    L = 64
+    t = torch.linspace(0, 1, L)
+    up = torch.stack([t * 5 for _ in range(5)])                    # strong up on all channels (close=ch3)
+    dn = torch.stack([-t * 5 for _ in range(5)])
+    flat = torch.randn(5, L) * 0.01
+
+    def mk(base):
+        return base.unsqueeze(0).repeat(8, 1, 1) + torch.randn(8, 5, L) * 0.05
+
+    x = torch.cat([mk(up), mk(dn), mk(flat)], 0)                   # [24,5,L]: 8 up, 8 down, 8 flat
+    dir_b = S._trend_key(x) // 3                                   # 0 down / 1 flat / 2 up
+    assert (dir_b[:8] == 2).float().mean() > 0.7                   # up-trends -> up bucket
+    assert (dir_b[8:16] == 0).float().mean() > 0.7                # down-trends -> down bucket
+    assert (dir_b[16:] == 1).float().mean() > 0.7                 # chop -> flat bucket
+
+
+@torch_test
+def test_multi_positive_infonce_rewards_trend_grouping():
+    """Multi-positive InfoNCE gives LOWER loss when same-key (same-trend) embeddings are aligned
+    than anti-aligned -> the loss PULLS same-trend windows together (fixes false-negatives)."""
+    import torch
+    import torch.nn.functional as F
+    from futures_foundation.finetune import _ssl_torch as S
+    key = torch.tensor([0, 0, 1, 1]); inst = torch.tensor([0, 1, 2, 3])
+    aligned = F.normalize(torch.tensor([[1., 0], [1, 0], [0, 1.], [0, 1]]), dim=1)
+    anti = F.normalize(torch.tensor([[1., 0], [-1, 0], [0, 1.], [0, -1]]), dim=1)
+    la = S._multi_positive_infonce(aligned, key, inst, 0.1)
+    lb = S._multi_positive_infonce(anti, key, inst, 0.1)
+    assert torch.isfinite(la) and float(la) < float(lb)
+
+
+@torch_test
+def test_contrastive_net_shape_and_trainer_smoke(tmp_path):
+    """ContrastiveTrendNet -> L2-normalized [B, proj_dim]; the trainer runs, returns an encoder
+    state loadable downstream + finite val loss, and accepts a warm-start ckpt (from stage-2)."""
+    import torch
+    from futures_foundation.finetune import _ssl_torch as S
+    from futures_foundation.finetune.classifiers._mantis_torch import build_model
+    net = S.ContrastiveTrendNet(C=5, new_channels=4, proj_dim=64).to('cpu')
+    z = net(torch.randn(6, 5, 64))
+    assert z.shape == (6, 64) and torch.allclose(z.norm(dim=1), torch.ones(6), atol=1e-4)
+    rng = np.random.default_rng(0)
+    big = (100 + np.cumsum(rng.standard_normal((3000, 5)) * 0.1, 0)).astype(np.float32)
+    big[:, 4] = np.abs(big[:, 4]) * 100 + 500                      # positive-ish volume
+    cl = (32, 48); starts = np.arange(0, 3000 - 48 - 1, 4)         # parent = max_ctx = 48
+    state, hist = S.train_ssl_contrastive(big, starts, starts[-50:], context_lengths=cl,
+                                          new_channels=4, proj_dim=64, epochs=2, steps_per_epoch=3,
+                                          batch=16, device='cpu', control='real', verbose=False)
+    assert len(hist) >= 1 and np.isfinite(hist[-1]['val_loss']) and hist[-1]['std'] > 0
+    ckpt = str(tmp_path / 'enc.pt'); torch.save(state, ckpt)
+    _, new_c = build_model(5, new_channels=4, device='cpu', backbone_ckpt=ckpt)
+    assert new_c == 4                                              # encoder ckpt loads downstream
+    state2, _ = S.train_ssl_contrastive(big, starts, starts[-50:], context_lengths=cl,
+                                        new_channels=4, proj_dim=64, epochs=1, steps_per_epoch=2,
+                                        batch=16, device='cpu', control='real', backbone_ckpt=ckpt,
+                                        verbose=False)
+    assert set(state2.keys()) == set(state.keys())                # warm-start same encoder keys
