@@ -402,30 +402,50 @@ def test_train_multihorizon_runs_variable_context_and_warmstart(tmp_path):
 
 
 
-# ------------------------------------ stage-3 v2 forward trend-vs-chop contrastive (torch, gated)
+# --------------------------- stage-3 v3 forward barrier-excursion contrastive (torch, gated)
 @torch_test
 def test_future_key_separates_trend_vs_chop():
-    """The FORWARD key buckets windows by their FUTURE's character: future up/down drifts land in
-    different direction buckets (key//3 = 0 down/1 flat/2 up) and a whipsaw future lands in the
-    CHOP efficiency bucket (key%3 == 0) regardless of its net sign — the trend-vs-chop signal."""
+    """The FORWARD key buckets windows by their FUTURE's character: future up/down runners land in
+    different direction buckets (key//3 = 0 down/1 flat/2 up) and a whipsaw future — price never
+    RUNS a unit before retracing — lands in the CHOP excursion bucket (key%3 == 0)."""
     import torch
     from futures_foundation.finetune import _ssl_torch as S
     torch.manual_seed(0)
     L, h = 64, 16
     cs = torch.randn(24, 5, L) * 0.1                               # IDENTICAL-character context (noise)
+    cs[:, 3, :] = 0.0                                              # entry ('now' close) at exactly 0
     t = torch.linspace(0, 1, h)
-    up = (t * 4).expand(8, h)                                      # future: clean up-drift (high eff)
-    dn = (-t * 4).expand(8, h)                                     # future: clean down-drift
-    alt = torch.tensor([1.0, 0.0]).repeat(h // 2) * 1.5            # future: whipsaw (net~0, low eff)
-    chop = alt.expand(8, h)
+    up = (t * 4).expand(8, h)                                      # future: clean up runner (8 units)
+    dn = (-t * 4).expand(8, h)                                     # future: clean down runner
+    alt = torch.tensor([0.3, -0.3]).repeat(h // 2)                 # future: whipsaw around entry
+    chop = alt.expand(8, h)                                        # (never runs a retrace-unit)
     fs = torch.zeros(24, 5, h)
     fs[:, 3, :] = torch.cat([up, dn, chop], 0) + torch.randn(24, h) * 0.02   # close channel = 3
-    key = S._future_key(cs, fs, dz=0.5, e1=0.30, e2=0.60)          # FIXED edges (candle-sigma units)
-    dir_b, eff_b = key // 3, key % 3
-    assert (dir_b[:8] == 2).float().mean() > 0.7                   # future up-trend -> up bucket
-    assert (dir_b[8:16] == 0).float().mean() > 0.7                 # future down-trend -> down bucket
-    assert (eff_b[16:] == 0).float().mean() > 0.7                  # future whipsaw -> CHOP (low eff)
-    assert (eff_b[:16] == 2).float().mean() > 0.7                  # clean drifts -> directional bucket
+    key = S._future_key(cs, fs, dz=0.5, e1=1.0, e2=3.0)            # FIXED edges (retrace-unit=dz)
+    dir_b, run_b = key // 3, key % 3
+    assert (dir_b[:8] == 2).float().mean() > 0.7                   # future up runner -> up bucket
+    assert (dir_b[8:16] == 0).float().mean() > 0.7                 # future down runner -> down bucket
+    assert (run_b[16:] == 0).float().mean() > 0.7                  # whipsaw -> CHOP (no clean run)
+    assert (run_b[:16] == 2).float().mean() > 0.7                  # clean drifts -> RUNNER bucket
+
+
+@torch_test
+def test_future_key_barrier_ordering():
+    """The v3 stat is an ORDERING statistic (the whole point vs v2's efficiency): a path that first
+    runs +2 units and THEN crashes -6 scores a 2-unit run (the crash doesn't count — a short from
+    'now' was stopped by the +2 first), while the same crash without the fakeout scores ~6 units.
+    Net move alone can't tell these apart; the barrier excursion can."""
+    import torch
+    from futures_foundation.finetune import _ssl_torch as S
+    h = 20
+    cs = torch.zeros(2, 5, 8)                                      # entry close = 0
+    fs = torch.zeros(2, 5, h)
+    fs[0, 3, :] = torch.cat([torch.linspace(0.1, 1.0, 5), torch.linspace(0.6, -3.0, 15)])  # fakeout
+    fs[1, 3, :] = torch.linspace(-0.2, -3.0, h)                    # clean down runner
+    net, run = S._future_barrier_stats(cs, fs, unit=0.5)
+    assert abs(float(run[0]) - 2.0) < 0.3                          # fakeout: only the +1.0 pre-crash run
+    assert float(run[1]) > 5.0                                     # clean crash: ~6-unit down run
+    assert float(net[0]) < 0 and float(net[1]) < 0                 # same net sign — net can't separate
 
 
 @torch_test
@@ -438,11 +458,12 @@ def test_future_key_groups_by_future_not_past():
     torch.manual_seed(1)
     L, h = 64, 16
     ctx = torch.randn(1, 5, L).repeat(2, 1, 1)                     # EXACT same past for both
+    ctx[:, 3, -1] = 0.0                                            # shared entry close at 0
     t = torch.linspace(0, 1, h)
     fs = torch.zeros(2, 5, h)
-    fs[0, 3, :] = t * 4                                            # window A future: trends up
-    fs[1, 3, :] = torch.tensor([1.0, 0.0]).repeat(h // 2) * 1.5    # window B future: chops
-    key = S._future_key(ctx, fs, dz=0.5, e1=0.30, e2=0.60)
+    fs[0, 3, :] = t * 4                                            # window A future: runs up 8 units
+    fs[1, 3, :] = torch.tensor([0.3, -0.3]).repeat(h // 2)         # window B future: whipsaws
+    key = S._future_key(ctx, fs, dz=0.5, e1=1.0, e2=3.0)
     assert int(key[0]) != int(key[1])                              # same past, different key
 
 

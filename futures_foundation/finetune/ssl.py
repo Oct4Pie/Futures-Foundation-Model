@@ -169,10 +169,12 @@ def _base_cfg(**kw):
              # OPTIONAL forecast direction-head squeeze (0 = off / backward-compat; >0 adds BCE on
              # sign of the forward close move -> trains the encoder to be direction-aware for WR):
              dir_weight=0.0, dir_close_ch=3,
-             # stage-3 trend contrastive v2 (FORWARD trend-vs-chop key): multi-positive InfoNCE grouped
-             # by the FUTURE window's direction x path-efficiency (self-supervised, anti-shortcut — the
-             # key is target-side, not computable from the input). contrast_horizon = future bars the
-             # key reads; pos_cap caps key-positives per anchor (huge buckets -> centroid averaging).
+             # stage-3 trend contrastive v3 (FORWARD trend-vs-chop, BARRIER-EXCURSION key): multi-
+             # positive InfoNCE grouped by the FUTURE window's direction x barrier excursion (how far
+             # price RAN before retracing one unit — the WR@3R-shaped ordering statistic the forecast
+             # doesn't regress; v2's path-efficiency was redundant with stage-2 -> key_gap ~0).
+             # Self-supervised, anti-shortcut (key is target-side, not computable from the input).
+             # contrast_horizon = future bars the key reads; pos_cap caps key-positives per anchor.
              temperature=0.1, crop_max=0.2, proj_dim=128, contrast_horizon=25, pos_cap=64,
              # crash-safe progressive best-save + resume + anti-forgetting layer-freeze (ALL pretexts,
              # real run only; controls never touch the ckpt). ckpt_path is set to out_path by loop_ssl.

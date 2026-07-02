@@ -14,6 +14,6 @@ from .pretext._torch.common import (                      # noqa: F401  window/e
     embed_encoder, embed_windows, _EncoderONNX, export_encoder_onnx, BaseTrainer)
 from .pretext._torch.mask import MaskNetwork, train_ssl_mask                             # noqa: F401
 from .pretext._torch.forecast import MultiHorizonForecastNet, train_ssl_forecast         # noqa: F401
-from .pretext._torch.contrastive import (                 # noqa: F401  v2 forward trend-vs-chop key
+from .pretext._torch.contrastive import (                 # noqa: F401  v3 forward barrier-excursion key
     ContrastiveTrendNet, train_ssl_contrastive, _future_key, _future_path_stats,
-    _multi_positive_infonce, _random_crop_resize)
+    _future_barrier_stats, _multi_positive_infonce, _random_crop_resize)

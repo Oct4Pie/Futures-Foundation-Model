@@ -1,22 +1,28 @@
 # ==============================================================================
-# MANTIS SSL STAGE 3 v2 — FORWARD TREND-vs-CHOP CONTRASTIVE (multi-positive InfoNCE) — Colab GPU
+# MANTIS SSL STAGE 3 v3 — FORWARD BARRIER-EXCURSION CONTRASTIVE (multi-positive InfoNCE) — Colab GPU
 # ==============================================================================
 #
 # Sharpen the encoder's TREND-vs-CHOP separation. Warm-starts from the BEST stage-2 forecast
 # encoder (the Optuna-sweep winner) and refines with Mantis's own contrastive machinery —
 # normalized-similarity InfoNCE + temperature(0.1) + projection head + RandomCropResize —
-# adapted MULTI-POSITIVE (SupCon mechanics). Only the POSITIVE-PAIR DEFINITION differs from v1:
+# adapted MULTI-POSITIVE (SupCon mechanics). Only the POSITIVE-PAIR DEFINITION changes per version:
 #
 #   * v1 (WASHED, 42.3 vs 42.8 WR@3R): key = TRAILING slope of the input — computable from the
 #     window (shortcut; taught nothing forward) and past-tense (pulled together windows whose
 #     futures differ — coils about to break out vs dead whipsaw — erasing the tell).
-#   * v2: key = the FUTURE window's character — direction x path EFFICIENCY (|net|/sum|steps|)
-#     of the NEXT `HORIZON` bars, in context-standardized CANDLE units (raw OHLCV only; NO
-#     R/ATR/derived fields). Low efficiency = future CHOP regardless of net sign. The key is
-#     target-side (like the stage-2 forecast target) -> NOT computable from the input -> the
-#     encoder must learn the causal PRECURSORS of trending vs chopping. Same-past/different-
-#     future windows become in-batch HARD NEGATIVES ("looks like a trend, chops out").
-#     Bucket edges are FIXED (calibrated once from train windows), not per-batch.
+#   * v2 (WASHED, sweep 2026-07-02: best 6.667 < 6.720 baseline, key_gap ~0.003 flat): key =
+#     future direction x path EFFICIENCY (|net|/sum|steps|) — a statistic the stage-2 candle
+#     forecast ALREADY encodes (it regresses the future path), so the loss had nothing new to
+#     carve: frozen configs reproduced stage-2, unfrozen ones only forgot it.
+#   * v3: key = the FUTURE window's BARRIER EXCURSION — how far the close path RAN in one
+#     direction (in calibrated context-sigma units) before RETRACING one unit against that run,
+#     x direction. An ORDERING statistic the candle-MSE forecast does NOT regress (a +2-then-crash
+#     fakeout and a clean crash have the same net but different keys) and the exact shape of the
+#     ship metric (WR@3R = reach 3R before -1R). Low run = future CHOP (price ran nowhere cleanly).
+#     Same anti-shortcut property (key is target-side, from the NEXT `HORIZON` bars) and same SSL
+#     discipline: raw closes only, context-standardized (the pipeline's universal z-score) — NO
+#     ATR / NO R / NO indicators / NO labels. Bucket edges FIXED (calibrated once from train
+#     windows: retrace unit = |net| tercile, run edges = run terciles), not per-batch.
 #
 # Self-supervised (future candles are data, not labels -> no leak). 2026 EXCLUDED from SSL.
 # Controls: key always from the REAL future; only the model INPUT is corrupted.

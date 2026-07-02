@@ -1,30 +1,33 @@
-"""Stage-3 trainer v2: FORWARD TREND-vs-CHOP CONTRASTIVE. Reuses Mantis's own InfoNCE machinery
+"""Stage-3 trainer v3: FORWARD BARRIER-EXCURSION CONTRASTIVE. Reuses Mantis's own InfoNCE machinery
 (normalized-sim + temperature + projection head + RandomCropResize) adapted multi-positive (SupCon
-mechanics) — the ONLY thing that changed vs v1 is the POSITIVE-PAIR DEFINITION, the lever that
-makes or breaks contrastive trend detection.
+mechanics) — the ONLY thing that changes across versions is the POSITIVE-PAIR DEFINITION, the lever
+that makes or breaks contrastive trend detection.
 
 WHY v1 WASHED (benchmarked 2026-07: WR@3R 42.3 vs 42.8, spread 14.2 vs 14.8): its key was the
-TRAILING slope of the input — a statistic the encoder can compute directly from the window, so the
-pretext was solvable by a shortcut and taught nothing forward-looking. Worse, grouping by PAST
-character pulls together windows whose futures differ (a compression coil about to break out vs
-dead whipsaw look identical by trailing slope) — collapsing exactly the micro-structure that
-predicts which pivots run.
+TRAILING slope of the input — computable from the window (shortcut; taught nothing forward) and
+past-tense (pulled together windows whose futures differ, erasing the tell).
 
-THE v2 KEY IS FORWARD: windows are grouped by the NEXT `horizon` bars' trend-vs-chop character —
-direction x path EFFICIENCY (|net| / sum|steps|; low efficiency = chop regardless of net sign).
-The key is computed from the FUTURE segment (target-side, exactly like the stage-2 forecast
-target — never model input), so it is NOT computable from the input -> no shortcut: to group by
-what happens NEXT the encoder must encode the causal PRECURSORS of trending vs chopping. Coils
-separate from dead chop automatically (different futures); windows with the same past but
-different futures become in-batch HARD NEGATIVES — the "looks like a trend, chops out" confusions
-that cap WR. Still fully self-supervised (future candles are data, not labels; standardized-candle
-space, NO R/ATR; same leak discipline as the forecast pretext: reserve ctx+horizon, holdout
-excluded upstream).
+WHY v2 WASHED (Optuna sweep 2026-07-02 on the promoted stage-2 base: 11 trials, best 6.667 < the
+6.720 baseline, key_gap pinned at ~0.003 across EVERY config): its key — future direction x path
+EFFICIENCY (|net|/sum|steps|) — is a statistic of the future path that the stage-2 FORECAST
+objective already learned (stage-2 regresses the future candles; net-move efficiency is implicit in
+that). Refining stage-2 with a key it already encodes gave the loss no new structure to carve:
+frozen configs reproduced stage-2, unfrozen ones only forgot it.
 
-Bucket edges are FIXED (calibrated once from a seeded sample of train windows) — v1's
-batch-relative quantiles gave the same window different keys in different batches. Runs fp32
-(amp=False) — the normalized-similarity InfoNCE is fp16-sensitive. Val runs on FIXED batches
-(seeded, RNG state save/restored) so early-stop/best-save track a stable signal.
+THE v3 KEY IS THE BARRIER EXCURSION — the asymmetric path statistic the forecast does NOT regress
+and the exact shape of the ship metric (WR@3R = reach 3R before -1R): how far did the future close
+path RUN in one direction (in calibrated candle-sigma units) before RETRACING one unit against
+that run? key = direction bucket x excursion bucket (low excursion = chop: price went nowhere
+cleanly). Same anti-shortcut property as v2 (the key is computed from the FUTURE segment,
+target-side like the stage-2 forecast target, never model input) and same SSL discipline: raw
+close path only, standardized by the context's own mean/std (the pipeline's universal z-score) —
+NO ATR / NO R / NO indicators / NO labels; reserve ctx+horizon; holdout excluded upstream.
+
+Bucket edges are FIXED (calibrated once from a seeded sample of train windows: the retrace unit =
+|net| tercile, excursion edges = run terciles) — batch-relative quantiles would key the same window
+differently across batches. Runs fp32 (amp=False) — the normalized-similarity InfoNCE is
+fp16-sensitive. Val runs on FIXED batches (seeded, RNG state save/restored) so early-stop/best-save
+track a stable signal.
 """
 import torch
 import torch.nn as nn
@@ -55,15 +58,37 @@ def _future_path_stats(cs, fs, close_ch=3):
     return net, eff
 
 
+def _future_barrier_stats(cs, fs, unit, close_ch=3):
+    """(net, run) of the FUTURE close path — the v3 BARRIER-EXCURSION statistic, in context-
+    standardized units. run = the largest excursion (in `unit`s) the path achieved in EITHER
+    direction BEFORE first retracing `unit` against that direction from 'now' — the self-supervised
+    analogue of 'reached K-R before -1R' computed purely from raw closes (no ATR/R/labels; ordering
+    matters: a clean runner scores high, a whipsaw that gives back a unit before running scores
+    low). net = end-start (for the direction bucket)."""
+    cch = min(close_ch, cs.shape[1] - 1)
+    p = torch.cat([cs[:, cch, -1:], fs[:, cch, :]], dim=1)          # [B, h+1] close path from 'now'
+    d = p - p[:, :1]                                                # excursion from entry ('now')
+    u = max(float(unit), 1e-6)
+    hit_dn = (d <= -u).to(torch.int8).cummax(1).values.bool()       # been a unit BELOW entry by t
+    hit_up = (d >= u).to(torch.int8).cummax(1).values.bool()        # been a unit ABOVE entry by t
+    run_up = d.masked_fill(hit_dn, float('-inf')).max(1).values.clamp_min(0.0)   # MFE before -1u
+    run_dn = (-d).masked_fill(hit_up, float('-inf')).max(1).values.clamp_min(0.0)
+    net = p[:, -1] - p[:, 0]
+    return net, torch.maximum(run_up, run_dn) / u                   # run in retrace-units
+
+
 def _future_key(cs, fs, dz, e1, e2, close_ch=3):
-    """SELF-SUPERVISED FORWARD trend-vs-chop key: direction bucket (net vs FIXED deadzone dz) x
-    path-efficiency bucket (FIXED edges e1<e2). key = dir*3 + eff in [0,9); eff bucket 0 = future
-    CHOP (any direction). Same-key windows = 'same future character' = POSITIVES. NOT computable
-    from the model input (the future is target-side) — the anti-shortcut property v1 lacked."""
-    net, eff = _future_path_stats(cs, fs, close_ch)
+    """SELF-SUPERVISED FORWARD trend-vs-chop key (v3): direction bucket (net vs FIXED deadzone dz)
+    x BARRIER-EXCURSION bucket (run vs FIXED edges e1<e2, retrace unit = dz). key = dir*3 + run_b
+    in [0,9); run bucket 0 = future CHOP (price ran nowhere before retracing). Same-key windows =
+    'same future character' = POSITIVES. NOT computable from the model input (the future is
+    target-side) — the anti-shortcut property v1 lacked. Unlike v2's path-efficiency (already
+    implicit in the stage-2 forecast -> key_gap ~0), the barrier excursion is an ORDERING statistic
+    the candle-MSE forecast does not regress — and it is the shape of WR@3R itself."""
+    net, run = _future_barrier_stats(cs, fs, dz, close_ch)
     dir_b = (torch.sign(net) * (net.abs() > dz)).long() + 1         # 0/1/2 = down/flat/up
-    eff_b = (eff > e1).long() + (eff > e2).long()                   # 0/1/2 = chop/mixed/directional
-    return dir_b * 3 + eff_b                                        # [B] in [0, 9)
+    run_b = (run > e1).long() + (run > e2).long()                   # 0/1/2 = chop/mixed/runner
+    return dir_b * 3 + run_b                                        # [B] in [0, 9)
 
 
 def _multi_positive_infonce(z, key, inst, temperature, pos_cap=None):
@@ -133,18 +158,21 @@ class _ContrastiveTrainer(BaseTrainer):
 
     def _calibrate_edges(self, n=4096, seed_off=1):
         """FIXED bucket edges from a seeded sample of TRAIN windows: dz = |net| tercile (direction
-        deadzone -> ~1/3 of futures 'flat'); e1/e2 = efficiency terciles (chop/mixed/directional).
-        v1 bucketed per batch -> the same window keyed differently across batches (noisy positives)."""
+        deadzone -> ~1/3 of futures 'flat'; doubles as the v3 RETRACE UNIT); e1/e2 = terciles of
+        the barrier-excursion run computed with that unit (chop/mixed/runner). Data-derived, never
+        hand-tuned. v1 bucketed per batch -> the same window keyed differently across batches."""
         g = torch.Generator(device=self.dev); g.manual_seed(int(self.gen.initial_seed()) + seed_off)
         b_idx = torch.randint(0, len(self.tr), (min(n, len(self.tr)),), device=self.dev, generator=g)
         cs, fs = self._split_standardize(_gather_batch(self.big_t, self.tr, b_idx, self.parent),
                                          self.max_ctx)
-        net, eff = _future_path_stats(cs, fs)
-        net_c, eff_c = net.abs().float().cpu(), eff.float().cpu()    # quantiles on CPU (MPS-safe)
+        net, _ = _future_barrier_stats(cs, fs, 1.0)                  # net is unit-independent
+        net_c = net.abs().float().cpu()                              # quantiles on CPU (MPS-safe)
         dz = float(torch.quantile(net_c, 1 / 3))
-        e1, e2 = float(torch.quantile(eff_c, 1 / 3)), float(torch.quantile(eff_c, 2 / 3))
+        _, run = _future_barrier_stats(cs, fs, dz)                   # run in dz retrace-units
+        run_c = run.float().cpu()
+        e1, e2 = float(torch.quantile(run_c, 1 / 3)), float(torch.quantile(run_c, 2 / 3))
         if self.verbose:
-            print(f"  [key-edges] dz={dz:.3f} eff=({e1:.3f},{e2:.3f}) from {len(net_c)} windows",
+            print(f"  [key-edges] dz={dz:.3f} run=({e1:.3f},{e2:.3f}) from {len(net_c)} windows",
                   flush=True)
         return dz, e1, e2
 
