@@ -433,13 +433,36 @@ def test_train_multihorizon_runs_variable_context_and_warmstart(tmp_path):
 @torch_test
 def test_dist_objectives_registry_and_aux_dims():
     """The DIST registry holds ONLY the distributional objectives (candle_mse stays in the stage-2
-    registry — no cross-contamination); aux dims size the head per objective."""
+    registry — no cross-contamination); aux dims size the head per objective; the faithfulness
+    knobs (bolt9 quantiles / finer bins / pure mse_weight=0) configure per instance with defaults
+    matching the original refine-study behavior."""
     from futures_foundation.finetune import _ssl_torch as S
     q, b = S.get_dist_objective('candle_quantile'), S.get_dist_objective('candle_bins')
-    assert q.aux_dim(4) == 4 * 2 and b.aux_dim(4) == 4 * 41
+    assert q.aux_dim(4) == 4 * 2 and b.aux_dim(4) == 4 * 41          # original defaults
+    assert S.get_dist_objective('candle_quantile', quantile_taus='bolt9').aux_dim(4) == 4 * 8
+    assert S.get_dist_objective('candle_bins', bins_k=257).aux_dim(4) == 4 * 257
     assert S.get_dist_objective(None).name == 'candle_quantile'
     with pytest.raises(KeyError):
         S.get_dist_objective('candle_mse')
+
+
+@torch_test
+def test_dist_pure_mode_no_mse_anchor():
+    """mse_weight=0 = PURE Chronos loss: the candle-MSE term contributes NOTHING — moving the
+    candle prediction (with aux fixed) must not change the loss (only the median pinball reads
+    the candle head in quantile mode; bins mode ignores candles entirely)."""
+    import torch
+    from futures_foundation.finetune import _ssl_torch as S
+    torch.manual_seed(0)
+    B, nH = 16, 4
+    target = torch.randn(B, 5, nH)
+    aux = torch.randn(B, nH * 41)
+    pure = S.get_dist_objective('candle_bins', mse_weight=0.0)
+    mixed = S.get_dist_objective('candle_bins', mse_weight=1.0)
+    good_c, bad_c = target.clone(), target + 3.0
+    # pure bins: candle head irrelevant -> identical loss; mixed: worse candles = higher loss
+    assert float(pure.loss(good_c, aux, target, 3, 1.0)) == float(pure.loss(bad_c, aux, target, 3, 1.0))
+    assert float(mixed.loss(bad_c, aux, target, 3, 1.0)) > float(mixed.loss(good_c, aux, target, 3, 1.0))
 
 
 @torch_test

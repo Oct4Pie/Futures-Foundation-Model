@@ -169,6 +169,10 @@ def _base_cfg(**kw):
              # OPTIONAL forecast direction-head squeeze (0 = off / backward-compat; >0 adds BCE on
              # sign of the forward close move -> trains the encoder to be direction-aware for WR):
              dir_weight=0.0, dir_close_ch=3,
+             # stage-2.5 forecast_dist faithfulness knobs (defaults = the original refine-study
+             # behavior): mse_weight 0 = PURE Chronos loss (no MSE anchor); quantile_taus 'bolt9'
+             # = the full 9-level quantile head; bins_k = bin-classification resolution.
+             mse_weight=1.0, quantile_taus='lohi', bins_k=41,
              # stage-3 trend contrastive v3 (FORWARD trend-vs-chop, BARRIER-EXCURSION key): multi-
              # positive InfoNCE grouped by the FUTURE window's direction x barrier excursion (how far
              # price RAN before retracing one unit — the WR@3R-shaped ordering statistic the forecast

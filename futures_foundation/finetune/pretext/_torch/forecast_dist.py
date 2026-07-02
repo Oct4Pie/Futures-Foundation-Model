@@ -32,13 +32,29 @@ from .forecast import _ForecastTrainer
 from .forecast_objectives import ForecastObjective
 
 
+"""FAITHFULNESS KNOBS (all default to the ORIGINAL refine-study behavior — the running study's
+objectives stay byte-identical; the knobs only activate when explicitly configured):
+  mse_weight     1.0 = original mixed loss; 0.0 = PURE Chronos (no MSE anchor anywhere — classic
+                 is pure CE, Bolt is pure pinball; the mean lives inside the distribution).
+  quantile_taus  'lohi' = the original 2-quantile head; 'bolt9' = Bolt's full 9-level weather
+                 report (0.1..0.9, median from the candle head) — the spread SHAPE is the signal.
+  bins_k         41 = original; raise (129/257) toward Chronos-classic's ~4094-bin resolution so
+                 the tails stop being one blurry 'big move' bucket."""
+
+_TAU_PRESETS = {'lohi': (0.1, 0.9),
+                'bolt9': (0.1, 0.2, 0.3, 0.4, 0.6, 0.7, 0.8, 0.9)}   # +median = Bolt's 9 levels
+
+
 class CandleQuantile(ForecastObjective):
     """Chronos-Bolt style direct multi-step QUANTILE supervision (see module docstring)."""
     name = 'candle_quantile'
-    TAUS = (0.1, 0.9)                                     # + median from the candle head (t=0.5)
+
+    def __init__(self, mse_weight=1.0, quantile_taus='lohi', **_):
+        self.mse_w = float(mse_weight)
+        self.TAUS = _TAU_PRESETS[quantile_taus or 'lohi']
 
     def aux_dim(self, nH):
-        return nH * len(self.TAUS)                        # lo/hi close-move quantile per horizon
+        return nH * len(self.TAUS)                        # close-move quantiles per horizon
 
     @staticmethod
     def _pinball(t, q, tau):
@@ -46,19 +62,23 @@ class CandleQuantile(ForecastObjective):
 
     def loss(self, candles, aux, target, close_ch, weight):
         w = weight if weight and weight > 0 else 1.0
-        mse = ((candles - target) ** 2).mean()
         t = target[:, close_ch, :]                                       # [B, nH] close move
         q = aux.view(aux.shape[0], t.shape[1], len(self.TAUS))           # [B, nH, |TAUS|]
         pin = self._pinball(t, candles[:, close_ch, :], 0.5)             # median = candle head
         for k, tau in enumerate(self.TAUS):
             pin = pin + self._pinball(t, q[:, :, k], tau)
-        return mse + w * pin
+        mse = ((candles - target) ** 2).mean() if self.mse_w > 0 else 0.0
+        return self.mse_w * mse + w * pin
 
 
 class CandleBins(ForecastObjective):
     """Chronos-classic style bin-CLASSIFICATION supervision (see module docstring)."""
     name = 'candle_bins'
-    K, BIN_RANGE = 41, 10.0                               # K uniform bins over [-clamp, clamp]
+    BIN_RANGE = 10.0                                      # uniform bins over [-clamp, clamp]
+
+    def __init__(self, mse_weight=1.0, bins_k=41, **_):
+        self.mse_w = float(mse_weight)
+        self.K = int(bins_k or 41)
 
     def aux_dim(self, nH):
         return nH * self.K
@@ -67,31 +87,35 @@ class CandleBins(ForecastObjective):
         import torch
         import torch.nn.functional as F
         w = weight if weight and weight > 0 else 1.0
-        mse = ((candles - target) ** 2).mean()
         t = target[:, close_ch, :]                                       # [B, nH] close move
         edges = torch.linspace(-self.BIN_RANGE, self.BIN_RANGE, self.K + 1,
                                device=t.device)[1:-1]                    # inner edges -> K bins
         idx = torch.bucketize(t.contiguous(), edges)                     # [B, nH] in [0, K)
         logits = aux.view(aux.shape[0], t.shape[1], self.K)              # [B, nH, K]
         ce = F.cross_entropy(logits.reshape(-1, self.K), idx.reshape(-1))
-        return mse + w * ce
+        mse = ((candles - target) ** 2).mean() if self.mse_w > 0 else 0.0
+        return self.mse_w * mse + w * ce
 
 
-DIST_OBJECTIVES = {o.name: o for o in (CandleQuantile(), CandleBins())}
+DIST_OBJECTIVE_CLASSES = {c.name: c for c in (CandleQuantile, CandleBins)}
 
 
-def get_dist_objective(name):
-    """Resolve a DISTRIBUTIONAL objective by name (None -> 'candle_quantile'). KeyError = fail fast."""
-    return DIST_OBJECTIVES[name or 'candle_quantile']
+def get_dist_objective(name, **params):
+    """Resolve + CONFIGURE a DISTRIBUTIONAL objective by name (None -> 'candle_quantile').
+    params (mse_weight / quantile_taus / bins_k) default to the original refine-study behavior.
+    KeyError = fail fast."""
+    return DIST_OBJECTIVE_CLASSES[name or 'candle_quantile'](**params)
 
 
 class _DistForecastTrainer(_ForecastTrainer):
     """The stage-2 trainer with the objective swapped to a distributional one. Pure subclass —
     forecast.py is imported, never modified; net/batching/val (universal dir_acc) all inherited."""
 
-    def __init__(self, big, tr, va, *, objective='candle_quantile', **kw):
+    def __init__(self, big, tr, va, *, objective='candle_quantile', mse_weight=1.0,
+                 quantile_taus='lohi', bins_k=41, **kw):
         super().__init__(big, tr, va, objective='candle_mse', **kw)      # base init (placeholder obj)
-        self.obj = get_dist_objective(objective)                         # swap BEFORE build_net()
+        self.obj = get_dist_objective(objective, mse_weight=mse_weight,  # swap BEFORE build_net()
+                                      quantile_taus=quantile_taus, bins_k=bins_k)
 
 
 def train_ssl_forecast_dist(big, train_starts, val_starts, *, horizons=(5, 10, 20, 25),
@@ -101,11 +125,16 @@ def train_ssl_forecast_dist(big, train_starts, val_starts, *, horizons=(5, 10, 2
                             compile_model=False, control='real', seed=0, amp_dtype='fp16',
                             grad_clip=1.0, clamp=10.0, verbose=True,
                             ckpt_path=None, resume=False, freeze_encoder_layers=0,
-                            objective='candle_quantile', dir_weight=1.0, dir_close_ch=3, **_ignore):
-    """Distributional forecast refine (stage-2.5). Warm-start = the PROMOTED stage-2 encoder
-    (backbone_ckpt). Returns (best_encoder_state, history) with the same metrics as stage-2
-    ('skill', 'skill_per_h', 'dir_acc', 'std') — comparable across objectives (dir_acc is
-    universal, read off the candle head)."""
+                            objective='candle_quantile', dir_weight=1.0, dir_close_ch=3,
+                            mse_weight=1.0, quantile_taus='lohi', bins_k=41, **_ignore):
+    """Distributional forecast (stage-2.5). TWO experiment shapes, same trainer:
+      REFINE  backbone_ckpt = the promoted stage-2 encoder; mixed loss (mse_weight=1).
+      PRIMARY backbone_ckpt = the stage-1 masked encoder; PURE Chronos loss (mse_weight=0,
+              quantile_taus='bolt9' / bins_k 129+) — distributional pretraining from the ground
+              up, the faithful head-to-head vs the MSE stage-2.
+    Returns (best_encoder_state, history) with the same metrics as stage-2 ('skill',
+    'skill_per_h', 'dir_acc', 'std') — comparable across objectives (dir_acc is universal,
+    read off the candle head)."""
     return _DistForecastTrainer(big, train_starts, val_starts, horizons=horizons,
                                 context_lengths=context_lengths, new_channels=new_channels,
                                 model_id=model_id, backbone_ckpt=backbone_ckpt,
@@ -116,4 +145,5 @@ def train_ssl_forecast_dist(big, train_starts, val_starts, *, horizons=(5, 10, 2
                                 verbose=verbose, control=control, ckpt_path=ckpt_path,
                                 resume=resume, freeze_encoder_layers=freeze_encoder_layers,
                                 objective=objective, dir_weight=dir_weight,
-                                dir_close_ch=dir_close_ch).fit()
+                                dir_close_ch=dir_close_ch, mse_weight=mse_weight,
+                                quantile_taus=quantile_taus, bins_k=bins_k).fit()
