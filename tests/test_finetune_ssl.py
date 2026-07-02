@@ -300,6 +300,33 @@ def test_train_dispatches_contrastive(monkeypatch):
     assert 'pretext' not in calls['kw'] and calls['kw']['temperature'] == 0.05
 
 
+# ------------------- stage-2.5 forecast_dist (distributional refine on stage-2) — torch-free
+def test_pretext_registry_resolves_forecast_dist():
+    """forecast_dist is its OWN pretext (stage-2 untouched): same reserve as stage-2 (same
+    targets), routed to its own trainer."""
+    t = ssl.get_pretext('forecast_dist')
+    assert t.__class__.__name__ == 'ForecastDistTask'
+    assert t.trainer == 'train_ssl_forecast_dist'
+    cfg = ssl._base_cfg(context_lengths=(64, 200), horizons=(5, 25))
+    assert t.reserve(cfg) == 200 + 25
+
+
+def test_train_dispatches_forecast_dist(monkeypatch):
+    """_train routes pretext='forecast_dist' to train_ssl_forecast_dist (no if-chain), passing
+    the distributional objective + weight through. Fake _ssl_torch — no torch."""
+    import sys, types
+    calls = {}
+    fake = types.ModuleType('futures_foundation.finetune._ssl_torch')
+    fake.train_ssl_forecast_dist = lambda big, tr, va, control='real', **kw: (
+        calls.setdefault('fn', 'dist'), calls.setdefault('kw', kw), ('d_state', []))[-1]
+    monkeypatch.setitem(sys.modules, 'futures_foundation.finetune._ssl_torch', fake)
+    cfg = ssl._base_cfg(pretext='forecast_dist', objective='candle_bins', dir_weight=0.7)
+    st, _ = ssl._train(None, None, None, cfg, control='real')
+    assert st == 'd_state' and calls['fn'] == 'dist'
+    assert 'pretext' not in calls['kw']
+    assert calls['kw']['objective'] == 'candle_bins' and calls['kw']['dir_weight'] == 0.7
+
+
 # ------------------------------------------------------------- masked-modeling trainer (gated)
 @torch_test
 def test_embed_windows_frozen():
@@ -400,6 +427,77 @@ def test_train_multihorizon_runs_variable_context_and_warmstart(tmp_path):
 
 
 
+
+
+# --------------------- stage-2.5 distributional forecast objectives (torch, gated)
+@torch_test
+def test_dist_objectives_registry_and_aux_dims():
+    """The DIST registry holds ONLY the distributional objectives (candle_mse stays in the stage-2
+    registry — no cross-contamination); aux dims size the head per objective."""
+    from futures_foundation.finetune import _ssl_torch as S
+    q, b = S.get_dist_objective('candle_quantile'), S.get_dist_objective('candle_bins')
+    assert q.aux_dim(4) == 4 * 2 and b.aux_dim(4) == 4 * 41
+    assert S.get_dist_objective(None).name == 'candle_quantile'
+    with pytest.raises(KeyError):
+        S.get_dist_objective('candle_mse')
+
+
+@torch_test
+def test_candle_quantile_pinball_orders_quantiles():
+    """Bolt-style pinball prefers correctly-bracketing quantiles (lo below truth, hi above) over
+    inverted ones — the loss teaches the distribution's SPREAD, which plain MSE cannot."""
+    import torch
+    from futures_foundation.finetune import _ssl_torch as S
+    obj = S.get_dist_objective('candle_quantile')
+    torch.manual_seed(0)
+    B, nH = 64, 4
+    target = torch.randn(B, 5, nH)
+    candles = target.clone()                              # perfect median isolates the aux term
+    t = target[:, 3, :]
+    good = torch.stack([t - 1.0, t + 1.0], -1).reshape(B, -1)   # lo < truth < hi
+    bad = torch.stack([t + 1.0, t - 1.0], -1).reshape(B, -1)    # inverted bracket
+    assert float(obj.loss(candles, good, target, 3, 1.0)) < float(obj.loss(candles, bad, target, 3, 1.0))
+    # weight=0 defaults to 1.0 — no silent fall-through to plain MSE
+    assert float(obj.loss(candles, bad, target, 3, 0.0)) == float(obj.loss(candles, bad, target, 3, 1.0))
+
+
+@torch_test
+def test_candle_bins_ce_rewards_true_bin():
+    """Chronos-classic-style bin classification: logits peaked on the TRUE move bin lose less than
+    logits peaked away from it — the head learns a per-horizon move DISTRIBUTION."""
+    import torch
+    from futures_foundation.finetune import _ssl_torch as S
+    obj = S.get_dist_objective('candle_bins')
+    torch.manual_seed(0)
+    B, nH, K = 32, 4, obj.K
+    target = torch.randn(B, 5, nH)
+    candles = target.clone()
+    edges = torch.linspace(-obj.BIN_RANGE, obj.BIN_RANGE, K + 1)[1:-1]
+    idx = torch.bucketize(target[:, 3, :].contiguous(), edges)
+    good = torch.full((B, nH, K), -5.0)
+    good.scatter_(2, idx.unsqueeze(-1), 5.0)              # peaked ON the true bin
+    bad = -good                                            # peaked everywhere BUT the true bin
+    assert (float(obj.loss(candles, good.reshape(B, -1), target, 3, 1.0))
+            < float(obj.loss(candles, bad.reshape(B, -1), target, 3, 1.0)))
+
+
+@torch_test
+def test_forecast_dist_trainer_smoke():
+    """train_ssl_forecast_dist runs end-to-end via the subclassed trainer (aux head sized by the
+    swapped objective; forecast.py untouched) -> encoder state + the same comparable metrics as
+    stage-2 (skill / dir_acc / std)."""
+    import numpy as np
+    from futures_foundation.finetune import _ssl_torch as S
+    rng = np.random.default_rng(0)
+    big = (100 + np.cumsum(rng.standard_normal((3000, 5)) * 0.1, 0)).astype(np.float32)
+    starts = np.arange(0, 3000 - (48 + 8) - 1, 4)
+    state, hist = S.train_ssl_forecast_dist(big, starts, starts[-50:], horizons=(4, 8),
+                                            context_lengths=(32, 48), new_channels=4,
+                                            objective='candle_quantile', epochs=2,
+                                            steps_per_epoch=3, batch=16, device='cpu',
+                                            control='real', verbose=False)
+    assert len(hist) >= 1 and np.isfinite(hist[-1]['val_loss'])
+    assert 'skill' in hist[-1] and 'dir_acc' in hist[-1] and hist[-1]['std'] > 0
 
 
 # --------------------------- stage-3 v3 forward barrier-excursion contrastive (torch, gated)
