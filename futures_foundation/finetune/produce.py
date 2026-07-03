@@ -50,18 +50,23 @@ def _contract(labeler, classifier, ck, C, seq, mu, sd, out, onnx_path, sha,
     }
 
 
-def _emit(out, classifier, ck, eval_lab, Xtr, Ytr_tr, Xval, Ytr_va, Xte, mu, sd, C, seq,
-          channel_names, tks, tfs, seed, holdout_start, export_onnx, output_path, verbose):
+def _bundle_files(base):
+    """Existing ONNX artifact files for a given export base (single-file classifiers write
+    <base>.onnx; the frozen bundle writes <base>_encoder.onnx + <base>_signal_head.onnx)."""
+    return [p for p in (str(base) + '.onnx', str(base) + '_encoder.onnx',
+                        str(base) + '_signal_head.onnx') if Path(p).exists()]
+
+
+def _emit(out, classifier, ck, eval_lab, mu, sd, C, seq,
+          channel_names, tks, tfs, holdout_start, export_onnx, output_path, verbose):
+    """Write the deploy contract for the ONNX exported DURING the REAL fit (no refit — a
+    third full fit doubled peak RAM and OOM-killed the Colab session at produce scale)."""
     if not (export_onnx and output_path):
         return out
     base = Path(output_path).with_suffix('')
-    onnx_path = str(base) + '.onnx'
-    if verbose:
-        print("  [produce 3/3] refit for ONNX export", flush=True)
-    get_classifier(classifier, **dict(ck, export_onnx_path=onnx_path)).fit_predict(
-        Xtr, Ytr_tr, Xval, Ytr_va, Xte, seed)
-    sha = (hashlib.sha256(Path(onnx_path).read_bytes()).hexdigest()
-           if Path(onnx_path).exists() else None)
+    bundle = _bundle_files(base)
+    sha = (hashlib.sha256(b''.join(Path(p).read_bytes() for p in bundle)).hexdigest()
+           if bundle else None)
     contract = {
         'contract_version': '1.0', 'role': 'mantis_signal', 'classifier': classifier,
         'input': {'channels': int(C), 'seq_len': int(seq),
@@ -76,31 +81,40 @@ def _emit(out, classifier, ck, eval_lab, Xtr, Ytr_tr, Xval, Ytr_va, Xte, mu, sd,
         'n_classes': 2, 'proba_meaning': 'P(good trend pivot reaches target before stop)',
         'output_fn': 'softmax(logits)[:,1]',
         'train_scope': {'tickers': tks, 'timeframes': tfs, 'holdout_start': holdout_start,
-                        'n_train': int(len(Ytr_tr)), 'n_oos': int(out['n_oos'])},
+                        'n_train': int(out['n_train']), 'n_oos': int(out['n_oos'])},
         'oos_metrics': {k: out.get(k) for k in
                         ('oos_auc', 'oos_meanR', 'shuffle_meanR', 'edge_shuffle', 'oos_trades')},
-        'onnx': (Path(onnx_path).name if sha else None), 'content_sha': sha,
+        'onnx': ([Path(p).name for p in bundle] if sha else None), 'content_sha': sha,
     }
     cpath = str(base) + '_signal.json'
     Path(cpath).write_text(json.dumps(contract, indent=2))
-    out['artifacts'] = {'onnx': onnx_path if sha else None, 'contract': cpath, 'content_sha': sha}
+    out['artifacts'] = {'onnx': (bundle if sha else None), 'contract': cpath, 'content_sha': sha}
     if verbose:
         print(f"  artifacts: onnx={out['artifacts']['onnx']} contract={cpath}")
     return out
 
 
-def _fit_score(classifier, ck, eval_lab, Xtr, Ytr_tr, Xval, Ytr_va, Xte, Kte, Yte, seed, verbose):
+def _fit_score(classifier, ck, eval_lab, Xtr, Ytr_tr, Xval, Ytr_va, Xte, Kte, Yte, seed, verbose,
+               onnx_path=None):
+    """Fit REAL (exporting ONNX during that fit when onnx_path is set) + SHUFFLE control.
+    Two fits total — the export must ride the REAL fit; a separate export refit doubles
+    peak RAM (fresh standardized copies on top of allocator creep) and OOMs at full scale."""
+    import gc
     rng = np.random.default_rng(seed)
-    clf_run = get_classifier(classifier, **ck)
     if verbose:
-        print("  [produce 1/3] fit REAL head", flush=True)
-    p_val, p_te, ba = clf_run.fit_predict(Xtr, Ytr_tr, Xval, Ytr_va, Xte, seed)
+        print(f"  [produce 1/2] fit REAL head{' (+ ONNX export)' if onnx_path else ''}",
+              flush=True)
+    ck_real = dict(ck, export_onnx_path=onnx_path) if onnx_path else ck
+    p_val, p_te, ba = get_classifier(classifier, **ck_real).fit_predict(
+        Xtr, Ytr_tr, Xval, Ytr_va, Xte, seed)
+    gc.collect()
     thr = _pct_threshold(p_val, OP_PERCENTILE)
     R = _arm_R(eval_lab, Kte, p_te, thr)
     ysh = np.asarray(Ytr_tr).copy(); rng.shuffle(ysh)
     if verbose:
-        print("  [produce 2/3] fit SHUFFLE control (honest ruler)", flush=True)
-    psv, ps, _ = clf_run.fit_predict(Xtr, ysh, Xval, Ytr_va, Xte, seed)
+        print("  [produce 2/2] fit SHUFFLE control (honest ruler)", flush=True)
+    psv, ps, _ = get_classifier(classifier, **ck).fit_predict(Xtr, ysh, Xval, Ytr_va, Xte, seed)
+    gc.collect()
     Rs = _arm_R(eval_lab, Kte, ps, _pct_threshold(psv, OP_PERCENTILE))
     auc = None
     if len(np.unique(Yte)) == 2:
@@ -181,10 +195,12 @@ def train_final_streamed(make_labeler, streams, classifier='mantis', clf_kwargs=
         print(f"=== PRODUCE STREAMED ({classifier}: {len(streams)} streams, 2026 OOS) ===")
         print(f"  train={len(Ytr_tr)} val={len(Ytr_va)} oos={len(all_Kte)} C={C} seq={seq} "
               f"good(train)={Ytr_tr.mean():.3f} good(oos)={Yte.mean():.3f}", flush=True)
+    onnx_path = (str(Path(output_path).with_suffix('')) + '.onnx'
+                 if (export_onnx and output_path) else None)
     out = _fit_score(classifier, ck, eval_lab, Xtr, Ytr_tr, Xval, Ytr_va, Xte, all_Kte, Yte,
-                     seed, verbose)
-    return _emit(out, classifier, ck, eval_lab, Xtr, Ytr_tr, Xval, Ytr_va, Xte, mu, sd, C, seq,
-                 channel_names, tks, tfs, seed, holdout_start, export_onnx, output_path, verbose)
+                     seed, verbose, onnx_path=onnx_path)
+    return _emit(out, classifier, ck, eval_lab, mu, sd, C, seq,
+                 channel_names, tks, tfs, holdout_start, export_onnx, output_path, verbose)
 
 
 def train_final(labeler, classifier='mantis', clf_kwargs=None, holdout_start='2026-01-01',
@@ -250,16 +266,20 @@ def train_final(labeler, classifier='mantis', clf_kwargs=None, holdout_start='20
         print(f"  train={len(tr_i)} val={len(va_i)} oos={len(Kte)} C={C} seq={seq} "
               f"good(train)={Ytr_tr.mean():.3f} good(oos)={Yte.mean():.3f}", flush=True)
 
-    clf_run = get_classifier(classifier, **ck)
+    onnx_path = (str(Path(output_path).with_suffix('')) + '.onnx'
+                 if (export_onnx and output_path) else None)
     if verbose:
-        print("  [produce 1/3] fit REAL head", flush=True)
-    p_val, p_te, ba = clf_run.fit_predict(Xtr, Ytr_tr, Xval, Ytr_va, Xte, seed)
+        print(f"  [produce 1/2] fit REAL head{' (+ ONNX export)' if onnx_path else ''}",
+              flush=True)
+    ck_real = dict(ck, export_onnx_path=onnx_path) if onnx_path else ck
+    p_val, p_te, ba = get_classifier(classifier, **ck_real).fit_predict(
+        Xtr, Ytr_tr, Xval, Ytr_va, Xte, seed)
     thr = _pct_threshold(p_val, OP_PERCENTILE)
     R = _arm_R(labeler, Kte, p_te, thr)
     ysh = Ytr_tr.copy(); rng.shuffle(ysh)
     if verbose:
-        print("  [produce 2/3] fit SHUFFLE control (honest ruler)", flush=True)
-    psv, ps, _ = clf_run.fit_predict(Xtr, ysh, Xval, Ytr_va, Xte, seed)
+        print("  [produce 2/2] fit SHUFFLE control (honest ruler)", flush=True)
+    psv, ps, _ = get_classifier(classifier, **ck).fit_predict(Xtr, ysh, Xval, Ytr_va, Xte, seed)
     Rs = _arm_R(labeler, Kte, ps, _pct_threshold(psv, OP_PERCENTILE))
 
     auc = None
@@ -278,18 +298,15 @@ def train_final(labeler, classifier='mantis', clf_kwargs=None, holdout_start='20
 
     if export_onnx and output_path:
         base = Path(output_path).with_suffix('')
-        onnx_path = str(base) + '.onnx'
-        if verbose:
-            print("  [produce 3/3] refit for ONNX export", flush=True)
-        get_classifier(classifier, **dict(ck, export_onnx_path=onnx_path)).fit_predict(
-            Xtr, Ytr_tr, Xval, Ytr_va, Xte, seed)
-        sha = (hashlib.sha256(Path(onnx_path).read_bytes()).hexdigest()
-               if Path(onnx_path).exists() else None)
+        bundle = _bundle_files(base)                  # exported during the REAL fit (no refit)
+        sha = (hashlib.sha256(b''.join(Path(p).read_bytes() for p in bundle)).hexdigest()
+               if bundle else None)
         contract = _contract(labeler, classifier, ck, C, seq, mu, sd, out, onnx_path, sha,
                              holdout_start, len(tr_i), len(Kte))
+        contract['onnx'] = [Path(p).name for p in bundle] if sha else None
         cpath = str(base) + '_signal.json'
         Path(cpath).write_text(json.dumps(contract, indent=2))
-        out['artifacts'] = {'onnx': onnx_path if sha else None, 'contract': cpath,
+        out['artifacts'] = {'onnx': (bundle if sha else None), 'contract': cpath,
                             'content_sha': sha}
         if verbose:
             print(f"  artifacts: onnx={out['artifacts']['onnx']} contract={cpath}")

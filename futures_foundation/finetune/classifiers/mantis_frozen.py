@@ -295,7 +295,9 @@ class MantisFrozenClassifier(Classifier):
                                      C=float(self.cfg.get('C', 1.0)))
         _fit_with_heartbeat(clf, Xtr, ytr)
         if self.cfg.get('export_onnx_path'):          # deployable bundle: encoder + head ONNX
-            _export_frozen_bundle(self.cfg, clf, Xtr.shape[1], Xval)
+            # parity-check on a slice — running onnxruntime + predict_proba over the FULL val
+            # set (~500k x 1311 at produce scale) stacks GBs at peak RAM for no extra signal
+            _export_frozen_bundle(self.cfg, clf, Xtr.shape[1], Xval[:2048])
         p_val = clf.predict_proba(Xval)[:, 1]
         p_eval = clf.predict_proba(Xeval)[:, 1]
         auc = roc_auc_score(yval, p_val) if len(np.unique(yval)) == 2 else 0.5
