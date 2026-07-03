@@ -56,6 +56,8 @@ def _emit(out, classifier, ck, eval_lab, Xtr, Ytr_tr, Xval, Ytr_va, Xte, mu, sd,
         return out
     base = Path(output_path).with_suffix('')
     onnx_path = str(base) + '.onnx'
+    if verbose:
+        print("  [produce 3/3] refit for ONNX export", flush=True)
     get_classifier(classifier, **dict(ck, export_onnx_path=onnx_path)).fit_predict(
         Xtr, Ytr_tr, Xval, Ytr_va, Xte, seed)
     sha = (hashlib.sha256(Path(onnx_path).read_bytes()).hexdigest()
@@ -90,10 +92,14 @@ def _emit(out, classifier, ck, eval_lab, Xtr, Ytr_tr, Xval, Ytr_va, Xte, mu, sd,
 def _fit_score(classifier, ck, eval_lab, Xtr, Ytr_tr, Xval, Ytr_va, Xte, Kte, Yte, seed, verbose):
     rng = np.random.default_rng(seed)
     clf_run = get_classifier(classifier, **ck)
+    if verbose:
+        print("  [produce 1/3] fit REAL head", flush=True)
     p_val, p_te, ba = clf_run.fit_predict(Xtr, Ytr_tr, Xval, Ytr_va, Xte, seed)
     thr = _pct_threshold(p_val, OP_PERCENTILE)
     R = _arm_R(eval_lab, Kte, p_te, thr)
     ysh = np.asarray(Ytr_tr).copy(); rng.shuffle(ysh)
+    if verbose:
+        print("  [produce 2/3] fit SHUFFLE control (honest ruler)", flush=True)
     psv, ps, _ = clf_run.fit_predict(Xtr, ysh, Xval, Ytr_va, Xte, seed)
     Rs = _arm_R(eval_lab, Kte, ps, _pct_threshold(psv, OP_PERCENTILE))
     auc = None
@@ -245,10 +251,14 @@ def train_final(labeler, classifier='mantis', clf_kwargs=None, holdout_start='20
               f"good(train)={Ytr_tr.mean():.3f} good(oos)={Yte.mean():.3f}", flush=True)
 
     clf_run = get_classifier(classifier, **ck)
+    if verbose:
+        print("  [produce 1/3] fit REAL head", flush=True)
     p_val, p_te, ba = clf_run.fit_predict(Xtr, Ytr_tr, Xval, Ytr_va, Xte, seed)
     thr = _pct_threshold(p_val, OP_PERCENTILE)
     R = _arm_R(labeler, Kte, p_te, thr)
     ysh = Ytr_tr.copy(); rng.shuffle(ysh)
+    if verbose:
+        print("  [produce 2/3] fit SHUFFLE control (honest ruler)", flush=True)
     psv, ps, _ = clf_run.fit_predict(Xtr, ysh, Xval, Ytr_va, Xte, seed)
     Rs = _arm_R(labeler, Kte, ps, _pct_threshold(psv, OP_PERCENTILE))
 
@@ -269,6 +279,8 @@ def train_final(labeler, classifier='mantis', clf_kwargs=None, holdout_start='20
     if export_onnx and output_path:
         base = Path(output_path).with_suffix('')
         onnx_path = str(base) + '.onnx'
+        if verbose:
+            print("  [produce 3/3] refit for ONNX export", flush=True)
         get_classifier(classifier, **dict(ck, export_onnx_path=onnx_path)).fit_predict(
             Xtr, Ytr_tr, Xval, Ytr_va, Xte, seed)
         sha = (hashlib.sha256(Path(onnx_path).read_bytes()).hexdigest()

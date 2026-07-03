@@ -121,6 +121,33 @@ def _save_bar_cache(path, idx, emb):
     os.replace(tmp, path)
 
 
+def _fit_with_heartbeat(clf, X, y, every=60):
+    """clf.fit with a liveness heartbeat. sklearn solvers (lbfgs on millions of rows) are
+    SILENT for the whole fit — on the full-data produce that's hours with no output, which
+    reads as hung. A daemon thread prints elapsed time every `every`s while fit() runs, so
+    a long fit is visibly alive; fits under `every`s stay quiet (no WF fold spam)."""
+    import threading
+    import time
+    t0 = time.time()
+    stop = threading.Event()
+
+    def _beat():
+        while not stop.wait(every):
+            print(f"    [head] fitting {type(clf).__name__} on {len(X):,}x{X.shape[1]} "
+                  f"... {time.time() - t0:,.0f}s elapsed (alive)", flush=True)
+
+    th = threading.Thread(target=_beat, daemon=True)
+    th.start()
+    try:
+        clf.fit(X, y)
+    finally:
+        stop.set()
+        th.join(timeout=1)
+    if time.time() - t0 >= every:
+        print(f"    [head] fit done in {time.time() - t0:,.0f}s", flush=True)
+    return clf
+
+
 def export_head_onnx(clf, n_features, path):
     """Convert the fitted sklearn head (logistic/MLP) to ONNX: input [N, n_features] standardized
     [emb|handcraft] -> probabilities [N, 2]. zipmap off so the proba output is a plain array."""
@@ -252,7 +279,7 @@ class MantisFrozenClassifier(Classifier):
                                 early_stopping=True, random_state=seed)
         else:
             clf = LogisticRegression(max_iter=1000, C=float(self.cfg.get('C', 1.0)))
-        clf.fit(Xtr, ytr)
+        _fit_with_heartbeat(clf, Xtr, ytr)
         if self.cfg.get('export_onnx_path'):          # deployable bundle: encoder + head ONNX
             _export_frozen_bundle(self.cfg, clf, Xtr.shape[1], Xval)
         p_val = clf.predict_proba(Xval)[:, 1]
