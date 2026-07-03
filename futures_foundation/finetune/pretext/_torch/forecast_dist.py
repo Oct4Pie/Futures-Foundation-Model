@@ -23,6 +23,11 @@ its own local objective registry, its own study namespace, forecast.py never edi
                    per horizon; loss = candle MSE + cross-entropy. Native fit: Mantis is
                    classification-pretrained — this speaks its loss; the logit vector is a learned
                    per-horizon distribution over how far price moves, tails included.
+  candle_mixture   MOIRAI (Salesforce uni2ts): MIXTURE-DENSITY head trained by mixture NLL.
+                   Student-t (LEARNED fat tails = winR) + Normal + low-variance Normal (chop
+                   mode), adapted REAL-VALUED for signed moves (Moirai's neg-binomial/log-normal
+                   components are for positive data — copying them would be wrong here). The
+                   mixture weights can express the pivot's BIMODAL future (runs vs chops).
 
 `dir_weight` mixes the distributional term with the candle MSE (the already-plumbed weight knob);
 0/unset defaults to 1.0 — these objectives are meaningless without their term, so there is no
@@ -97,7 +102,50 @@ class CandleBins(ForecastObjective):
         return self.mse_w * mse + w * ce
 
 
-DIST_OBJECTIVE_CLASSES = {c.name: c for c in (CandleQuantile, CandleBins)}
+class CandleMixture(ForecastObjective):
+    """MOIRAI-style MIXTURE-DENSITY supervision: per horizon, predict a full parametric
+    DISTRIBUTION of the future close move as a K=3 mixture — Student-t (LEARNED fat tails =
+    'how far can this run', the winR signal), Normal (the body), and a low-variance Normal
+    (the confident/chop mode) — trained by mixture NEGATIVE LOG-LIKELIHOOD (Moirai's exact
+    loss). ADAPTED, not copied: Moirai's neg-binomial/log-normal components are for POSITIVE
+    data; our target is the SIGNED context-standardized close move, so all components are
+    real-valued. The mixture WEIGHTS can express bimodality (breaks-out vs chops) that a
+    single-mode head blurs — the weight on the running mode ~ P(reach target).
+
+    aux per horizon (P=9): 3 mixture logits + Student-t(mu, scale, df) + Normal(mu, scale)
+    + low-variance Normal(mu). Scales/df via softplus with stability clamps."""
+    name = 'candle_mixture'
+    K, P = 3, 9
+    LOWVAR_SCALE = 0.1                                     # fixed tight sigma (Moirai's 4th comp)
+
+    def __init__(self, mse_weight=1.0, **_):
+        self.mse_w = float(mse_weight)
+
+    def aux_dim(self, nH):
+        return nH * self.P
+
+    def loss(self, candles, aux, target, close_ch, weight):
+        import torch
+        import torch.nn.functional as F
+        from torch.distributions import Normal, StudentT
+        w = weight if weight and weight > 0 else 1.0
+        t = target[:, close_ch, :]                                       # [B, nH] close move
+        p = aux.view(aux.shape[0], t.shape[1], self.P).float()           # NLL wants fp32
+        logw = F.log_softmax(p[..., 0:3], dim=-1)                        # mixture weights
+        mu_t, sc_t = p[..., 3], F.softplus(p[..., 4]).clamp(1e-3, 100.0)
+        df = (2.1 + F.softplus(p[..., 5])).clamp(max=100.0)              # df>2 -> finite variance
+        mu_n, sc_n = p[..., 6], F.softplus(p[..., 7]).clamp(1e-3, 100.0)
+        mu_l = p[..., 8]
+        tf = t.float()
+        lp = torch.stack([StudentT(df, mu_t, sc_t).log_prob(tf),
+                          Normal(mu_n, sc_n).log_prob(tf),
+                          Normal(mu_l, self.LOWVAR_SCALE).log_prob(tf)], dim=-1)
+        nll = -(torch.logsumexp(logw + lp, dim=-1)).mean()               # mixture NLL (Moirai)
+        mse = ((candles - target) ** 2).mean() if self.mse_w > 0 else 0.0
+        return self.mse_w * mse + w * nll
+
+
+DIST_OBJECTIVE_CLASSES = {c.name: c for c in (CandleQuantile, CandleBins, CandleMixture)}
 
 
 def get_dist_objective(name, **params):

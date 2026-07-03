@@ -505,6 +505,39 @@ def test_candle_bins_ce_rewards_true_bin():
 
 
 @torch_test
+def test_candle_mixture_nll_rewards_calibrated_density():
+    """Moirai-style mixture NLL: parameters that place a tight, correctly-centered density on
+    the true move lose less than mispeaked ones; pure mode (mse_weight=0) ignores the candle
+    head; gradients are finite (softplus/clamp stability guards)."""
+    import torch
+    from futures_foundation.finetune import _ssl_torch as S
+    obj = S.get_dist_objective('candle_mixture')
+    assert obj.aux_dim(4) == 4 * 9
+    torch.manual_seed(0)
+    B, nH = 32, 4
+    target = torch.randn(B, 5, nH)
+    candles = target.clone()
+    t = target[:, 3, :]
+
+    def params(center):
+        p = torch.zeros(B, nH, 9)
+        p[..., 0:3] = torch.tensor([0.0, 0.0, 4.0])       # weight the low-variance component
+        p[..., 3] = center; p[..., 6] = center; p[..., 8] = center
+        return p.reshape(B, -1)
+
+    good = params(t)                                       # density centered ON the true move
+    bad = params(t + 3.0)                                  # mispeaked by 3 sigma
+    assert float(obj.loss(candles, good, target, 3, 1.0)) < float(obj.loss(candles, bad, target, 3, 1.0))
+    # pure mode: candle head contributes nothing
+    pure = S.get_dist_objective('candle_mixture', mse_weight=0.0)
+    assert float(pure.loss(candles, bad, target, 3, 1.0)) == float(pure.loss(candles + 5, bad, target, 3, 1.0))
+    # finite gradients through softplus/df/logsumexp
+    aux = torch.randn(B, nH * 9, requires_grad=True)
+    obj.loss(candles, aux, target, 3, 1.0).backward()
+    assert torch.isfinite(aux.grad).all()
+
+
+@torch_test
 def test_forecast_dist_trainer_smoke():
     """train_ssl_forecast_dist runs end-to-end via the subclassed trainer (aux head sized by the
     swapped objective; forecast.py untouched) -> encoder state + the same comparable metrics as
