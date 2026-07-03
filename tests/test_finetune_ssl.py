@@ -538,6 +538,41 @@ def test_candle_mixture_nll_rewards_calibrated_density():
 
 
 @torch_test
+def test_candle_mixture_collapse_guards():
+    """Anti-collapse guards: (1) the load-balance penalty PENALIZES a mixture that puts all weight
+    on one component vs a balanced one; (2) diagnostics EXPOSE collapse — mix_entropy ~0 for a
+    one-component mixture, ~1 for uniform; mix_mean_df is finite/read."""
+    import torch
+    from futures_foundation.finetune import _ssl_torch as S
+    obj = S.get_dist_objective('candle_mixture', mse_weight=0.0, balance_w=0.1)
+    B, nH = 64, 4
+    target = torch.zeros(B, 5, nH)
+    candles = target.clone()
+
+    def aux_with_weights(logits3):
+        p = torch.zeros(B, nH, 9)
+        p[..., 0:3] = torch.tensor(logits3, dtype=torch.float)
+        return p.reshape(B, -1)
+
+    collapsed = aux_with_weights([9.0, -9.0, -9.0])       # all weight on component 0
+    balanced = aux_with_weights([0.0, 0.0, 0.0])          # uniform
+    # the balance penalty makes the collapsed mixture's loss strictly higher (same densities)
+    assert float(obj.loss(candles, collapsed, target, 3, 1.0)) > float(obj.loss(candles, balanced, target, 3, 1.0))
+    # diagnostics see it: entropy ~0 collapsed, ~1 uniform
+    dc = obj.diagnostics(collapsed, target, 3)
+    db = obj.diagnostics(balanced, target, 3)
+    assert dc['mix_entropy'] < 0.1 and db['mix_entropy'] > 0.95
+    assert np.isfinite(dc['mix_mean_df']) and np.isfinite(db['mix_mean_df'])
+    # BATCH-MEAN entropy (not per-sample): CONFIDENT PER-SAMPLE ROUTING (different samples pick
+    # different components) is HEALTHY, not collapse — must read HIGH entropy. Half the batch
+    # hard-routes to comp 0, half to comp 1 -> balanced batch-mean despite one-hot per sample.
+    routed = torch.zeros(B, nH, 9)
+    routed[:B // 2, :, 0:3] = torch.tensor([9.0, -9.0, -9.0])
+    routed[B // 2:, :, 0:3] = torch.tensor([-9.0, 9.0, -9.0])
+    assert obj.diagnostics(routed.reshape(B, -1), target, 3)['mix_entropy'] > 0.5
+
+
+@torch_test
 def test_forecast_dist_trainer_smoke():
     """train_ssl_forecast_dist runs end-to-end via the subclassed trainer (aux head sized by the
     swapped objective; forecast.py untouched) -> encoder state + the same comparable metrics as

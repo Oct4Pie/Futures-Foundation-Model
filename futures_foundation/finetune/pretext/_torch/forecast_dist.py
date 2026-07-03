@@ -113,36 +113,70 @@ class CandleMixture(ForecastObjective):
     single-mode head blurs — the weight on the running mode ~ P(reach target).
 
     aux per horizon (P=9): 3 mixture logits + Student-t(mu, scale, df) + Normal(mu, scale)
-    + low-variance Normal(mu). Scales/df via softplus with stability clamps."""
+    + low-variance Normal(mu). Scales/df via softplus with stability clamps.
+
+    ANTI-COLLAPSE GUARD (balance_w): mixture NLL can degenerate to ONE component swallowing all
+    weight (the mixture stops being a mixture -> the bimodality signal is gone, but the loss can
+    still look fine). A load-balancing penalty on the BATCH-MEAN weights (the MoE trick:
+    K*sum_k mean_k^2, minimized at uniform) discourages GLOBAL collapse while still allowing
+    per-sample sharpness. Paired with the `diagnostics` read (weight entropy + mean df) so a
+    collapsed trial is VISIBLE, not silent."""
     name = 'candle_mixture'
     K, P = 3, 9
     LOWVAR_SCALE = 0.1                                     # fixed tight sigma (Moirai's 4th comp)
 
-    def __init__(self, mse_weight=1.0, **_):
+    def __init__(self, mse_weight=1.0, balance_w=0.02, **_):
         self.mse_w = float(mse_weight)
+        self.balance_w = float(balance_w)                 # anti-collapse load-balancing coeff
 
     def aux_dim(self, nH):
         return nH * self.P
 
-    def loss(self, candles, aux, target, close_ch, weight):
+    def _mixture(self, aux, t):
+        """Shared parse -> (log-weights, per-component log-prob of the true move). fp32 for NLL."""
         import torch
         import torch.nn.functional as F
         from torch.distributions import Normal, StudentT
-        w = weight if weight and weight > 0 else 1.0
-        t = target[:, close_ch, :]                                       # [B, nH] close move
-        p = aux.view(aux.shape[0], t.shape[1], self.P).float()           # NLL wants fp32
+        p = aux.view(aux.shape[0], t.shape[1], self.P).float()
         logw = F.log_softmax(p[..., 0:3], dim=-1)                        # mixture weights
         mu_t, sc_t = p[..., 3], F.softplus(p[..., 4]).clamp(1e-3, 100.0)
-        df = (2.1 + F.softplus(p[..., 5])).clamp(max=100.0)              # df>2 -> finite variance
+        df = (2.1 + F.softplus(p[..., 5])).clamp(max=100.0)             # df>2 -> finite variance
         mu_n, sc_n = p[..., 6], F.softplus(p[..., 7]).clamp(1e-3, 100.0)
         mu_l = p[..., 8]
         tf = t.float()
         lp = torch.stack([StudentT(df, mu_t, sc_t).log_prob(tf),
                           Normal(mu_n, sc_n).log_prob(tf),
                           Normal(mu_l, self.LOWVAR_SCALE).log_prob(tf)], dim=-1)
+        return logw, lp, df
+
+    def loss(self, candles, aux, target, close_ch, weight):
+        import torch
+        w = weight if weight and weight > 0 else 1.0
+        t = target[:, close_ch, :]                                       # [B, nH] close move
+        logw, lp, _ = self._mixture(aux, t)
         nll = -(torch.logsumexp(logw + lp, dim=-1)).mean()               # mixture NLL (Moirai)
+        # load-balance: batch-mean weight per component -> K*sum(mean^2) in [1, K]; 1 = uniform,
+        # K = fully collapsed. Penalize the excess over uniform so no component monopolizes.
+        mean_w = logw.exp().mean(dim=(0, 1))                            # [K]
+        balance = self.K * (mean_w ** 2).sum() - 1.0
         mse = ((candles - target) ** 2).mean() if self.mse_w > 0 else 0.0
-        return self.mse_w * mse + w * nll
+        return self.mse_w * mse + w * nll + self.balance_w * balance
+
+    def diagnostics(self, aux, target, close_ch):
+        """Collapse-detection read (val only). mix_entropy = normalized entropy of the BATCH-MEAN
+        weights in [0,1] (0 = one component monopolizes the whole batch = COLLAPSED; 1 = balanced)
+        — the SAME quantity the load-balance penalty controls, so it can't false-alarm on healthy
+        confident PER-SAMPLE routing (different samples using different components is fine; only a
+        GLOBALLY dominant component is collapse). mix_mean_df = mean Student-t df (pinned at the
+        2.1 floor = degenerate heavy tail; at the 100 ceiling = the 'tail' component went Gaussian).
+        A trial with low NLL but mix_entropy ~0 = a collapsed mixture faking learning."""
+        import torch
+        t = target[:, close_ch, :]
+        logw, _, df = self._mixture(aux, t)
+        mean_w = logw.exp().mean(dim=(0, 1))                            # [K] batch-mean weights
+        ent = -(mean_w.clamp_min(1e-9).log() * mean_w).sum()           # nats
+        return {'mix_entropy': float(ent / torch.log(torch.tensor(float(self.K)))),  # -> [0,1]
+                'mix_mean_df': float(df.mean())}
 
 
 DIST_OBJECTIVE_CLASSES = {c.name: c for c in (CandleQuantile, CandleBins, CandleMixture)}
@@ -164,6 +198,22 @@ class _DistForecastTrainer(_ForecastTrainer):
         super().__init__(big, tr, va, objective='candle_mse', **kw)      # base init (placeholder obj)
         self.obj = get_dist_objective(objective, mse_weight=mse_weight,  # swap BEFORE build_net()
                                       quantile_taus=quantile_taus, bins_k=bins_k)
+
+    def val_eval(self):
+        """Base val (skill/dir_acc/std) + the objective's own health diagnostics (e.g. mixture
+        collapse: mix_entropy / mix_mean_df) so a degenerate trial is VISIBLE in the log — never
+        a low loss silently faking learning. forecast.py untouched (pure override)."""
+        import torch
+        vloss, extra = super().val_eval()
+        try:
+            mc, tg = self.make_batch(self.va)
+            with torch.no_grad():
+                _candles, aux = self.net(mc)
+                if aux is not None:
+                    extra.update(self.obj.diagnostics(aux, tg, self.close_ch))
+        except Exception:
+            pass                                          # diagnostics never break training
+        return vloss, extra
 
 
 def train_ssl_forecast_dist(big, train_starts, val_starts, *, horizons=(5, 10, 20, 25),

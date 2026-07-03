@@ -28,6 +28,11 @@ class ForecastObjective:
     def loss(self, candles, aux, target, close_ch, weight):
         raise NotImplementedError
 
+    def diagnostics(self, aux, target, close_ch):
+        """Optional per-objective VAL diagnostics (health reads, e.g. mixture collapse). Default
+        none. Called under no_grad in the trainer's val_eval; must return a {str: float} dict."""
+        return {}
+
 
 class CandleMSE(ForecastObjective):
     """Original stage-2: MSE on the future candle move (all channels). No aux head."""
