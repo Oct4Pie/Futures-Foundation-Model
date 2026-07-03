@@ -272,7 +272,9 @@ class MantisFrozenClassifier(Classifier):
         # head MUST be fit on standardized features or serving is a train/serve mismatch.
         mu, sd = self.cfg.get('standardize_mu'), self.cfg.get('standardize_sd')
         mu = None if mu is None else np.asarray(mu, np.float32).reshape(1, -1, 1)
-        sd = None if sd is None else np.asarray(sd, np.float32).reshape(1, -1, 1)
+        # harness stats already carry a +1e-6 epsilon; clamp anyway so hand-fed stats
+        # (contract round-trip, manual cfg) can never divide by zero
+        sd = None if sd is None else np.maximum(np.asarray(sd, np.float32), 1e-6).reshape(1, -1, 1)
 
         def arr(a):
             x = np.asarray(np.load(a, mmap_mode='r') if isinstance(a, str) else a, np.float32)
