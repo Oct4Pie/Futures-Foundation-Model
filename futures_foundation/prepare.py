@@ -4,8 +4,8 @@ Data preparation — raw OHLCV → cached feature/label parquets.
 `prepare_data` survived the FFM-transformer retirement (tag
 `ffm-transformer-final`): it lived in `futures_foundation.pretrain.trainer`
 but is fully torch-free and is the canonical builder of the
-`{INST}_features.parquet` caches consumed by the Chronos+XGBoost pipelines
-(`pipelines/xgboost`'s parquet seam) and the quarterly-retrain runbook.
+`{INST}_features.parquet` caches consumed by the Chronos+XGBoost incumbent
+and the quarterly-retrain runbook.
 The torch pretraining loop it shipped with was deleted with the package.
 """
 

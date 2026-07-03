@@ -210,7 +210,7 @@ def run(labeler, head_factory=None, seeds=(0, 1, 2), train_m=3, val_m=1, test_m=
         use_changepoint=False, use_volume_embed=False, volume_pool='meanreg'):
     """labeler: a StrategyLabeler. head_factory: nc -> head (default
     XGBHead). max_folds=None -> sweep every available OOS month-pair
-    (XGBoost-pipeline convention). Prints REAL/SHUFFLE/RANDOM per
+    (the walk-forward convention). Prints REAL/SHUFFLE/RANDOM per
     fold-seed, an aggregate stats block + per-ticker breakdown for
     REAL, AND (binary labelers only) a WR-by-confidence-threshold sweep
     — the entry-signal calibration test for downstream RL/account
@@ -604,7 +604,7 @@ def run(labeler, head_factory=None, seeds=(0, 1, 2), train_m=3, val_m=1, test_m=
         print(f"  [robustness] skipped: {e}")
 
     # ---- Confidence-threshold dashboard (binary labelers only) -----------
-    # FFM/XGBoost-pipeline-style: per threshold, report trades / wins / WR
+    # Per threshold, report trades / wins / WR
     # (= Prec) / Recall / PF / vs-NAIVE / verdict. The entry-signal
     # calibration test for downstream RL/account managers — pick the
     # threshold where WR is high enough AND trade frequency is meaningful.
