@@ -116,7 +116,12 @@ def embed_windows(windows, *, ckpt=None, model_id='paris-noah/Mantis-8M', device
 class _EncoderONNX(nn.Module):
     """ONNX-exportable wrapper reproducing embed_windows EXACTLY: per-window standardize ->
     per-channel interpolate to native length -> encode -> concat. Raw window [B,C,seq] in,
-    embedding [B, C*hidden] out (standardize baked in so the bot feeds RAW OHLCV)."""
+    embedding [B, C*hidden] out (standardize baked in so the bot feeds RAW OHLCV).
+
+    Channels are folded into the BATCH ([B,C,seq] -> [B*C,1,seq]) so the encoder appears ONCE
+    in the traced graph. The per-channel python loop traced C copies of the transformer into
+    the ONNX (5x nodes, defeated ORT fusion — profiled at 22% Transpose / 57% shape-plumbing).
+    reshape(B, C*hidden) on the [B*C, hidden] output reproduces cat(dim=-1) block order exactly."""
 
     def __init__(self, encoder, C):
         super().__init__()
@@ -125,13 +130,40 @@ class _EncoderONNX(nn.Module):
 
     def forward(self, w):                                     # [B, C, seq] raw OHLCV
         w = _standardize(w)
-        return torch.cat([_enc(self.encoder, w[:, [i], :]) for i in range(self.C)], dim=-1)
+        flat = w.reshape(-1, 1, w.shape[2])                   # [B*C, 1, seq] — ONE encoder pass
+        emb = _enc(self.encoder, flat)                        # [B*C, hidden]
+        return emb.reshape(-1, self.C * emb.shape[1])         # [B, C*hidden] == per-channel cat
+
+
+def _ort_optimize_graph(path):
+    """Offline onnxruntime graph optimization: constant-fold the tracer's shape-plumbing
+    (Shape/Gather/Unsqueeze/Constant), eliminate redundant Transposes, fuse LayerNorm/attention.
+    Saves the optimized graph over `path`. EXTENDED level emits some ORT-specific fused ops —
+    fine for our serve path (the bot runs onnxruntime), and it's the level that kills the
+    Transpose overhead. Best-effort: on any failure the un-optimized (still correct) file stands."""
+    try:
+        import tempfile
+
+        import onnxruntime as ort
+        fd, tmp = tempfile.mkstemp(suffix='.onnx', dir=os.path.dirname(os.path.abspath(path)))
+        os.close(fd)
+        so = ort.SessionOptions()
+        so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
+        so.optimized_model_filepath = tmp
+        ort.InferenceSession(path, so, providers=['CPUExecutionProvider'])
+        os.replace(tmp, path)
+        print(f"[onnx] ORT-optimized encoder graph saved -> {path}", flush=True)
+    except Exception as e:                                    # pragma: no cover
+        print(f"[onnx] ORT offline optimization skipped: {e}", flush=True)
 
 
 def export_encoder_onnx(path, *, ckpt=None, C=5, seq=64,
                         model_id='paris-noah/Mantis-8M', device='cpu'):
     """Export the frozen encoder (standardize+interp+encode) to ONNX: raw window [B,C,seq] ->
-    embedding [B, C*hidden]. Matches embed_windows numerically (parity-tested)."""
+    embedding [B, C*hidden]. Matches embed_windows numerically (parity-tested).
+
+    The graph holds ONE encoder (channels batched, see _EncoderONNX) and is post-processed by
+    onnxruntime offline optimization (constant folding + transpose elimination + fusion)."""
     from mantis.architecture import Mantis8M
     enc = Mantis8M.from_pretrained(model_id)
     if ckpt:
@@ -152,9 +184,11 @@ def export_encoder_onnx(path, *, ckpt=None, C=5, seq=64,
     try:
         torch.onnx.export(m, dummy, path, input_names=['window'], output_names=['embedding'],
                           dynamic_axes={'window': {0: 'batch'}, 'embedding': {0: 'batch'}},
+                          do_constant_folding=True,
                           opset_version=17, dynamo=False)      # legacy tracer (dynamo chokes on Mantis)
     finally:
         torch.diff = _orig_diff
+    _ort_optimize_graph(path)
     return path
 
 
