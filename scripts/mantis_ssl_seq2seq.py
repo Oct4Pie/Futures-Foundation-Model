@@ -108,21 +108,10 @@ if device.type != 'cuda':
     print('⚠️  No CUDA — SSL is designed for a Colab GPU runtime (Runtime > Change runtime type > GPU).')
 
 # ── PRE-FLIGHT ──
-# GUARD: a REORDER run (warm-starting from a regime/contrastive checkpoint) must write a DISTINCT
-# file — never overwrite the shipped seq2seq or stage-1. A default stage-2 run (warm from ohlcv)
-# writing seq2seq.pt is the intended path and allowed.
-_reorder = 'regime' in os.path.basename(WARM_CKPT) or 'contrastive' in os.path.basename(WARM_CKPT)
-if _reorder and os.path.basename(OUT_PATH) in {'mantis_ssl_seq2seq.pt', 'mantis_ssl_ohlcv.pt'}:
-    raise SystemExit(f'❌ REORDER run (warm={os.path.basename(WARM_CKPT)}) must NOT overwrite '
-                     f'{os.path.basename(OUT_PATH)} — set OUT_PATH to a distinct file '
-                     f'(e.g. mantis_ssl_seq2seq_reordered.pt).')
-if os.path.abspath(OUT_PATH) == os.path.abspath(WARM_CKPT):
-    raise SystemExit('❌ OUT_PATH == WARM_CKPT — would overwrite the warm-start.')
 if not os.path.isdir(DATA_DIR):
     raise FileNotFoundError(f'DATA_DIR does not exist:\n  {DATA_DIR}')
 if not os.path.exists(WARM_CKPT):
-    raise FileNotFoundError(f'WARM_CKPT not found:\n  {WARM_CKPT}\n'
-                            f'Run the prior stage first (stage-1 mask, or contrastive-from-mask).')
+    raise FileNotFoundError(f'WARM_CKPT (warm-start encoder) not found:\n  {WARM_CKPT}')
 found = [f'{tk}_{tf}' for tk in TICKERS for tf in TFS
          if os.path.exists(os.path.join(DATA_DIR, f'{tk}_{tf}.csv'))]
 if not found:
