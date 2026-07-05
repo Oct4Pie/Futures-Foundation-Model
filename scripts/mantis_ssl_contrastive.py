@@ -84,7 +84,10 @@ NEW_CHANNELS, PROJ_DIM = 8, 128
 FREEZE_ENCODER_LAYERS  = int(os.environ.get('FREEZE_ENCODER_LAYERS', '0'))   # 0 for reorder step 1
 
 # ── TRAINING ──
-BATCH   = 256                         # 5 windows/anchor stacked -> 1280 encoder rows/step
+# BATCH default 128: contrastive stacks 5 windows/anchor (2 views + 3 positives) x 8 channels ->
+# the 512-len attention over batch*5*8 sequences peaks ~38GB at 256 (right at the A100-40GB edge
+# -> intermittent OOM). 128 -> ~19GB, fits with margin. Env-overridable.
+BATCH   = int(os.environ.get('BATCH', '128'))
 EPOCHS  = 60
 STEPS   = 200
 LR      = 1e-4                        # gentle: this is a REFINE of a proven base
