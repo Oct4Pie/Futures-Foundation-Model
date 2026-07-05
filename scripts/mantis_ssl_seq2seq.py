@@ -64,7 +64,10 @@ import os, torch
 #   WARM_CKPT=.../mantis_ssl_ohlcv.pt OUT_PATH=.../mantis_ssl_seq2seq.pt FREEZE_ENCODER_LAYERS=0
 DATA_DIR  = os.environ.get('DATA_DIR', '/content/drive/MyDrive/Futures Data')
 WARM_CKPT = os.environ.get('WARM_CKPT', '/content/drive/MyDrive/AI_Models/mantis_ssl_regime.pt')
-OUT_PATH  = os.environ.get('OUT_PATH', '/content/drive/MyDrive/AI_Models/mantis_ssl_seq2seq_reordered.pt')
+# DEFAULT OUT = the TUNED reorder (Optuna sweep winner, trial 3) — a DISTINCT file so the manual
+# freeze=3 anchor (mantis_ssl_seq2seq_reordered.pt, 52.6%) is NEVER overwritten. The two are the
+# freeze-2-vs-3 A/B: this tuned freeze=2 winner vs the anchor freeze=3, both vs seq2seq.
+OUT_PATH  = os.environ.get('OUT_PATH', '/content/drive/MyDrive/AI_Models/mantis_ssl_seq2seq_reorder_tuned.pt')
 
 # ── CORPUS (same as stage 1) ──
 TICKERS = ['ES', 'NQ', 'RTY', 'YM', 'GC', 'SI', 'CL', 'ZB', 'ZN']      # all 9
@@ -75,16 +78,19 @@ VAL_FRAC      = 0.1
 # ── MULTI-HORIZON / VARIABLE-CONTEXT candle forecast (sweep-winner) ──
 HORIZONS        = (5, 10, 20, 25)             # predict the CANDLE at each (near..far), in bars
 CONTEXT_LENGTHS = (64, 100, 150, 200)         # sample a context length per step (short..long)
-OBJECTIVE       = 'candle_mse'                # sweep winner: plain candle MSE beat the direction head
-NEW_CHANNELS    = 3                            # sweep: nc=3 (adapter OHLCV=5 -> 3) edged 4/5
-DIR_WEIGHT      = 0.0                          # candle_mse -> no direction head (0)
+# DEFAULTS = the REORDER-sweep winner (trial 3): candle_mse / nc=3 / wd=0 / freeze=2 / lr=1.19e-4.
+# All env-overridable so any sweep config can be full-trained without editing (e.g. OBJECTIVE=
+# candle_direction DIR_WEIGHT=0.29 for trial 5; NEW_CHANNELS=4 LR=1.1e-4 for trial 6).
+OBJECTIVE       = os.environ.get('OBJECTIVE', 'candle_mse')
+NEW_CHANNELS    = int(os.environ.get('NEW_CHANNELS', '3'))
+DIR_WEIGHT      = float(os.environ.get('DIR_WEIGHT', '0.0'))   # >0 only for candle_direction
 
 # ── TRAINING (sweep-winner; BATCH MATCHES THE SWEEP so the tuned LR transfers) ──
 BATCH   = 512         # PARITY with the sweep (lr was tuned at 512; 1024 would need a different lr)
 EPOCHS  = 60          # full budget (the sweep used a short 12-epoch proxy to RANK; train to convergence)
 STEPS   = 200         # steps/epoch
-LR      = 0.00013623475359251814   # sweep-winner lr (~1.4e-4); do NOT round — paired with BATCH=512
-WEIGHT_DECAY = 0.1    # sweep winner
+LR      = float(os.environ.get('LR', '0.0001188117389055629'))   # reorder-sweep winner (trial 3, ~1.19e-4)
+WEIGHT_DECAY = float(os.environ.get('WEIGHT_DECAY', '0.0'))       # trial 3 (env-overridable)
 PATIENCE = 8
 CLAMP, GRAD_CLIP = 10.0, 1.0                    # stability
 CONTROLS = ()                                  # skip shuffle/random retrains (fast iteration; judge
@@ -98,7 +104,7 @@ RESUME  = False        # True -> resume from the best saved to OUT_PATH (crash r
 # DEFAULT = 3 for the REORDER's forecast-last step: freeze the first 3 (of 6) blocks so forecast
 # learns on top of the regime instead of erasing it. Set FREEZE_ENCODER_LAYERS=0 for the old
 # default lineage (mask->forecast full fine-tune, the original sweep winner).
-FREEZE_ENCODER_LAYERS = int(os.environ.get('FREEZE_ENCODER_LAYERS', '3'))
+FREEZE_ENCODER_LAYERS = int(os.environ.get('FREEZE_ENCODER_LAYERS', '2'))   # trial 3 = freeze=2
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f'\nDevice: {device}')
