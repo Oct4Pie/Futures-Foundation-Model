@@ -8,7 +8,9 @@ its own file keeps ssl.py a clean orchestrator.
   forecast      (stage 2)   — multi-horizon / variable-context candle seq2seq
   forecast_dist (stage 2.5) — DISTRIBUTIONAL forecast refine ON stage-2 (Chronos-style
                               quantile/bin objectives; own modules, stage-2 untouched)
-  contrastive   (stage 3)   — trend contrastive (multi-positive InfoNCE by self-supervised trend key)
+  contrastive   (stage 3)   — TEMPORAL-NEIGHBORHOOD contrastive: regime geometry from
+                              multi-scale time proximity + augmentations, sigma-weighted
+                              (replaced the outcome-keyed v1-v3, dropped 2026-07-02)
 """
 from .base import PretextTask
 from .mask import MaskTask

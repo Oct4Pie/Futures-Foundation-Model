@@ -158,7 +158,7 @@ def _base_cfg(**kw):
              steps_per_epoch=200, batch=1024, lr=1e-4, weight_decay=0.05, patience=8,
              model_id='paris-noah/Mantis-8M', compile_model=False, device=None,
              seed=0, verbose=True, backbone_ckpt=None,
-             pretext='mask',                                  # 'mask' (1) | 'forecast' (2) | 'contrastive' (3)
+             pretext='mask',                                  # 'mask' (1) | 'forecast' (2) | 'forecast_dist' (2.5) | 'contrastive' (3)
              # stage-2 multi-horizon / variable-context candle forecasting:
              horizons=(5, 10, 20, 25), context_lengths=(64, 100, 150, 200),
              grad_clip=1.0, clamp=10.0,
@@ -173,13 +173,14 @@ def _base_cfg(**kw):
              # behavior): mse_weight 0 = PURE Chronos loss (no MSE anchor); quantile_taus 'bolt9'
              # = the full 9-level quantile head; bins_k = bin-classification resolution.
              mse_weight=1.0, quantile_taus='lohi', bins_k=41,
-             # stage-3 trend contrastive v3 (FORWARD trend-vs-chop, BARRIER-EXCURSION key): multi-
-             # positive InfoNCE grouped by the FUTURE window's direction x barrier excursion (how far
-             # price RAN before retracing one unit — the WR@3R-shaped ordering statistic the forecast
-             # doesn't regress; v2's path-efficiency was redundant with stage-2 -> key_gap ~0).
-             # Self-supervised, anti-shortcut (key is target-side, not computable from the input).
-             # contrast_horizon = future bars the key reads; pos_cap caps key-positives per anchor.
-             temperature=0.1, crop_max=0.2, proj_dim=128, contrast_horizon=25, pos_cap=64,
+             # stage-3 TEMPORAL-NEIGHBORHOOD contrastive (regime geometry, label-free): positives =
+             # windows at multi-scale time offsets (pos_deltas) + augmented views; negatives =
+             # far-in-time windows (pairs closer than far_min excluded); per-anchor volatility
+             # DOWN-weighting (vol_weight, data-driven — a weight, never a label). Gate = the spec's
+             # A-E structural metrics on the embedding (regime_gate); ship gate stays stage-2.
+             temperature=0.1, crop_max=0.2, proj_dim=128,
+             pos_deltas=(2, 16, 64), far_min=512, aug_noise=0.10, aug_scale=0.20,
+             aug_tmask=0.15, vol_weight=1.0, w_clip=4.0, metrics_n=768,
              # crash-safe progressive best-save + resume + anti-forgetting layer-freeze (ALL pretexts,
              # real run only; controls never touch the ckpt). ckpt_path is set to out_path by loop_ssl.
              ckpt_path=None, resume=False, freeze_encoder_layers=0,

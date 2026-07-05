@@ -1,10 +1,20 @@
-"""Stage-3 pretext v2: FORWARD trend-vs-chop contrastive — multi-positive InfoNCE grouped by the
-FUTURE window's direction x path-efficiency key (self-supervised, anti-shortcut: the key is
-target-side, not computable from the input — v1's trailing-slope key was, and washed). Reserves
-context + the key's future horizon (same leak discipline as the forecast pretext). Gate is
-report-only (descriptive content doesn't regress + no collapse); the REAL gate = trend-AUC +
-decile spread (watch the BOTTOM decile = chop-filter quality) + WR@3R vs the stage-2 baseline,
-judged offline on the one-shot 2026. Fallback = stage-2."""
+"""Stage-3 pretext: TEMPORAL-NEIGHBORHOOD CONTRASTIVE (regime geometry, label-free).
+
+Positives = temporally-nearby windows at multiple scales + augmented views; negatives =
+far-in-time windows; per-anchor volatility DOWN-weighting (data-driven, not a label). Teaches
+the encoder a smooth "market state geometry": nearby-in-time / structurally-similar windows
+cluster, different structures separate — the regime representation the FFM vision wants the
+foundation to own.
+
+Replaces the outcome-keyed contrastive (v1-v3, dropped 2026-07-02 — ~90 trials, no arm beat
+stage-2): the key here is TIME PROXIMITY, never a future path statistic — a fundamentally
+different supervision source.
+
+GATE (this stage) = the requirement doc's structural metrics A-E on the embedding space
+(temporal consistency, emergent clusters, multi-scale ordering, noise robustness, temporal
+stability — `regime_gate` in the torch module). The SHIP gate is unchanged: stage-2 seq2seq
+stays the shipped base; a stage-3 checkpoint must beat it on the one-shot 2026 WR@3R benchmark
+before promotion (feedback_holdout_offlimits discipline)."""
 from .base import PretextTask
 
 
@@ -12,8 +22,8 @@ class ContrastiveTask(PretextTask):
     name, trainer = 'contrastive', 'train_ssl_contrastive'
 
     def reserve(self, cfg):
-        return (max(int(x) for x in cfg['context_lengths'])
-                + int(cfg.get('contrast_horizon', 25)))             # ctx + FUTURE key horizon
+        # positives live at anchor+delta: reserve the largest delta so every positive window fits
+        return max(int(d) for d in cfg.get('pos_deltas', (2, 16, 64)))
 
     def _decide(self, probe_res, no_collapse, margin, dir_margin, detail):
         desc_ok = bool(probe_res.get('descriptive_delta', probe_res['mean_core_delta']) >= -1e-9)

@@ -262,16 +262,17 @@ def test_pretext_reserve_per_task():
     assert ssl.get_pretext('mask').reserve(cfg) == 0                 # stage-1: none
     assert ssl.get_pretext('forecast').reserve(cfg) == 200 + 25      # stage-2: ctx + horizon
     # stage-3 v2: ctx + the FUTURE key horizon (the key reads the next contrast_horizon bars)
-    assert ssl.get_pretext('contrastive').reserve(cfg) == 200 + cfg['contrast_horizon']
+    assert ssl.get_pretext('contrastive').reserve(cfg) == max(cfg['pos_deltas'])
 
 
 def test_base_cfg_has_contrastive_keys():
     cfg = ssl._base_cfg()
     assert cfg['temperature'] == 0.1 and cfg['crop_max'] == 0.2 and cfg['proj_dim'] == 128
-    assert cfg['contrast_horizon'] == 25 and cfg['pos_cap'] == 64    # v2 forward-key knobs
-    over = ssl._base_cfg(pretext='contrastive', temperature=0.07, crop_max=0.1, contrast_horizon=10)
+    assert cfg['pos_deltas'] == (2, 16, 64) and cfg['far_min'] == 512   # temporal knobs
+    over = ssl._base_cfg(pretext='contrastive', temperature=0.07, crop_max=0.1,
+                         pos_deltas=(1, 8, 32), far_min=256, vol_weight=0.5)
     assert over['pretext'] == 'contrastive' and over['temperature'] == 0.07 and over['crop_max'] == 0.1
-    assert over['contrast_horizon'] == 10
+    assert over['pos_deltas'] == (1, 8, 32) and over['far_min'] == 256 and over['vol_weight'] == 0.5
 
 
 def test_passes_contrastive_gate_report_only():
@@ -591,91 +592,45 @@ def test_forecast_dist_trainer_smoke():
     assert 'skill' in hist[-1] and 'dir_acc' in hist[-1] and hist[-1]['std'] > 0
 
 
-# --------------------------- stage-3 v3 forward barrier-excursion contrastive (torch, gated)
+# --------------------------- stage-3 temporal-neighborhood contrastive (torch, gated)
 @torch_test
-def test_future_key_separates_trend_vs_chop():
-    """The FORWARD key buckets windows by their FUTURE's character: future up/down runners land in
-    different direction buckets (key//3 = 0 down/1 flat/2 up) and a whipsaw future — price never
-    RUNS a unit before retracing — lands in the CHOP excursion bucket (key%3 == 0)."""
+def test_contrastive_snap_and_sigma():
+    """_snap_to_starts finds the nearest valid start (boundary-safe); _vol_sigma orders a calm
+    window below a chaotic one (the data-driven down-weighting signal)."""
     import torch
-    from futures_foundation.finetune import _ssl_torch as S
-    torch.manual_seed(0)
-    L, h = 64, 16
-    cs = torch.randn(24, 5, L) * 0.1                               # IDENTICAL-character context (noise)
-    cs[:, 3, :] = 0.0                                              # entry ('now' close) at exactly 0
-    t = torch.linspace(0, 1, h)
-    up = (t * 4).expand(8, h)                                      # future: clean up runner (8 units)
-    dn = (-t * 4).expand(8, h)                                     # future: clean down runner
-    alt = torch.tensor([0.3, -0.3]).repeat(h // 2)                 # future: whipsaw around entry
-    chop = alt.expand(8, h)                                        # (never runs a retrace-unit)
-    fs = torch.zeros(24, 5, h)
-    fs[:, 3, :] = torch.cat([up, dn, chop], 0) + torch.randn(24, h) * 0.02   # close channel = 3
-    key = S._future_key(cs, fs, dz=0.5, e1=1.0, e2=3.0)            # FIXED edges (retrace-unit=dz)
-    dir_b, run_b = key // 3, key % 3
-    assert (dir_b[:8] == 2).float().mean() > 0.7                   # future up runner -> up bucket
-    assert (dir_b[8:16] == 0).float().mean() > 0.7                 # future down runner -> down bucket
-    assert (run_b[16:] == 0).float().mean() > 0.7                  # whipsaw -> CHOP (no clean run)
-    assert (run_b[:16] == 2).float().mean() > 0.7                  # clean drifts -> RUNNER bucket
+    from futures_foundation.finetune.pretext._torch.contrastive import _snap_to_starts, _vol_sigma
+    starts = torch.tensor([0, 10, 20, 30, 100, 110], dtype=torch.long)
+    s, d = _snap_to_starts(starts, torch.tensor([12, 95, 40], dtype=torch.long))
+    assert s.tolist() == [10, 100, 30] and d.tolist() == [2, 5, 10]
+    calm = torch.full((1, 5, 64), 100.0); calm[0, 3, :] += torch.linspace(0, 0.5, 64)
+    wild = torch.full((1, 5, 64), 100.0); wild[0, 3, ::2] += 3.0
+    assert float(_vol_sigma(calm)) < float(_vol_sigma(wild))
 
 
 @torch_test
-def test_future_key_barrier_ordering():
-    """The v3 stat is an ORDERING statistic (the whole point vs v2's efficiency): a path that first
-    runs +2 units and THEN crashes -6 scores a 2-unit run (the crash doesn't count — a short from
-    'now' was stopped by the +2 first), while the same crash without the fakeout scores ~6 units.
-    Net move alone can't tell these apart; the barrier excursion can."""
-    import torch
-    from futures_foundation.finetune import _ssl_torch as S
-    h = 20
-    cs = torch.zeros(2, 5, 8)                                      # entry close = 0
-    fs = torch.zeros(2, 5, h)
-    fs[0, 3, :] = torch.cat([torch.linspace(0.1, 1.0, 5), torch.linspace(0.6, -3.0, 15)])  # fakeout
-    fs[1, 3, :] = torch.linspace(-0.2, -3.0, h)                    # clean down runner
-    net, run = S._future_barrier_stats(cs, fs, unit=0.5)
-    assert abs(float(run[0]) - 2.0) < 0.3                          # fakeout: only the +1.0 pre-crash run
-    assert float(run[1]) > 5.0                                     # clean crash: ~6-unit down run
-    assert float(net[0]) < 0 and float(net[1]) < 0                 # same net sign — net can't separate
-
-
-@torch_test
-def test_future_key_groups_by_future_not_past():
-    """THE anti-shortcut property v1 lacked: two windows with the SAME context (past) but different
-    FUTURES get DIFFERENT keys — so the key cannot be computed from the input, and the encoder must
-    learn causal precursors of the future character (trend detection), not restate the past."""
-    import torch
-    from futures_foundation.finetune import _ssl_torch as S
-    torch.manual_seed(1)
-    L, h = 64, 16
-    ctx = torch.randn(1, 5, L).repeat(2, 1, 1)                     # EXACT same past for both
-    ctx[:, 3, -1] = 0.0                                            # shared entry close at 0
-    t = torch.linspace(0, 1, h)
-    fs = torch.zeros(2, 5, h)
-    fs[0, 3, :] = t * 4                                            # window A future: runs up 8 units
-    fs[1, 3, :] = torch.tensor([0.3, -0.3]).repeat(h // 2)         # window B future: whipsaws
-    key = S._future_key(ctx, fs, dz=0.5, e1=1.0, e2=3.0)
-    assert int(key[0]) != int(key[1])                              # same past, different key
-
-
-@torch_test
-def test_multi_positive_infonce_rewards_trend_grouping():
-    """Multi-positive InfoNCE gives LOWER loss when same-key (same-trend) embeddings are aligned
-    than anti-aligned -> the loss PULLS same-trend windows together (fixes false-negatives)."""
+def test_weighted_supcon_prefers_temporal_grouping():
+    """The sigma-weighted SupCon gives LOWER loss when same-group (anchor views + temporal
+    positives) embeddings are aligned than anti-aligned, and EXCLUDES near-but-not-positive
+    pairs from the denominator (they are neither pulled nor pushed)."""
     import torch
     import torch.nn.functional as F
-    from futures_foundation.finetune import _ssl_torch as S
-    key = torch.tensor([0, 0, 1, 1]); inst = torch.tensor([0, 1, 2, 3])
+    from futures_foundation.finetune.pretext._torch.contrastive import _weighted_supcon
+    group = torch.tensor([0, 0, 1, 1])
+    ok = torch.ones(4, dtype=torch.bool)
+    positions = torch.tensor([0, 2, 5000, 5002])
+    w = torch.ones(4)
     aligned = F.normalize(torch.tensor([[1., 0], [1, 0], [0, 1.], [0, 1]]), dim=1)
     anti = F.normalize(torch.tensor([[1., 0], [-1, 0], [0, 1.], [0, -1]]), dim=1)
-    la = S._multi_positive_infonce(aligned, key, inst, 0.1)
-    lb = S._multi_positive_infonce(anti, key, inst, 0.1)
+    la = _weighted_supcon(aligned, group, ok, positions, w, 0.1, far_min=64)
+    lb = _weighted_supcon(anti, group, ok, positions, w, 0.1, far_min=64)
     assert torch.isfinite(la) and float(la) < float(lb)
 
 
 @torch_test
 def test_contrastive_net_shape_and_trainer_smoke(tmp_path):
-    """ContrastiveTrendNet -> L2-normalized [B, proj_dim]; the v2 trainer runs (fixed key edges
-    calibrated, key_gap reported), returns an encoder state loadable downstream + finite val loss,
-    and accepts a warm-start ckpt (from the stage-2 winner)."""
+    """ContrastiveTrendNet -> L2-normalized [B, proj_dim]; the temporal trainer runs end-to-end,
+    reports the spec's A-E regime metrics, returns an encoder state loadable downstream, and
+    accepts a warm-start ckpt; regime_gate evaluates the metrics dict."""
     import torch
     from futures_foundation.finetune import _ssl_torch as S
     from futures_foundation.finetune.classifiers._mantis_torch import build_model
@@ -685,19 +640,25 @@ def test_contrastive_net_shape_and_trainer_smoke(tmp_path):
     rng = np.random.default_rng(0)
     big = (100 + np.cumsum(rng.standard_normal((3000, 5)) * 0.1, 0)).astype(np.float32)
     big[:, 4] = np.abs(big[:, 4]) * 100 + 500                      # positive-ish volume
-    cl, h = (32, 48), 8; starts = np.arange(0, 3000 - (48 + 8) - 1, 4)   # parent = ctx + horizon
-    state, hist = S.train_ssl_contrastive(big, starts, starts[-50:], context_lengths=cl,
-                                          contrast_horizon=h, new_channels=4, proj_dim=64,
-                                          epochs=2, steps_per_epoch=3, batch=16, device='cpu',
+    starts = np.arange(0, 3000 - 64 - 32 - 1, 2)                   # reserve = max delta (32)
+    state, hist = S.train_ssl_contrastive(big, starts, starts[-120:], seq=64,
+                                          pos_deltas=(2, 8, 32), far_min=128, metrics_n=48,
+                                          new_channels=4, proj_dim=64, epochs=1,
+                                          steps_per_epoch=2, batch=8, device='cpu',
                                           control='real', verbose=False)
     assert len(hist) >= 1 and np.isfinite(hist[-1]['val_loss']) and hist[-1]['std'] > 0
-    assert 'key_gap' in hist[-1] and np.isfinite(hist[-1]['key_gap'])   # separation diagnostic
+    for k in ('smooth', 'sil', 'scale_span', 'scale_mono', 'vol_ratio', 'drift'):
+        assert k in hist[-1]                                       # the spec's A-E metrics
+    ok, checks = S.regime_gate(hist[-1])
+    assert set(checks) == {'A_temporal_consistency', 'B_emergent_structure', 'C_multi_scale',
+                           'D_noise_robustness', 'E_temporal_stability'}
     ckpt = str(tmp_path / 'enc.pt'); torch.save(state, ckpt)
     _, new_c = build_model(5, new_channels=4, device='cpu', backbone_ckpt=ckpt)
     assert new_c == 4                                              # encoder ckpt loads downstream
-    state2, _ = S.train_ssl_contrastive(big, starts, starts[-50:], context_lengths=cl,
-                                        contrast_horizon=h, new_channels=4, proj_dim=64, epochs=1,
-                                        steps_per_epoch=2, batch=16, device='cpu', control='real',
+    state2, _ = S.train_ssl_contrastive(big, starts, starts[-120:], seq=64,
+                                        pos_deltas=(2, 8, 32), far_min=128, metrics_n=48,
+                                        new_channels=4, proj_dim=64, epochs=1, steps_per_epoch=1,
+                                        batch=8, device='cpu', control='real',
                                         backbone_ckpt=ckpt, verbose=False)
     assert set(state2.keys()) == set(state.keys())                # warm-start same encoder keys
 
