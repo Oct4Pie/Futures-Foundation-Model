@@ -78,8 +78,14 @@ def _emit(out, classifier, ck, eval_lab, mu, sd, C, seq,
         'nan_policy': {'posinf': 0, 'neginf': 0, 'nan': 0},
         'ft_config': {k: v for k, v in (ck or {}).items()
                       if k not in ('standardize_mu', 'standardize_sd', 'log_path')},
-        'n_classes': 2, 'proba_meaning': 'P(good trend pivot reaches target before stop)',
-        'output_fn': 'softmax(logits)[:,1]',
+        'n_classes': 2,
+        'proba_meaning': ('P(reach target before stop) — Platt-CALIBRATED to the empirical hit rate'
+                          if out.get('platt') else 'P(good trend pivot reaches target before stop)'),
+        # head.onnx emits RAW proba; the bot applies calibration AFTER it -> cal = sigmoid(A*logit(p)+B).
+        # None = serve raw. Carrying it here is what keeps serve-time proba == the calibrated produce metric.
+        'calibration': ({'method': 'platt', 'formula': 'sigmoid(A*logit(p_raw)+B)',
+                         'A': out['platt'][0], 'B': out['platt'][1]} if out.get('platt') else None),
+        'output_fn': ('platt(head_raw_proba)' if out.get('platt') else 'softmax(logits)[:,1]'),
         'train_scope': {'tickers': tks, 'timeframes': tfs, 'holdout_start': holdout_start,
                         'n_train': int(out['n_train']), 'n_oos': int(out['n_oos'])},
         'oos_metrics': {k: out.get(k) for k in
@@ -105,8 +111,8 @@ def _fit_score(classifier, ck, eval_lab, Xtr, Ytr_tr, Xval, Ytr_va, Xte, Kte, Yt
         print(f"  [produce 1/2] fit REAL head{' (+ ONNX export)' if onnx_path else ''}",
               flush=True)
     ck_real = dict(ck, export_onnx_path=onnx_path) if onnx_path else ck
-    p_val, p_te, ba = get_classifier(classifier, **ck_real).fit_predict(
-        Xtr, Ytr_tr, Xval, Ytr_va, Xte, seed)
+    clf_real = get_classifier(classifier, **ck_real)          # keep the instance: it holds _platt
+    p_val, p_te, ba = clf_real.fit_predict(Xtr, Ytr_tr, Xval, Ytr_va, Xte, seed)
     gc.collect()
     thr = _pct_threshold(p_val, OP_PERCENTILE)
     R = _arm_R(eval_lab, Kte, p_te, thr)
@@ -123,7 +129,8 @@ def _fit_score(classifier, ck, eval_lab, Xtr, Ytr_tr, Xval, Ytr_va, Xte, Kte, Yt
     edge = _meanR(R) - _meanR(Rs)
     out = dict(oos_auc=auc, best_val_auc=ba, oos_meanR=_meanR(R), shuffle_meanR=_meanR(Rs),
                edge_shuffle=edge, n_train=len(Ytr_tr), n_oos=len(Kte), oos_trades=int(len(R)),
-               beats_shuffle=bool(edge >= PASS_LIFT_MARGIN_R))
+               beats_shuffle=bool(edge >= PASS_LIFT_MARGIN_R),
+               platt=getattr(clf_real, '_platt', None))       # Platt (A,B) -> deploy contract
     if verbose:
         print(f"  OOS AUC {auc:.4f}" if auc is not None else "  OOS AUC n/a")
         print(f"  OOS meanR REAL {out['oos_meanR']:+.3f} SHUFFLE {out['shuffle_meanR']:+.3f} "

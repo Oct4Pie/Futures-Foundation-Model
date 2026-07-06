@@ -148,6 +148,34 @@ def _fit_with_heartbeat(clf, X, y, every=60):
     return clf
 
 
+def fit_platt(p1, y):
+    """Platt scaling: fit (A,B) so cal = sigmoid(A·logit(p1)+B) tracks the empirical hit rate.
+    p1 = OUT-OF-SAMPLE proba (the val set the clf never trained on -> leak-free), y = its labels.
+    MONOTONIC — rescales the proba to ≈P(win) WITHOUT changing ranking/AUC, so P=0.5 means a true
+    ~50% signal and the proba is a trustworthy confidence ACROSS tiers (what proba-sizing needs).
+    Same convention as pipeline/head_xgb.py. Returns (A, B); needs both classes present."""
+    from sklearn.linear_model import LogisticRegression
+    y = np.asarray(y).astype(int)
+    if len(np.unique(y)) < 2:
+        return None
+    eps = 1e-6
+    p = np.clip(np.asarray(p1, np.float64), eps, 1 - eps)
+    z = np.log(p / (1 - p)).reshape(-1, 1)              # logit of OOS P(take)
+    lr = LogisticRegression(C=1e6, solver='lbfgs').fit(z, y)   # ~unregularized Platt
+    return float(lr.coef_[0, 0]), float(lr.intercept_[0])
+
+
+def apply_platt(p1, platt):
+    """cal = sigmoid(A·logit(p1)+B), vectorized + clip-safe. platt=None -> raw (identity no-op)."""
+    if platt is None:
+        return np.asarray(p1, np.float64)
+    A, B = platt
+    eps = 1e-6
+    p = np.clip(np.asarray(p1, np.float64), eps, 1 - eps)
+    z = np.log(p / (1 - p))
+    return 1.0 / (1.0 + np.exp(-(A * z + B)))
+
+
 def export_head_onnx(clf, n_features, path):
     """Convert the fitted sklearn head (logistic/MLP) to ONNX: input [N, n_features] standardized
     [emb|handcraft] -> probabilities [N, 2]. zipmap off so the proba output is a plain array."""
@@ -199,6 +227,7 @@ class MantisFrozenClassifier(Classifier):
 
     def __init__(self, **cfg):
         self.cfg = cfg
+        self._platt = None                  # Platt (A,B) after calibrate; None = raw proba
 
     def _embed(self, labeler, keys):
         """Frozen-encoder embedding of `keys` via the isolated subprocess worker -> [N, emb]."""
@@ -298,7 +327,14 @@ class MantisFrozenClassifier(Classifier):
             # parity-check on a slice — running onnxruntime + predict_proba over the FULL val
             # set (~500k x 1311 at produce scale) stacks GBs at peak RAM for no extra signal
             _export_frozen_bundle(self.cfg, clf, Xtr.shape[1], Xval[:2048])
-        p_val = clf.predict_proba(Xval)[:, 1]
-        p_eval = clf.predict_proba(Xeval)[:, 1]
-        auc = roc_auc_score(yval, p_val) if len(np.unique(yval)) == 2 else 0.5
+        # CALIBRATION (Platt) — OFF by default (cfg 'calibrate'). Fit on the VAL set, which the clf
+        # never trained on (leak-free), so the proba tracks the empirical hit rate: P=0.5 => a true
+        # ~50% signal, and the proba is a trustworthy regime-confidence across tiers (proba-sizing).
+        # MLP proba is typically over-confident; logistic ~self-calibrated. AUC unchanged (Platt is
+        # monotonic). Eval is calibrated OUT-OF-SAMPLE (Platt fit on val, applied to eval).
+        raw_val = clf.predict_proba(Xval)[:, 1]
+        self._platt = fit_platt(raw_val, yval) if self.cfg.get('calibrate') else None
+        p_val = apply_platt(raw_val, self._platt)
+        p_eval = apply_platt(clf.predict_proba(Xeval)[:, 1], self._platt)
+        auc = roc_auc_score(yval, raw_val) if len(np.unique(yval)) == 2 else 0.5   # ranking-invariant
         return p_val, p_eval, float(auc)
