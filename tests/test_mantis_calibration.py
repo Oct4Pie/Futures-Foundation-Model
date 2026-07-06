@@ -56,7 +56,7 @@ def test_fit_platt_fixes_overconfidence():
 
 
 # ---------------------------------------------------------------- fit_predict integration
-def _toy_fit(calibrate, head='logistic', seed=0):
+def _toy_fit(calibrate, head='logistic', seed=0, **extra):
     rng = np.random.default_rng(seed)
     D = 8
     w = rng.normal(size=D)
@@ -67,7 +67,7 @@ def _toy_fit(calibrate, head='logistic', seed=0):
         return X, (rng.uniform(size=n) < p).astype(int)
 
     Xtr, ytr = make(2000); Xval, yval = make(1500); Xev, yev = make(1500)
-    clf = MantisFrozenClassifier(head=head, calibrate=calibrate, max_iter=300)
+    clf = MantisFrozenClassifier(head=head, calibrate=calibrate, max_iter=300, **extra)
     p_val, p_eval, auc = clf.fit_predict(Xtr, ytr, Xval, yval, Xev, seed=seed)
     return clf, p_val, p_eval, auc, yval
 
@@ -116,3 +116,38 @@ def test_contract_uncalibrated_when_no_platt(tmp_path):
     c = _emit_contract(tmp_path, None)
     assert c['calibration'] is None                           # serve raw, no silent calibration
     assert 'CALIBRATED' not in c['proba_meaning']
+
+
+# ---------------------------------------------------------------- MLP speed knobs + SKIP_SHUFFLE
+def test_mlp_batch_and_alpha_pass_through_and_still_calibrate():
+    # custom batch_size + alpha reach the MLP and calibration still runs (no quality path broken)
+    clf, p_val, p_eval, auc, yval = _toy_fit(calibrate=True, head='mlp', seed=6,
+                                             mlp_batch=64, mlp_alpha=1e-2)
+    assert clf._platt is not None
+    assert p_eval.min() >= 0 and p_eval.max() <= 1
+
+
+def test_skip_shuffle_keeps_real_and_calibration(monkeypatch):
+    # SKIP_SHUFFLE=1 -> no shuffle control, but REAL metrics + calibration (Platt) are preserved
+    from futures_foundation.finetune import produce
+    monkeypatch.setenv('SKIP_SHUFFLE', '1')
+    rng = np.random.default_rng(0)
+    D = 8; w = rng.normal(size=D)
+
+    def make(n):
+        X = rng.normal(size=(n, D)).astype(np.float32)
+        return X, (rng.uniform(size=n) < 1 / (1 + np.exp(-(X @ w)))).astype(int)
+
+    Xtr, ytr = make(1500); Xval, yval = make(600); Xte, yte = make(600)
+    keys = list(range(len(Xte)))
+
+    class Lab:                                                # _arm_R needs only .evaluate(keys, preds)
+        def evaluate(self, ks, preds):
+            return np.array([1.0 if yte[k] else -1.0 for k, p in zip(ks, preds) if p == 1])
+
+    out = produce._fit_score('mantis_frozen', dict(head='logistic', calibrate=True),
+                             Lab(), Xtr, ytr, Xval, yval, Xte, keys, yte, 0, False)
+    assert out['shuffle_meanR'] is None                       # shuffle skipped
+    assert out['edge_shuffle'] is None
+    assert out['oos_meanR'] is not None                       # REAL still computed
+    assert out['platt'] is not None                           # calibration ran on the REAL fit

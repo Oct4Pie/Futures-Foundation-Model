@@ -14,6 +14,7 @@ held-out 2026 OOS once with a SHUFFLE control, and (export_onnx) emit <base>.onn
 """
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -116,26 +117,37 @@ def _fit_score(classifier, ck, eval_lab, Xtr, Ytr_tr, Xval, Ytr_va, Xte, Kte, Yt
     gc.collect()
     thr = _pct_threshold(p_val, OP_PERCENTILE)
     R = _arm_R(eval_lab, Kte, p_te, thr)
-    ysh = np.asarray(Ytr_tr).copy(); rng.shuffle(ysh)
-    if verbose:
-        print("  [produce 2/2] fit SHUFFLE control (honest ruler)", flush=True)
-    psv, ps, _ = get_classifier(classifier, **ck).fit_predict(Xtr, ysh, Xval, Ytr_va, Xte, seed)
-    gc.collect()
-    Rs = _arm_R(eval_lab, Kte, ps, _pct_threshold(psv, OP_PERCENTILE))
+    # SHUFFLE control = the produce-side honest ruler. SKIP_SHUFFLE=1 skips it (halves produce time)
+    # when the WF ALREADY ran the honest ruler on this config; REAL + calibration are unaffected.
+    if os.environ.get('SKIP_SHUFFLE') == '1':
+        Rs = None
+        if verbose:
+            print("  [produce 2/2] SKIPPED (SKIP_SHUFFLE=1; honest ruler already run in WF)", flush=True)
+    else:
+        ysh = np.asarray(Ytr_tr).copy(); rng.shuffle(ysh)
+        if verbose:
+            print("  [produce 2/2] fit SHUFFLE control (honest ruler)", flush=True)
+        psv, ps, _ = get_classifier(classifier, **ck).fit_predict(Xtr, ysh, Xval, Ytr_va, Xte, seed)
+        gc.collect()
+        Rs = _arm_R(eval_lab, Kte, ps, _pct_threshold(psv, OP_PERCENTILE))
     auc = None
     if len(np.unique(Yte)) == 2:
         from sklearn.metrics import roc_auc_score
         auc = float(roc_auc_score(Yte, p_te))
-    edge = _meanR(R) - _meanR(Rs)
-    out = dict(oos_auc=auc, best_val_auc=ba, oos_meanR=_meanR(R), shuffle_meanR=_meanR(Rs),
-               edge_shuffle=edge, n_train=len(Ytr_tr), n_oos=len(Kte), oos_trades=int(len(R)),
-               beats_shuffle=bool(edge >= PASS_LIFT_MARGIN_R),
+    edge = (_meanR(R) - _meanR(Rs)) if Rs is not None else None
+    out = dict(oos_auc=auc, best_val_auc=ba, oos_meanR=_meanR(R),
+               shuffle_meanR=(_meanR(Rs) if Rs is not None else None), edge_shuffle=edge,
+               n_train=len(Ytr_tr), n_oos=len(Kte), oos_trades=int(len(R)),
+               beats_shuffle=(bool(edge >= PASS_LIFT_MARGIN_R) if edge is not None else None),
                platt=getattr(clf_real, '_platt', None))       # Platt (A,B) -> deploy contract
     if verbose:
         print(f"  OOS AUC {auc:.4f}" if auc is not None else "  OOS AUC n/a")
-        print(f"  OOS meanR REAL {out['oos_meanR']:+.3f} SHUFFLE {out['shuffle_meanR']:+.3f} "
-              f"edge {edge:+.3f} (trades={out['oos_trades']})  -> "
-              f"{'beats SHUFFLE' if out['beats_shuffle'] else 'does NOT beat SHUFFLE'}")
+        if edge is not None:
+            print(f"  OOS meanR REAL {out['oos_meanR']:+.3f} SHUFFLE {out['shuffle_meanR']:+.3f} "
+                  f"edge {edge:+.3f} (trades={out['oos_trades']})  -> "
+                  f"{'beats SHUFFLE' if out['beats_shuffle'] else 'does NOT beat SHUFFLE'}")
+        else:
+            print(f"  OOS meanR REAL {out['oos_meanR']:+.3f} (SHUFFLE skipped; trades={out['oos_trades']})")
     return out
 
 

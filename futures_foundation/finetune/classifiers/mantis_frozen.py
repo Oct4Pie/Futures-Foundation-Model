@@ -316,8 +316,14 @@ class MantisFrozenClassifier(Classifier):
         if len(np.unique(ytr)) < 2:
             return np.full(len(Xval), .5), np.full(len(Xeval), .5), 0.5
         if self.cfg.get('head', 'logistic') == 'mlp':
+            # batch_size: sklearn's default is min(200, n) — absurdly small at produce scale (2.78M
+            # rows -> ~14k minibatches/epoch). A bigger batch = ~same solution (early-stopping guards
+            # it) but 10-40x faster. alpha = L2 regularization; RAISE it to guard overfitting. Both
+            # env-overridable so the WF can re-validate the setting before produce trusts it.
             clf = MLPClassifier(hidden_layer_sizes=tuple(self.cfg.get('hidden', (128,))),
                                 max_iter=int(self.cfg.get('max_iter', 300)),
+                                batch_size=int(self.cfg.get('mlp_batch', 4096)),
+                                alpha=float(self.cfg.get('mlp_alpha', 1e-4)),
                                 early_stopping=True, random_state=seed)
         else:
             clf = LogisticRegression(max_iter=int(self.cfg.get('max_iter', 1000)),
