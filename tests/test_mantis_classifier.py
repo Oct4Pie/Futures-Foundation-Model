@@ -56,7 +56,7 @@ def test_adapter_module_has_no_top_level_torch_import():
 # ---- torch-gated: freeze policy on the model ------------------------------
 @torch_test
 def test_partial_mode_freezes_backbone():
-    from futures_foundation.finetune.classifiers._mantis_torch import build_model
+    from futures_foundation.finetune.classifiers.mantis._torch import build_model
     model, new_c = build_model(4, new_channels=4, ft_mode='partial', unfreeze_blocks=2,
                                device='cpu')
     layers = model.encoder.vit_unit.transformer.layers
@@ -67,7 +67,7 @@ def test_partial_mode_freezes_backbone():
 
 @torch_test
 def test_head_mode_freezes_all_backbone():
-    from futures_foundation.finetune.classifiers._mantis_torch import build_model
+    from futures_foundation.finetune.classifiers.mantis._torch import build_model
     model, _ = build_model(4, ft_mode='head', device='cpu')
     assert not any(p.requires_grad for p in model.encoder.parameters())
     assert all(p.requires_grad for p in model.head.parameters())
@@ -77,7 +77,7 @@ def test_head_mode_freezes_all_backbone():
 @torch_test
 def test_fit_predict_torch_shapes_and_learns():
     from sklearn.metrics import roc_auc_score
-    from futures_foundation.finetune.classifiers._mantis_torch import fit_predict_torch
+    from futures_foundation.finetune.classifiers.mantis._torch import fit_predict_torch
     X, y = _toy(N=300, seed=2)
     p_val, p_eval, ba, be = fit_predict_torch(
         X[:200], y[:200], X[200:250], y[200:250], X[250:],
@@ -92,7 +92,7 @@ def test_fit_predict_torch_shapes_and_learns():
 @torch_test
 def test_fit_predict_torch_memmap_and_standardize(tmp_path):
     from sklearn.metrics import roc_auc_score
-    from futures_foundation.finetune.classifiers._mantis_torch import fit_predict_torch
+    from futures_foundation.finetune.classifiers.mantis._torch import fit_predict_torch
     X, y = _toy(N=300, seed=3)                      # raw (unstandardized)
     p = str(tmp_path / 'Xtr.npy'); np.save(p, X[:200])
     Xtr_mm = np.load(p, mmap_mode='r')              # disk-backed train

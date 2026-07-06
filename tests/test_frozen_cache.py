@@ -5,7 +5,7 @@ SUBSETS reuse one embed (produce train/val/oos), and partial requests only embed
 """
 import numpy as np
 
-from futures_foundation.finetune.classifiers.mantis_frozen import (
+from futures_foundation.finetune.classifiers.mantis.frozen import (
     MantisFrozenClassifier, _embed_cache_path, _save_bar_cache, _load_bar_cache, _bar_cache_path)
 
 

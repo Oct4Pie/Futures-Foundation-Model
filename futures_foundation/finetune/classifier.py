@@ -25,15 +25,6 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 
-# ── BASE FOUNDATION CHECKPOINT — the default starting point for ANY new strategy finetune ──
-# New strategies finetune ON TOP of the best SSL foundation, never from vanilla Mantis. This is
-# the SINGLE source of truth: point it at whichever SSL checkpoint currently wins the OHLCV-only
-# WR@3R benchmark, and every strategy inherits the lift automatically. Update in ONE place.
-#   stage-2 (ctx200 candle seq2seq)      = mantis_ssl_seq2seq.pt     ← current base (+4.8 vs vanilla)
-#   stage-3 (trend contrastive)          = mantis_ssl_contrastive.pt ← promote here IFF it beats stage-2
-BASE_BACKBONE_CKPT = 'checkpoints/mantis_ssl_seq2seq.pt'
-
-
 class Classifier(ABC):
     n_classes: int = 2
     needs_standardize: bool = False
@@ -60,16 +51,40 @@ def register_classifier(name):
     return deco
 
 
-def get_classifier(name, **kwargs) -> Classifier:
-    """Instantiate a registered classifier by name (concrete impls imported lazily
-    so this module + the finetune parent stay torch-free)."""
+def get_classifier_class(name):
+    """Return the registered Classifier CLASS, importing its backbone from the plugin manifest if
+    needed. For introspection (e.g. a tuner reading a backbone's `suggest_params`); build an
+    instance with get_classifier(). Keeps this interface torch-free + backbone-name-free."""
     if name not in _REGISTRY:
-        if name == 'mantis':
-            from .classifiers.mantis import MantisClassifier        # noqa: F401
-        elif name == 'mantis_frozen':
-            from .classifiers.mantis_frozen import MantisFrozenClassifier   # noqa: F401
-        elif name == 'logistic':
-            from .classifiers.logistic import LogisticClassifier    # noqa: F401
-        else:
-            raise KeyError(f"unknown classifier '{name}'. registered: {sorted(_REGISTRY)}")
-    return _REGISTRY[name](**kwargs)
+        import importlib
+        from .classifiers import LAZY_BACKBONES
+        mod = LAZY_BACKBONES.get(name)
+        if mod is None:
+            raise KeyError(f"unknown classifier '{name}'. registered: {sorted(_REGISTRY)}; "
+                           f"available: {sorted(LAZY_BACKBONES)}")
+        importlib.import_module(mod)                    # self-registers via @register_classifier
+    return _REGISTRY[name]
+
+
+def get_classifier(name, **kwargs) -> Classifier:
+    """Instantiate a registered classifier by name (backbone imported lazily from the manifest)."""
+    return get_classifier_class(name)(**kwargs)
+
+
+def base_backbone_ckpt(backbone=None):
+    """DI accessor: the default SSL foundation checkpoint a new strategy finetunes on top of,
+    resolved from the ACTIVE backbone (no hard-coded foundation path in generic code). Each
+    backbone package exposes `BASE_CKPT`; default = the manifest's DEFAULT_BACKBONE."""
+    import importlib
+    from .classifiers import LAZY_BACKBONES, DEFAULT_BACKBONE
+    pkg = importlib.import_module(LAZY_BACKBONES[backbone or DEFAULT_BACKBONE])
+    return pkg.BASE_CKPT
+
+
+def __getattr__(name):
+    # Back-compat (PEP 562): `from ...classifier import BASE_BACKBONE_CKPT` resolves LAZILY to the
+    # active backbone's base ckpt, so existing strategy colabs keep working without naming a
+    # backbone in generic code. Deferred so importing this module stays torch-free.
+    if name == 'BASE_BACKBONE_CKPT':
+        return base_backbone_ckpt()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

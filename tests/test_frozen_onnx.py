@@ -25,7 +25,7 @@ def test_head_onnx_parity(tmp_path, head):
     """skl2onnx head matches the sklearn head's predict_proba (torch-free)."""
     from sklearn.linear_model import LogisticRegression
     from sklearn.neural_network import MLPClassifier
-    from futures_foundation.finetune.classifiers.mantis_frozen import export_head_onnx
+    from futures_foundation.finetune.classifiers.mantis.frozen import export_head_onnx
     rng = np.random.default_rng(0)
     X = rng.standard_normal((400, 40)).astype(np.float32)
     y = (rng.random(400) < 0.3).astype(int)
@@ -57,7 +57,7 @@ def test_encoder_onnx_parity(tmp_path):
 def test_export_frozen_bundle_writes_both(tmp_path):
     """_export_frozen_bundle writes <base>_encoder.onnx + <base>_signal_head.onnx, head parity."""
     from sklearn.linear_model import LogisticRegression
-    from futures_foundation.finetune.classifiers.mantis_frozen import _export_frozen_bundle
+    from futures_foundation.finetune.classifiers.mantis.frozen import _export_frozen_bundle
     D = 5 * 256 + 10
     rng = np.random.default_rng(0)
     X = rng.standard_normal((300, D)).astype(np.float32)

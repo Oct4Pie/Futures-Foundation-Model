@@ -37,7 +37,7 @@ def _first_fold_arrays(labeler, classifier, clf_kwargs, train_m, val_m, test_m, 
     return None
 
 
-def train_loop(labeler, classifier='mantis', base_kwargs=None, *, max_iters=2,
+def train_loop(labeler, classifier, base_kwargs=None, *, max_iters=2,
                loop_max_folds=1, final_max_folds=None, seeds=(0,), train_m=12, val_m=2,
                test_m=2, holdout_start='2026-01-01', n_trials=8, seed=42, verbose=True):
     base = dict(base_kwargs or {})

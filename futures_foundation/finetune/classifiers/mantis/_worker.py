@@ -1,6 +1,6 @@
 """Subprocess worker — runs the Mantis torch fine-tune in ISOLATION.
 
-Run as: python -m futures_foundation.finetune.classifiers._worker <workdir>
+Run as: python -m futures_foundation.finetune.classifiers.mantis._worker <workdir>
 Reads  : cfg.json (incl _paths to the X memmaps/npys + ft params + standardize mu/sd
          + seed), ytr.npy, yval.npy
 Writes : p_val.npy, p_eval.npy, meta.npy = [best_val_auc, best_epoch]
@@ -24,7 +24,7 @@ def main(wd):
     Xeval = np.load(paths['Xeval'], mmap_mode='r')
     ytr = np.load(wd / 'ytr.npy')
     yval = np.load(wd / 'yval.npy')
-    from futures_foundation.finetune.classifiers._mantis_torch import fit_predict_torch
+    from futures_foundation.finetune.classifiers.mantis._torch import fit_predict_torch
     p_val, p_eval, ba, be = fit_predict_torch(Xtr, ytr, Xval, yval, Xeval, **cfg)
     np.save(wd / 'p_val.npy', p_val)
     np.save(wd / 'p_eval.npy', p_eval)

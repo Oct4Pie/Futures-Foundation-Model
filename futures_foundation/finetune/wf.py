@@ -64,7 +64,7 @@ def _health_metrics(p_te, Yte, p_val, Yval, thr=0.80):
                 prec_at_80=pte, n_at_80=nte, val_p80=pva)
 
 
-def run(labeler, classifier='mantis', clf_kwargs=None, seeds=(0,), train_m=3, val_m=1,
+def run(labeler, classifier, clf_kwargs=None, seeds=(0,), train_m=3, val_m=1,
         test_m=1, max_folds=None, holdout_start='2026-01-01', verbose=True,
         health_monitor=None):
     """Returns a verdict dict. clf_kwargs forwarded to get_classifier."""
@@ -378,7 +378,7 @@ def _featurize_and_folds(make_labeler, streams, clf, clf_kwargs, train_m, val_m,
     return rundir, Xall, Y, keys, eval_lab, ck, mu, sd, folds
 
 
-def run_streamed(make_labeler, streams, classifier='mantis', clf_kwargs=None, train_m=3,
+def run_streamed(make_labeler, streams, classifier, clf_kwargs=None, train_m=3,
                  val_m=1, test_m=1, max_folds=None, holdout_start='2026-01-01',
                  output_path=None, chunk=2000, seed=0, verbose=True, health_monitor=None,
                  fold_ckpt=None):
@@ -394,7 +394,7 @@ def run_streamed(make_labeler, streams, classifier='mantis', clf_kwargs=None, tr
                       verbose, health_monitor, fold_ckpt=fold_ckpt)   # None default = no P@80
 
 
-def loop_streamed(make_labeler, streams, classifier='mantis', clf_kwargs=None, train_m=3,
+def loop_streamed(make_labeler, streams, classifier, clf_kwargs=None, train_m=3,
                   val_m=1, test_m=1, max_folds=None, holdout_start='2026-01-01', max_iters=2,
                   n_trials=8, output_path=None, chunk=2000, seed=0, verbose=True,
                   fold_ckpt=None):

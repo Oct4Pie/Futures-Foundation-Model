@@ -12,6 +12,10 @@ from ..classifier import Classifier, register_classifier
 class LogisticClassifier(Classifier):
     needs_standardize = False           # scales internally
 
+    @staticmethod
+    def suggest_params(trial):
+        return dict(C=trial.suggest_float('C', 0.01, 10.0, log=True))
+
     def __init__(self, C=1.0, max_iter=1000, **_ignored):
         self.C = C
         self.max_iter = max_iter

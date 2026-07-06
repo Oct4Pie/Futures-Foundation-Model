@@ -20,7 +20,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ..classifier import Classifier, register_classifier
+from ...classifier import Classifier, register_classifier
 
 _EMBED_KEYS = ('model_id', 'device', 'batch')
 
@@ -148,32 +148,9 @@ def _fit_with_heartbeat(clf, X, y, every=60):
     return clf
 
 
-def fit_platt(p1, y):
-    """Platt scaling: fit (A,B) so cal = sigmoid(A·logit(p1)+B) tracks the empirical hit rate.
-    p1 = OUT-OF-SAMPLE proba (the val set the clf never trained on -> leak-free), y = its labels.
-    MONOTONIC — rescales the proba to ≈P(win) WITHOUT changing ranking/AUC, so P=0.5 means a true
-    ~50% signal and the proba is a trustworthy confidence ACROSS tiers (what proba-sizing needs).
-    Same convention as pipeline/head_xgb.py. Returns (A, B); needs both classes present."""
-    from sklearn.linear_model import LogisticRegression
-    y = np.asarray(y).astype(int)
-    if len(np.unique(y)) < 2:
-        return None
-    eps = 1e-6
-    p = np.clip(np.asarray(p1, np.float64), eps, 1 - eps)
-    z = np.log(p / (1 - p)).reshape(-1, 1)              # logit of OOS P(take)
-    lr = LogisticRegression(C=1e6, solver='lbfgs').fit(z, y)   # ~unregularized Platt
-    return float(lr.coef_[0, 0]), float(lr.intercept_[0])
-
-
-def apply_platt(p1, platt):
-    """cal = sigmoid(A·logit(p1)+B), vectorized + clip-safe. platt=None -> raw (identity no-op)."""
-    if platt is None:
-        return np.asarray(p1, np.float64)
-    A, B = platt
-    eps = 1e-6
-    p = np.clip(np.asarray(p1, np.float64), eps, 1 - eps)
-    z = np.log(p / (1 - p))
-    return 1.0 / (1.0 + np.exp(-(A * z + B)))
+# Calibration is generic (backbone-agnostic) — lives in finetune.calibration. Re-exported here
+# for back-compat with existing importers.
+from ...calibration import fit_platt, apply_platt   # noqa: E402,F401
 
 
 def export_head_onnx(clf, n_features, path):
@@ -201,7 +178,7 @@ def _export_frozen_bundle(cfg, clf, n_features, Xval_std):
     ecfg = dict(_export_encoder=enc_path, ckpt=cfg.get('backbone_ckpt'),
                 C=int(cfg.get('raw_C', 5)), seq=int(cfg.get('raw_seq', 64)),
                 model_id=cfg.get('model_id', 'paris-noah/Mantis-8M'))
-    cmd = [sys.executable, '-u', '-m', 'futures_foundation.finetune.classifiers._embed_worker']
+    cmd = [sys.executable, '-u', '-m', 'futures_foundation.finetune.classifiers.mantis._embed_worker']
     with tempfile.TemporaryDirectory() as d:
         d = Path(d); (d / 'cfg.json').write_text(json.dumps(ecfg))
         r = subprocess.run(cmd + [str(d)], capture_output=True, text=True)
@@ -235,7 +212,7 @@ class MantisFrozenClassifier(Classifier):
         ecfg = {k: self.cfg[k] for k in _EMBED_KEYS if k in self.cfg}
         ecfg['ckpt'] = self.cfg.get('backbone_ckpt')                       # SSL ckpt or None
         cmd = [sys.executable, '-u', '-m',
-               'futures_foundation.finetune.classifiers._embed_worker']
+               'futures_foundation.finetune.classifiers.mantis._embed_worker']
         with tempfile.TemporaryDirectory() as d:
             d = Path(d)
             np.save(d / 'w.npy', windows)

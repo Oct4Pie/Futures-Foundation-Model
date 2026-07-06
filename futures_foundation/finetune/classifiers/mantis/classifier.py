@@ -17,12 +17,23 @@ from pathlib import Path
 
 import numpy as np
 
-from ..classifier import Classifier, register_classifier
+from ...classifier import Classifier, register_classifier
 
 
 @register_classifier('mantis')
 class MantisClassifier(Classifier):
     needs_standardize = True            # harness standardizes [N,C,seq] on train stats
+
+    @staticmethod
+    def suggest_params(trial):
+        """Optuna search space for the Mantis fine-tune — consumed by finetune.tune via DI."""
+        return dict(
+            lr=trial.suggest_float('lr', 5e-5, 1e-3, log=True),
+            unfreeze_blocks=trial.suggest_int('unfreeze_blocks', 1, 3),   # fewer = more reg
+            new_channels=trial.suggest_int('new_channels', 6, 14),
+            weight_decay=trial.suggest_float('weight_decay', 0.01, 0.3, log=True),
+            batch=trial.suggest_categorical('batch', [64, 128]),
+        )
 
     def __init__(self, **cfg):
         self.cfg = cfg
@@ -33,7 +44,7 @@ class MantisClassifier(Classifier):
     def fit_predict(self, Xtr, ytr, Xval, yval, Xeval, seed=0):
         cfg = dict(self.cfg)
         log_path = cfg.pop('log_path', None)        # parent-side only (not a trainer arg)
-        cmd = [sys.executable, '-u', '-m', 'futures_foundation.finetune.classifiers._worker']
+        cmd = [sys.executable, '-u', '-m', 'futures_foundation.finetune.classifiers.mantis._worker']
         with tempfile.TemporaryDirectory() as d:
             d = Path(d)
             np.save(d / 'ytr.npy', np.asarray(ytr))      # small: always to tempdir

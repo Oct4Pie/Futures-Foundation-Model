@@ -6,7 +6,7 @@ trustworthy confidence ACROSS tiers (what proba-weighted sizing needs). It MUST 
 ranking/AUC change) and a NO-OP when off (backward compat with existing bundles)."""
 import numpy as np
 
-from futures_foundation.finetune.classifiers.mantis_frozen import (
+from futures_foundation.finetune.classifiers.mantis.frozen import (
     fit_platt, apply_platt, MantisFrozenClassifier)
 
 

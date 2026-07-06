@@ -340,7 +340,7 @@ def test_embed_windows_frozen():
 def test_mask_network_and_trainer(tmp_path):
     import torch
     from futures_foundation.finetune import _ssl_torch as S
-    from futures_foundation.finetune.classifiers._mantis_torch import build_model
+    from futures_foundation.finetune.classifiers.mantis._torch import build_model
     net = S.MaskNetwork(C=5, new_channels=4, seq=64)
     x = torch.randn(8, 5, 64)
     assert net(x).shape == (8, 5, 64)                               # reconstruct full window
@@ -405,7 +405,7 @@ def test_train_multihorizon_runs_variable_context_and_warmstart(tmp_path):
     saves an encoder ckpt that loads downstream, and accepts a warm-start ckpt (from stage-1)."""
     import torch
     from futures_foundation.finetune import _ssl_torch as S
-    from futures_foundation.finetune.classifiers._mantis_torch import build_model
+    from futures_foundation.finetune.classifiers.mantis._torch import build_model
     rng = np.random.default_rng(0)
     big = (100 + np.cumsum(rng.standard_normal((3000, 5)) * 0.1, 0)).astype(np.float32)
     big[:, 4] = np.abs(big[:, 4]) * 100 + 500                       # positive-ish volume
@@ -633,7 +633,7 @@ def test_contrastive_net_shape_and_trainer_smoke(tmp_path):
     accepts a warm-start ckpt; regime_gate evaluates the metrics dict."""
     import torch
     from futures_foundation.finetune import _ssl_torch as S
-    from futures_foundation.finetune.classifiers._mantis_torch import build_model
+    from futures_foundation.finetune.classifiers.mantis._torch import build_model
     net = S.ContrastiveTrendNet(C=5, new_channels=4, proj_dim=64).to('cpu')
     z = net(torch.randn(6, 5, 64))
     assert z.shape == (6, 64) and torch.allclose(z.norm(dim=1), torch.ones(6), atol=1e-4)

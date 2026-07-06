@@ -15,24 +15,7 @@ a Mantis trial is minutes.
 """
 import numpy as np
 
-from .classifier import get_classifier
-
-
-def _suggest_mantis(trial):
-    return dict(
-        lr=trial.suggest_float('lr', 5e-5, 1e-3, log=True),
-        unfreeze_blocks=trial.suggest_int('unfreeze_blocks', 1, 3),   # fewer = more reg
-        new_channels=trial.suggest_int('new_channels', 6, 14),
-        weight_decay=trial.suggest_float('weight_decay', 0.01, 0.3, log=True),
-        batch=trial.suggest_categorical('batch', [64, 128]),
-    )
-
-
-def _suggest_logistic(trial):
-    return dict(C=trial.suggest_float('C', 0.01, 10.0, log=True))
-
-
-_DEFAULT_SUGGEST = {'mantis': _suggest_mantis, 'logistic': _suggest_logistic}
+from .classifier import get_classifier, get_classifier_class
 
 
 def tune(labeler, classifier, Xtr, ytr, Xval, yval, *, n_trials=10, base_kwargs=None,
@@ -42,7 +25,7 @@ def tune(labeler, classifier, Xtr, ytr, Xval, yval, *, n_trials=10, base_kwargs=
     import optuna
     optuna.logging.set_verbosity(optuna.logging.WARNING)
     base = dict(base_kwargs or {})
-    suggest = suggest or _DEFAULT_SUGGEST.get(classifier)
+    suggest = suggest or getattr(get_classifier_class(classifier), 'suggest_params', None)
     if suggest is None:
         raise ValueError(f"no default search space for '{classifier}'; pass suggest=")
 

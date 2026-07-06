@@ -30,7 +30,7 @@ def _contract(labeler, classifier, ck, C, seq, mu, sd, out, onnx_path, sha,
     tfs = sorted({k[1] for k in getattr(labeler, '_b', {})}) or None
     tks = sorted({k[0] for k in getattr(labeler, '_b', {})}) or None
     return {
-        'contract_version': '1.0', 'role': 'mantis_signal', 'classifier': classifier,
+        'contract_version': '1.0', 'role': 'signal', 'classifier': classifier,
         'input': {'channels': int(C), 'seq_len': int(seq),
                   'mv_mode': getattr(labeler, 'MV_MODE', None)},
         'channel_names': (labeler.mv_feature_names()
@@ -69,7 +69,7 @@ def _emit(out, classifier, ck, eval_lab, mu, sd, C, seq,
     sha = (hashlib.sha256(b''.join(Path(p).read_bytes() for p in bundle)).hexdigest()
            if bundle else None)
     contract = {
-        'contract_version': '1.0', 'role': 'mantis_signal', 'classifier': classifier,
+        'contract_version': '1.0', 'role': 'signal', 'classifier': classifier,
         'input': {'channels': int(C), 'seq_len': int(seq),
                   'mv_mode': getattr(eval_lab, 'MV_MODE', None)},
         'channel_names': channel_names,
@@ -151,7 +151,7 @@ def _fit_score(classifier, ck, eval_lab, Xtr, Ytr_tr, Xval, Ytr_va, Xte, Kte, Yt
     return out
 
 
-def train_final_streamed(make_labeler, streams, classifier='mantis', clf_kwargs=None,
+def train_final_streamed(make_labeler, streams, classifier, clf_kwargs=None,
                          holdout_start='2026-01-01', val_frac=0.15, seed=0, chunk=2000,
                          export_onnx=False, output_path=None, verbose=True):
     """Run on ALL data across many (ticker, timeframe) streams with bounded memory:
@@ -222,7 +222,7 @@ def train_final_streamed(make_labeler, streams, classifier='mantis', clf_kwargs=
                  channel_names, tks, tfs, holdout_start, export_onnx, output_path, verbose)
 
 
-def train_final(labeler, classifier='mantis', clf_kwargs=None, holdout_start='2026-01-01',
+def train_final(labeler, classifier, clf_kwargs=None, holdout_start='2026-01-01',
                 val_frac=0.15, seed=0, max_train=None, stream=False, chunk=2000,
                 export_onnx=False, output_path=None, verbose=True):
     clf = get_classifier(classifier, **dict(clf_kwargs or {}))
