@@ -181,6 +181,10 @@ def _base_cfg(**kw):
              temperature=0.1, crop_max=0.2, proj_dim=128,
              pos_deltas=(2, 16, 64), far_min=512, aug_noise=0.10, aug_scale=0.20,
              aug_tmask=0.15, vol_weight=1.0, w_clip=4.0, metrics_n=768,
+             # stage-4 ELECTRA replaced-candle detection (RTD): BCE weight vs recon + the weak
+             # generator's size (the fake-plausibility / task-difficulty knob). mask_ratio is
+             # shared with stage-1 (electra default 0.15 is set by its runner script).
+             rtd_weight=5.0, gen_width=48,
              # crash-safe progressive best-save + resume + anti-forgetting layer-freeze (ALL pretexts,
              # real run only; controls never touch the ckpt). ckpt_path is set to out_path by loop_ssl.
              ckpt_path=None, resume=False, freeze_encoder_layers=0,
@@ -219,6 +223,8 @@ def loop_ssl(data_dir=None, *, tickers=None, tfs=None, controls=('shuffle', 'ran
                         holdout_start=holdout_start, val_frac=val_frac, streams=streams,
                         history=history, verbose=verbose)
     verdict['history'] = history
+    verdict['epochs'] = hist                 # per-epoch trainer history (val_loss + task extras,
+    #                                          e.g. electra rtd_bal_acc) — learning verification
     get_pretext(pretext).finalize_verdict(verdict, fc_skill, probe_res)   # pretext-specific fields
     return verdict
 
