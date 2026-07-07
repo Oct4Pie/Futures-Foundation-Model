@@ -67,7 +67,9 @@ WARM_CKPT = os.environ.get('WARM_CKPT', '/content/drive/MyDrive/AI_Models/mantis
 # DEFAULT OUT = the TUNED reorder (Optuna sweep winner, trial 3) — a DISTINCT file so the manual
 # freeze=3 anchor (mantis_ssl_seq2seq_reordered.pt, 52.6%) is NEVER overwritten. The two are the
 # freeze-2-vs-3 A/B: this tuned freeze=2 winner vs the anchor freeze=3, both vs seq2seq.
-OUT_PATH  = os.environ.get('OUT_PATH', '/content/drive/MyDrive/AI_Models/mantis_ssl_ctr_seq2seq.pt')
+# DEFAULT OUT = the EXTENSION file (plain run = the RoBERTa extension; the promoted base is
+# never the default output). For the original stage-2 recipe set OUT_PATH + EXTEND_FROM='' .
+OUT_PATH  = os.environ.get('OUT_PATH', '/content/drive/MyDrive/AI_Models/mantis_ssl_ctr_seq2seq_ext.pt')
 
 # ── CORPUS (same as stage 1) ──
 TICKERS = ['ES', 'NQ', 'RTY', 'YM', 'GC', 'SI', 'CL', 'ZB', 'ZN']      # all 9
@@ -87,7 +89,8 @@ DIR_WEIGHT      = float(os.environ.get('DIR_WEIGHT', '0.0'))   # >0 only for can
 
 # ── TRAINING (sweep-winner; BATCH MATCHES THE SWEEP so the tuned LR transfers) ──
 BATCH   = 512         # PARITY with the sweep (lr was tuned at 512; 1024 would need a different lr)
-EPOCHS  = int(os.environ.get('EPOCHS', '60'))   # 60 = the original full budget. The 60-cap is a WALL,
+EPOCHS  = int(os.environ.get('EPOCHS', '120'))  # DEFAULT = the RoBERTa extension budget (ADDITIONAL
+#                       epochs on resume). The original stage-2 run used 60 — a WALL,
 #                       not convergence (the identical harness hit it still improving) -> the RoBERTa
 #                       extension uses EPOCHS=120 (ADDITIONAL, on top of the base's 60) with
 #                       EXTEND_FROM (below); patience still governs.
@@ -119,7 +122,10 @@ FREEZE_ENCODER_LAYERS = int(os.environ.get('FREEZE_ENCODER_LAYERS', '2'))   # tr
 # base's 60 (EPOCHS=120 -> up to +120 more). patience(8) still stops early if the base was
 # ALREADY converged — that's the cheap answer to "was it undertrained".
 # Mechanics: OUT_PATH seeded with a COPY of EXTEND_FROM, RESUME forced on -> trainer loads it.
-EXTEND_FROM = os.environ.get('EXTEND_FROM', '')
+# DEFAULT = the extension run (copy-paste-and-run). Set EXTEND_FROM='' to run the original
+# stage-2 recipe from WARM_CKPT instead.
+EXTEND_FROM = os.environ.get('EXTEND_FROM',
+                             '/content/drive/MyDrive/AI_Models/mantis_ssl_ctr_seq2seq.pt')
 if EXTEND_FROM:
     import shutil
     if not os.path.exists(EXTEND_FROM):
