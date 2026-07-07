@@ -75,6 +75,44 @@ def wr_by_score(eval_lab, keys, proba, ts, edges=(0.90, 0.75, 0.50, 0.25, 0.0)):
     return rows
 
 
+def alignment_breakdown(eval_lab, keys, proba, ts):
+    """THE sighted-counter-trend readout: split the OOS pivots by HTF alignment (labeler's
+    htf_alignment: -1 = counter the HTF trend — the fades a hard gate blindly discards, +1 = with)
+    and report each group's BASE WR@3R vs its WR at the model's top scores (per-day operating
+    points on the group). The hypothesis check: WR rising steeply with score AMONG counter pivots
+    = the model can now tell the fade-that-reverses from the fade-that-gets-run-over. None if the
+    labeler doesn't expose htf_alignment."""
+    fn = getattr(eval_lab, 'htf_alignment', None)
+    if fn is None or ts is None or not len(keys):
+        return None
+    a = np.asarray(fn(list(keys)))
+    proba = np.asarray(proba, float)
+    out = {}
+    for name, m in (('counter', a < 0), ('aligned', a > 0)):
+        if int(m.sum()) < 50:
+            continue
+        ks = [k for k, mm in zip(keys, m) if mm]
+        ts_s = [t for t, mm in zip(ts, m) if mm]
+        R = np.asarray(eval_lab.evaluate(ks, np.ones(len(ks), int)), float)
+        out[name] = dict(n=int(m.sum()), base_wr3R=float((R > 0).mean()),
+                         base_meanR=float(R.mean()),
+                         ops=operating_points(eval_lab, ks, proba[m], ts_s))
+    return out or None
+
+
+def _print_alignment(ab):
+    if not ab:
+        return
+    print("  2026 OOS — COUNTER-TREND readout (WR@3R by model score WITHIN each HTF-alignment "
+          "group; counter rising with score = SIGHTED soft-gating):", flush=True)
+    for name, g in ab.items():
+        print(f"    {name:>7}: n={g['n']:,}  base WR@3R={g['base_wr3R']:.1%}  "
+              f"base meanR={g['base_meanR']:+.3f}", flush=True)
+        for r in g['ops']:
+            print(f"      ~{r['rate']}/day: n={r['n']:>5}  score>={r.get('thresh', float('nan')):.3f}  "
+                  f"WR@3R={r['wr3R']:6.1%}  meanR={r['meanR']:+.3f}", flush=True)
+
+
 def _print_operating_points(op_rows, band_rows, title='2026 OOS'):
     if band_rows:
         print(f"  {title} — WR@3R by score band (non-cumulative; monotone WR down the bands = the "
@@ -252,15 +290,17 @@ def _fit_score(classifier, ck, eval_lab, Xtr, Ytr_tr, Xval, Ytr_va, Xte, Kte, Yt
     # WR@3R by score band + trades/day at deploy operating points (the '1-2 A+ trades/day' read).
     bands = wr_by_score(eval_lab, Kte, p_te, oos_ts) if oos_ts is not None else []
     ops = operating_points(eval_lab, Kte, p_te, oos_ts) if oos_ts is not None else []
+    align = alignment_breakdown(eval_lab, Kte, p_te, oos_ts)  # sighted-counter-trend readout
     out = dict(oos_auc=auc, best_val_auc=ba, oos_meanR=_meanR(R),
                shuffle_meanR=(_meanR(Rs) if Rs is not None else None), edge_shuffle=edge,
                n_train=len(Ytr_tr), n_oos=len(Kte), oos_trades=int(len(R)),
                beats_shuffle=(bool(edge >= PASS_LIFT_MARGIN_R) if edge is not None else None),
-               wr_by_score=bands, operating_points=ops,
+               wr_by_score=bands, operating_points=ops, wr_by_alignment=align,
                entry_thresholds=getattr(clf_real, '_entry_thresholds', None),   # val-derived T's
                platt=getattr(clf_real, '_platt', None))       # Platt (A,B) -> deploy contract
     if verbose:
         _print_operating_points(ops, bands)
+        _print_alignment(align)
         print(f"  OOS AUC {auc:.4f}" if auc is not None else "  OOS AUC n/a")
         if edge is not None:
             print(f"  OOS meanR REAL {out['oos_meanR']:+.3f} SHUFFLE {out['shuffle_meanR']:+.3f} "

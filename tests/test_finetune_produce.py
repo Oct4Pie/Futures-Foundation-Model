@@ -99,6 +99,31 @@ def test_wr_by_score_bands_are_monotone():
         assert b['per_day'] == pytest.approx(b['n'] / 5)
 
 
+def test_alignment_breakdown_counter_vs_aligned():
+    # counter pivots: model score separates winners (score high -> R=+2) from losers; aligned all
+    # mediocre. The readout must show counter's TOP-score WR >> counter's base WR (sighted gating).
+    class _AlignLab(_RLabeler):
+        def htf_alignment(self, keys):
+            return np.array([k[5] for k in keys])            # alignment stashed at k[5]
+    n = 120
+    keys, proba, ts = [], [], []
+    for i in range(n):
+        counter = i < 60
+        good = (i % 2 == 0)
+        r = 2.0 if good else -1.0
+        keys.append(('ES@3min', i, 1, 0.0, r, -1 if counter else 1))
+        proba.append((0.9 if good else 0.1) if counter else 0.5)   # score separates ONLY counter
+        ts.append(np.datetime64('2026-01-0%d' % ((i % 5) + 1)))
+    ab = produce.alignment_breakdown(_AlignLab(), keys, np.array(proba), ts)
+    assert set(ab) == {'counter', 'aligned'}
+    assert ab['counter']['base_wr3R'] == pytest.approx(0.5)
+    top = ab['counter']['ops'][-1]                           # tightest rate = highest scores
+    assert top['wr3R'] == 1.0                                # sighted: top counter picks all win
+    assert ab['aligned']['base_wr3R'] == pytest.approx(0.5)
+    # no htf_alignment on the labeler -> None (backward-compatible)
+    assert produce.alignment_breakdown(_RLabeler(), keys, np.array(proba), ts) is None
+
+
 def test_operating_points_empty_is_safe():
     assert produce.operating_points(_RLabeler(), [], np.array([]), []) == []
     assert produce.wr_by_score(_RLabeler(), [], np.array([]), []) == []
