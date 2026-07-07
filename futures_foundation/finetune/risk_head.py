@@ -18,27 +18,26 @@ from .calibration import fit_platt, apply_platt
 TARGETS = (2.0, 3.0, 4.0, 6.0, 8.0)      # reach ladder (8R = max trend); matches the pivot FIXED_TARGETS
 
 
-def _fit_heartbeat(clf, X, y, msg, every=60):
-    """clf.fit with a liveness heartbeat — the ladder fits 5 rungs, each a silent sklearn solver on
-    millions of rows at produce scale; without this the whole REAL fit reads as HUNG. A daemon thread
-    prints elapsed time every `every`s while fit() runs; fits under `every`s stay quiet (no WF spam)."""
+def _start_heartbeat(msg, every=60):
+    """Start a daemon liveness heartbeat -> returns a stop() callable. The ladder's rung fits are
+    silent sklearn solvers on millions of rows; without this the REAL fit reads as HUNG. Prints
+    elapsed every `every`s; a fit that finishes under `every`s prints nothing (no WF-fold spam)."""
     import threading
     import time
     t0 = time.time()
-    stop = threading.Event()
+    ev = threading.Event()
 
     def _beat():
-        while not stop.wait(every):
+        while not ev.wait(every):
             print(f"    [risk-head] {msg} ... {time.time() - t0:,.0f}s elapsed (alive)", flush=True)
 
     th = threading.Thread(target=_beat, daemon=True)
     th.start()
-    try:
-        clf.fit(X, y)
-    finally:
-        stop.set()
+
+    def stop():
+        ev.set()
         th.join(timeout=1)
-    return clf
+    return stop
 
 
 def reach_labels(keys, targets=TARGETS):
@@ -105,26 +104,66 @@ class RiskHead:
         return LogisticRegression(max_iter=int(self.cfg.get('max_iter', 1000)),
                                   C=float(self.cfg.get('C', 1.0)))
 
+    def _rung_jobs(self, n_active):
+        """How many rungs to fit CONCURRENTLY. The rungs are independent -> embarrassingly parallel;
+        default = fit all of them at once, capped by cores. rung_jobs=1 forces the old sequential
+        path. Thread-parallel (shared read-only Xtr, no copy) — process-parallel would duplicate the
+        multi-GB embedding per rung and OOM at produce scale."""
+        import os as _os
+        want = self.cfg.get('rung_jobs')
+        if want is not None:
+            return max(1, min(int(want), n_active))
+        return max(1, min(n_active, (_os.cpu_count() or 2)))
+
     def fit(self, Xtr, keys_tr, Xval=None, keys_val=None, seed=0):
-        """Fit one calibrated binary head per threshold. Platt is fit on val (leak-free) when
-        given, else raw (no-op-safe)."""
+        """Fit one calibrated binary head per threshold, the rungs IN PARALLEL (independent fits).
+        Platt is fit on val (leak-free) when given, else raw (no-op-safe)."""
+        import os as _os
+        from concurrent.futures import ThreadPoolExecutor
         Ytr = reach_labels(keys_tr, self.targets)
         Yval = reach_labels(keys_val, self.targets) if keys_val is not None else None
-        self._heads = []
-        for ti in range(len(self.targets)):
-            clf = self._make(seed)
+        T = len(self.targets)
+        active = [ti for ti in range(T) if len(np.unique(Ytr[:, ti])) >= 2]
+        jobs = self._rung_jobs(len(active)) if active else 1
+        # cap BLAS threads PER rung so `jobs` concurrent fits don't oversubscribe the cores (each
+        # sklearn fit is itself BLAS-threaded; jobs * per_rung ~= cpu_count). threadpoolctl if present.
+        per_rung = max(1, (_os.cpu_count() or 2) // max(1, jobs))
+        try:
+            from threadpoolctl import threadpool_limits
+        except Exception:                                # pragma: no cover - optional dep
+            from contextlib import nullcontext
+            def threadpool_limits(limits=None):          # no-op fallback
+                return nullcontext()
+
+        def _fit_one(ti):
             ytr = Ytr[:, ti]
-            if len(np.unique(ytr)) < 2:                 # degenerate threshold -> constant head
-                self._heads.append((None, float(ytr.mean())))
-                continue
-            _fit_heartbeat(clf, Xtr, ytr,               # liveness on the long produce-scale rung fits
-                           f"rung {ti + 1}/{len(self.targets)} (>={self.targets[ti]:g}R) "
-                           f"on {len(Xtr):,}x{Xtr.shape[1]}")
+            clf = self._make(seed)
+            with threadpool_limits(limits=(per_rung if jobs > 1 else None)):
+                clf.fit(Xtr, ytr)
             platt = None
             if self.calibrate and Xval is not None and Yval is not None:
                 raw = clf.predict_proba(Xval)[:, 1]
                 platt = fit_platt(raw, Yval[:, ti])
-            self._heads.append((clf, platt))
+            return ti, (clf, platt)
+
+        heads = [None] * T
+        for ti in range(T):                              # degenerate thresholds -> constant heads
+            if ti not in active:
+                heads[ti] = (None, float(Ytr[:, ti].mean()))
+        if active:
+            stop = _start_heartbeat(f"fitting {len(active)} rungs (x{jobs} parallel, {per_rung} "
+                                    f"thr/rung) on {len(Xtr):,}x{Xtr.shape[1]}")
+            try:
+                if jobs == 1:
+                    done = [_fit_one(ti) for ti in active]
+                else:
+                    with ThreadPoolExecutor(max_workers=jobs) as ex:
+                        done = list(ex.map(_fit_one, active))
+            finally:
+                stop()
+            for ti, hd in done:
+                heads[ti] = hd
+        self._heads = heads
         return self
 
     def predict_survival(self, X):

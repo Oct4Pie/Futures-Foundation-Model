@@ -122,6 +122,16 @@ def test_expected_reach_ranks_bigger_runners_higher():
     assert runner > stall
 
 
+def test_parallel_rungs_match_sequential():
+    # the rungs are independent + per-rung seeded, so fitting them concurrently must give the SAME
+    # survival curve as sequential (rung_jobs=1). Locks that the parallel speedup is result-neutral.
+    Xtr, ktr = _toy(1200, seed=20)
+    Xev, _ = _toy(300, seed=21)
+    seq = RiskHead(head='logistic', calibrate=False, rung_jobs=1).fit(Xtr, ktr)
+    par = RiskHead(head='logistic', calibrate=False, rung_jobs=4).fit(Xtr, ktr)
+    assert np.allclose(seq.predict_survival(Xev), par.predict_survival(Xev))
+
+
 def test_degenerate_threshold_is_constant_head():
     # a threshold never reached -> constant head, no crash, survival still valid
     X = np.random.default_rng(0).normal(size=(300, 8)).astype(np.float32)
