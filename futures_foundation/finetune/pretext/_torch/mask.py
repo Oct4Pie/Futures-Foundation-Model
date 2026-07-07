@@ -1,9 +1,11 @@
 """Stage-1 masked-modeling trainer: mask a fraction of bars, reconstruct them from context (MSE
 on masked positions). REAL/SHUFFLE/RANDOM controls are meaningful — REAL reconstructs from
 temporal context; time-scrambled / noise inputs cannot."""
+import numpy as np
 import torch
 import torch.nn as nn
 
+from ..spans import sample_span_mask
 from .common import _enc, _standardize, _apply_control, _gather_batch, BaseTrainer
 
 
@@ -32,10 +34,16 @@ class MaskNetwork(nn.Module):
 
 
 class _MaskTrainer(BaseTrainer):
-    def __init__(self, big, tr, va, *, seq=64, new_channels=8, mask_ratio=0.4,
-                 model_id='paris-noah/Mantis-8M', backbone_ckpt=None, compile_model=False, **base):
+    def __init__(self, big, tr, va, *, seq=64, new_channels=8, mask_ratio=0.4, span_mean=0.0,
+                 span_max=10, model_id='paris-noah/Mantis-8M', backbone_ckpt=None,
+                 compile_model=False, **base):
         super().__init__(big, tr, va, **base)
         self.seq, self.new_channels, self.mask_ratio = seq, new_channels, mask_ratio
+        # SpanBERT move: span_mean>0 masks CONTIGUOUS multi-bar spans instead of scattered bars,
+        # so reconstruction must infer a whole missing MOVE from context (trend development), not
+        # interpolate a hole from neighbors. 0 = original BERT-style single-bar masking.
+        self.span_mean, self.span_max = float(span_mean), int(span_max)
+        self._nprng = np.random.default_rng(base.get('seed', 0))
         self.model_id, self.backbone_ckpt, self.compile_model = model_id, backbone_ckpt, compile_model
         self.C = int(self.big_t.shape[1])
 
@@ -54,8 +62,13 @@ class _MaskTrainer(BaseTrainer):
         return _standardize(_apply_control(w, self.control))         # corrupt input per control, z-score
 
     def compute_loss(self, w):
-        m = torch.rand(w.shape[0], self.seq, device=self.dev, generator=self.gen) < self.mask_ratio
-        none = ~m.any(1); m[none, 0] = True                          # >=1 masked bar per sample
+        if self.span_mean > 0:                                       # SpanBERT: contiguous spans
+            m = torch.from_numpy(sample_span_mask(
+                self._nprng, w.shape[0], self.seq, self.mask_ratio,
+                self.span_mean, self.span_max)).to(w.device)
+        else:                                                        # BERT-style single-bar
+            m = torch.rand(w.shape[0], self.seq, device=self.dev, generator=self.gen) < self.mask_ratio
+            none = ~m.any(1); m[none, 0] = True                      # >=1 masked bar per sample
         me = m[:, None, :].expand_as(w)
         corrupted = torch.where(me, torch.randn_like(w), w)          # noise-fill masked bars
         diff = (self.net(corrupted) - w) ** 2
@@ -73,14 +86,16 @@ class _MaskTrainer(BaseTrainer):
 
 
 def train_ssl_mask(big, train_starts, val_starts, *, seq=64, new_channels=8, mask_ratio=0.4,
-                   epochs=60, steps_per_epoch=200, batch=512, lr=1e-4, weight_decay=0.05,
-                   patience=8, device=None, model_id='paris-noah/Mantis-8M', backbone_ckpt=None,
-                   compile_model=False, control='real', seed=0, amp_dtype='fp16',
-                   verbose=True, ckpt_path=None, resume=False, freeze_encoder_layers=0, **_ignore):
-    """BERT-style masked modeling. Returns (best_encoder_state, history) with 'val_loss' (recon MSE)
-    + 'std' (embedding std, collapse guard)."""
+                   span_mean=0.0, span_max=10, epochs=60, steps_per_epoch=200, batch=512, lr=1e-4,
+                   weight_decay=0.05, patience=8, device=None, model_id='paris-noah/Mantis-8M',
+                   backbone_ckpt=None, compile_model=False, control='real', seed=0,
+                   amp_dtype='fp16', verbose=True, ckpt_path=None, resume=False,
+                   freeze_encoder_layers=0, **_ignore):
+    """BERT-style masked modeling (span_mean>0 = SpanBERT-style contiguous-span reconstruction).
+    Returns (best_encoder_state, history) with 'val_loss' (recon MSE) + 'std' (collapse guard)."""
     return _MaskTrainer(big, train_starts, val_starts, seq=seq, new_channels=new_channels,
-                        mask_ratio=mask_ratio, model_id=model_id, backbone_ckpt=backbone_ckpt,
+                        mask_ratio=mask_ratio, span_mean=span_mean, span_max=span_max,
+                        model_id=model_id, backbone_ckpt=backbone_ckpt,
                         compile_model=compile_model, epochs=epochs, steps_per_epoch=steps_per_epoch,
                         batch=batch, lr=lr, weight_decay=weight_decay, patience=patience,
                         device=device, seed=seed, grad_clip=None, amp_dtype=amp_dtype,

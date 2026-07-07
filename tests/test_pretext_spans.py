@@ -77,3 +77,20 @@ def test_span_default_off_is_bar_mode():
     # span_mean defaults to 0 -> the original bar-ELECTRA path (backward compat, byte-identical)
     from futures_foundation.finetune.ssl import _base_cfg
     assert _base_cfg(pretext='electra')['span_mean'] == 0.0
+
+
+# ---------------------------------------------------------------- mask-recon span wiring (SpanBERT)
+def test_mask_trainer_accepts_span_knobs():
+    # SpanBERT = the mask/reconstruction pretext with span_mean>0. Signature must accept the knobs
+    # (they flow cfg -> loop_ssl -> train_ssl_mask); a plain mask run (span_mean=0) is unaffected.
+    import inspect
+    from futures_foundation.finetune.pretext._torch.mask import train_ssl_mask
+    sig = inspect.signature(train_ssl_mask).parameters
+    assert 'span_mean' in sig and 'span_max' in sig
+    assert sig['span_mean'].default == 0.0                 # default off = original BERT masking
+
+
+def test_base_cfg_span_knobs_reach_mask_pretext():
+    from futures_foundation.finetune.ssl import _base_cfg
+    cfg = _base_cfg(pretext='mask', span_mean=5.0, span_max=12, mask_ratio=0.25)
+    assert cfg['span_mean'] == 5.0 and cfg['span_max'] == 12 and cfg['mask_ratio'] == 0.25
