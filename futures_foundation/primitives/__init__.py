@@ -34,6 +34,10 @@ from .session import (
     session_end_mask,
     compute_vwap,
 )
+from .windows import (
+    aggregate_ohlcv_window,
+    multi_scale_ohlcv_window,
+)
 
 __all__ = [
     "compute_atr", "compute_supertrend", "compute_supertrend_htf",
@@ -42,4 +46,5 @@ __all__ = [
     "detect_pivots", "detect_cisd_signals", "compute_ote_zones",
     "apply_rr_barriers", "best_rr_hit", "realized_r_trailing", "r_bucket",
     "session_mask", "session_end_mask", "compute_vwap",
+    "aggregate_ohlcv_window", "multi_scale_ohlcv_window",
 ]
