@@ -122,6 +122,14 @@ def test_expected_reach_ranks_bigger_runners_higher():
     assert runner > stall
 
 
+def test_rung_jobs_memory_guard_caps_at_produce_scale():
+    # the produce-scale OOM fix: a huge per-fit X-copy must cap concurrency to ~1, even on many cores
+    rh = RiskHead(head='mlp')
+    assert rh._rung_jobs(5, x_bytes=10 ** 15) == 1        # 1 PB "copy" -> forced sequential
+    assert rh._rung_jobs(5, x_bytes=0) >= 1               # no size info -> core-bounded (>=1)
+    assert RiskHead(head='mlp', rung_jobs=2)._rung_jobs(5, x_bytes=10 ** 15) == 2   # explicit wins
+
+
 def test_parallel_rungs_match_sequential():
     # the rungs are independent + per-rung seeded, so fitting them concurrently must give the SAME
     # survival curve as sequential (rung_jobs=1). Locks that the parallel speedup is result-neutral.

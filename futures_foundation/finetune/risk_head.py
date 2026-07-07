@@ -198,16 +198,26 @@ class RiskHead:
         return LogisticRegression(max_iter=int(self.cfg.get('max_iter', 1000)),
                                   C=float(self.cfg.get('C', 1.0)))
 
-    def _rung_jobs(self, n_active):
-        """How many rungs to fit CONCURRENTLY. The rungs are independent -> embarrassingly parallel;
-        default = fit all of them at once, capped by cores. rung_jobs=1 forces the old sequential
-        path. Thread-parallel (shared read-only Xtr, no copy) — process-parallel would duplicate the
-        multi-GB embedding per rung and OOM at produce scale."""
+    def _rung_jobs(self, n_active, x_bytes=0):
+        """How many rungs to fit CONCURRENTLY. The rungs are independent -> embarrassingly parallel,
+        BUT sklearn's early_stopping does an internal train_test_split that COPIES X per fit (~X bytes
+        each). So N concurrent fits hold ~N*X extra RAM -> at produce scale (X~14GB) fitting all 5 at
+        once OOMs the session. Cap jobs by (a) cores and (b) a RAM budget: keep shared-X + jobs*copy
+        under ~65% of available memory. rung_jobs=1 forces sequential; explicit rung_jobs overrides."""
         import os as _os
         want = self.cfg.get('rung_jobs')
         if want is not None:
             return max(1, min(int(want), n_active))
-        return max(1, min(n_active, (_os.cpu_count() or 2)))
+        jobs = max(1, min(n_active, (_os.cpu_count() or 2)))
+        if x_bytes > 0:                                   # MEMORY GUARD (the produce-scale OOM fix)
+            try:
+                import psutil
+                avail = int(psutil.virtual_memory().available)
+            except Exception:
+                avail = 8 * (1 << 30)                     # conservative 8GB fallback (no psutil)
+            by_mem = int((avail * 0.65) / max(x_bytes, 1))   # each concurrent fit ~ one X-copy
+            jobs = max(1, min(jobs, by_mem))
+        return jobs
 
     def fit(self, Xtr, keys_tr, Xval=None, keys_val=None, seed=0):
         """Fit one calibrated binary head per threshold, the rungs IN PARALLEL (independent fits).
@@ -218,7 +228,8 @@ class RiskHead:
         Yval = reach_labels(keys_val, self.targets) if keys_val is not None else None
         T = len(self.targets)
         active = [ti for ti in range(T) if len(np.unique(Ytr[:, ti])) >= 2]
-        jobs = self._rung_jobs(len(active)) if active else 1
+        x_bytes = int(getattr(Xtr, 'nbytes', 0))          # per-fit copy cost (early_stopping split)
+        jobs = self._rung_jobs(len(active), x_bytes=x_bytes) if active else 1
         # cap BLAS threads PER rung so `jobs` concurrent fits don't oversubscribe the cores (each
         # sklearn fit is itself BLAS-threaded; jobs * per_rung ~= cpu_count). threadpoolctl if present.
         per_rung = max(1, (_os.cpu_count() or 2) // max(1, jobs))
