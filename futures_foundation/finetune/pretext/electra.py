@@ -9,10 +9,14 @@ dynamics (momentum/vol/structure in context) — that internal model IS the repr
 downstream heads (trend classification, forecasting, regime) read. The generator is thrown away.
 
 Non-adversarial (no GAN instability): the generator trains on reconstruction only; the encoder
-trains on BCE over all bars. loss = recon(gen, masked) + rtd_weight * BCE(disc, all bars).
-Warm-start = the promoted base (ctr_seq2seq) so the reconstruction lineage is kept and RTD adds
-NEW discriminative signal on top. SHIP GATE unchanged: downstream WR@3R one-shot 2026 vs the
-stage-2 bar + generality probes (forecast skill, regime separation) — never the pretext loss.
+trains on BCE over all bars PLUS its own reconstruction of the clean window (the v2 anchor):
+loss = gen_recon(masked) + rtd_weight*BCE(disc) + recon_weight*enc_recon(clean). v1 (recon_weight=0,
+pure RTD) FAILED — the encoder had no reconstruction gradient, drifted off the data, and lost the
+base's trend signal (-12pt @1/d). The encoder-side anchor keeps it tied to physical reality while
+RTD adds discrimination. Warm-start = the promoted base (ctr_seq2seq) so the reconstruction lineage
+is kept. SHIP GATE unchanged: downstream WR@3R one-shot 2026 vs the stage-2 bar + generality probes
+(forecast skill, regime separation) — never the pretext loss. Ablation: rtd_weight=0 = denoising-AE
+only (does RTD add anything over the anchor?); recon_weight=0 = the failed v1.
 
 This module is torch-free: the PretextTask + the pure corruption math (unit-testable). The torch
 trainer lives in pretext/_torch/electra.py.

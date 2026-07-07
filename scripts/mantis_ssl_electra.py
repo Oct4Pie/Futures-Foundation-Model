@@ -2,16 +2,20 @@
 # MANTIS SSL STAGE 4 — ELECTRA-STYLE REPLACED-CANDLE DETECTION (RTD) (Colab GPU)
 # ==============================================================================
 #
-# ██ VERDICT (2026-07-06): bar-ELECTRA (this recipe, unanchored) FAILED the 2025 dry-run ██
-#   52.7% vs base 64.6% WR@3R @1/d (mlp) — lost at EVERY operating point despite warm-starting
-#   FROM the base. ROOT CAUSE: the ENCODER's only gradient is the RTD BCE (the recon loss trains
-#   just the GENERATOR) → pure discrimination destroyed the reconstruction lineage (emb_std
-#   1.0->2.35 drift; freeze=2 insufficient). Same lesson as the forecast_dist sweep: the
-#   reconstruction anchor is LOAD-BEARING. The pretext-level metrics (bal_acc 0.82, probe +0.032,
-#   all checks green) did NOT predict this — the probe is a ticket, never a verdict.
-#   -> DO NOT re-run this recipe as-is, and do NOT run SPAN mode unanchored (same flaw).
-#   -> A retry requires an ENCODER-SIDE JOINT loss (recon + rtd on the encoder) — not built yet.
-#   2026 one-shot NOT spent. ctr_seq2seq remains the base. Kept for the record + future v2.
+# ██ v1 FAILED (2026-07-06) → v2 ENCODER-SIDE JOINT LOSS now BUILT (the data-backed fix) ██
+#   v1 (pure RTD, recon_weight=0): 52.7% vs base 64.6% WR@3R @1/d — lost at EVERY op point despite
+#   warm-starting FROM the base. ROOT CAUSE: the ENCODER's only gradient was the RTD BCE (the recon
+#   loss trained just the GENERATOR) → pure discrimination destroyed the reconstruction lineage
+#   (emb_std 1.0->2.35 drift). The reconstruction anchor is LOAD-BEARING.
+#   ── v2 FIX (now default, RECON_WEIGHT=1.0): the encoder gets its OWN reconstruction head (hidden
+#   states -> the clean OHLCV window) so loss = gen_recon + RTD_WEIGHT*bce + RECON_WEIGHT*enc_recon.
+#   The encoder is pulled back toward the physical data (a DENOISING objective) while RTD adds
+#   discrimination. Watch `enc_recon` in the log: it must DROP (encoder learning to rebuild) while
+#   emb_std stays ~1 (NOT drifting to 2+). ABLATION to prove RTD earns its place:
+#     RECON_WEIGHT=1 RTD_WEIGHT=0  -> denoising-AE only (the anchor alone)
+#     RECON_WEIGHT=1 RTD_WEIGHT=5  -> the v2 joint (does RTD beat the anchor-only run?)
+#   SHIP GATE unchanged: one-shot 2026 WR@3R vs ctr_seq2seq; probe is a ticket, never a verdict.
+#   2026 one-shot NOT spent; ctr_seq2seq remains the base until v2 clears the gate.
 #
 # Refines the PROMOTED base (ctr_seq2seq) with a DISCRIMINATIVE objective. A small, deliberately
 # weak conv GENERATOR fills masked bars with plausible fakes; the Mantis encoder (the foundation
@@ -101,7 +105,8 @@ VAL_FRAC      = 0.1
 # ── ELECTRA / RTD knobs ──
 SEQ         = 64                      # window parity with the base + downstream MV_SEQ
 MASK_RATIO  = float(os.environ.get('MASK_RATIO', '0.15'))   # fraction of bars replaced
-RTD_WEIGHT  = float(os.environ.get('RTD_WEIGHT', '5.0'))    # bce weight vs recon
+RTD_WEIGHT  = float(os.environ.get('RTD_WEIGHT', '5.0'))    # bce weight (0 = denoising-AE ablation)
+RECON_WEIGHT = float(os.environ.get('RECON_WEIGHT', '1.0')) # v2 ENCODER-recon anchor (0 = failed v1)
 GEN_WIDTH   = int(os.environ.get('GEN_WIDTH', '48'))        # generator size — the strength knob
 NEW_CHANNELS = 3                      # overcomplete adapter — sweep-winner setting of the base
 FREEZE_ENCODER_LAYERS = int(os.environ.get('FREEZE_ENCODER_LAYERS', '2'))  # anti-forgetting (base=frz2)
@@ -138,8 +143,9 @@ if not found:
     raise FileNotFoundError(f'No {{TICKER}}_{{TF}}.csv files under {DATA_DIR}.')
 print(f'✅ PRE-FLIGHT: {len(found)}/{len(TICKERS)*len(TFS)} CSVs | warm-start <- {WARM_CKPT}')
 print(f'   mode={"SPAN-electra (mean=" + str(SPAN_MEAN) + ", max=" + str(SPAN_MAX) + ")" if SPAN_MEAN > 0 else "bar-electra"} '
-      f'| mask={MASK_RATIO} rtd_w={RTD_WEIGHT} gen_width={GEN_WIDTH} lr={LR:.1e} '
-      f'batch={BATCH} frz={FREEZE_ENCODER_LAYERS}')
+      f'[{"v2-joint" if RECON_WEIGHT > 0 else "v1-pureRTD(FAILED)"}] '
+      f'| mask={MASK_RATIO} rtd_w={RTD_WEIGHT} recon_w={RECON_WEIGHT} gen_width={GEN_WIDTH} '
+      f'lr={LR:.1e} batch={BATCH} frz={FREEZE_ENCODER_LAYERS}')
 print(f'   OUTPUT -> {OUT_PATH}   (promoted bases UNTOUCHED)')
 
 
@@ -147,8 +153,8 @@ print(f'   OUTPUT -> {OUT_PATH}   (promoted bases UNTOUCHED)')
 verdict = ssl.loop_ssl(
     data_dir=DATA_DIR, out_path=OUT_PATH, tickers=TICKERS, tfs=TFS,
     pretext='electra', backbone_ckpt=WARM_CKPT,
-    seq=SEQ, mask_ratio=MASK_RATIO, rtd_weight=RTD_WEIGHT, gen_width=GEN_WIDTH,
-    span_mean=SPAN_MEAN, span_max=SPAN_MAX,
+    seq=SEQ, mask_ratio=MASK_RATIO, rtd_weight=RTD_WEIGHT, recon_weight=RECON_WEIGHT,
+    gen_width=GEN_WIDTH, span_mean=SPAN_MEAN, span_max=SPAN_MAX,
     new_channels=NEW_CHANNELS,
     batch=BATCH, epochs=EPOCHS, steps_per_epoch=STEPS, lr=LR, weight_decay=WEIGHT_DECAY,
     patience=PATIENCE, val_frac=VAL_FRAC, holdout_start=HOLDOUT_START,
@@ -167,6 +173,12 @@ if hist:
     first, best = hist[0], max(hist, key=lambda h: h['rtd_bal_acc'])
     last = hist[-1]
     ba0, ba_best, ba_last = first['rtd_bal_acc'], best['rtd_bal_acc'], last['rtd_bal_acc']
+    # v2 anchor health: enc_recon should DROP off its start (encoder learning to rebuild the clean
+    # window) and emb_std must stay ~1 (NOT drift to 2+ like v1's unanchored failure).
+    er0 = first.get('enc_recon', float('nan'))
+    er_last = last.get('enc_recon', float('nan'))
+    anchored = RECON_WEIGHT == 0 or (er_last == er_last and er0 == er0 and er_last <= er0)  # NaN-safe
+    std_ok_v2 = last.get('std', 1.0) <= 1.6                # v1 drifted to 2.35; anchored stays ~1
     checks = {
         'learning (bal_acc rose >= +0.03 off start)': ba_best >= ba0 + 0.03,
         'non-trivial (bal_acc <= 0.97, no shortcut tell)': ba_best <= 0.97,
@@ -174,10 +186,13 @@ if hist:
         'both error modes off extremes (recall/realacc in 0.2..0.995)':
             0.2 <= last['fake_recall'] <= 0.995 and 0.2 <= last['real_acc'] <= 0.995,
         'no collapse (std > 0.01)': last.get('std', 1.0) > 0.01,
+        'v2 ANCHOR: enc_recon dropped (encoder rebuilding clean window)': anchored,
+        'v2 NO DRIFT: emb_std <= 1.6 (v1 failure drifted to 2.35)': std_ok_v2,
     }
     print(f'  RTD LEARNING CHECK: start bal_acc={ba0:.3f} -> best={ba_best:.3f} last={ba_last:.3f}'
           f' | fake_recall={last["fake_recall"]:.3f} real_acc={last["real_acc"]:.3f}'
-          f' gen_mse={last.get("gen_mse", float("nan")):.4f}')
+          f' gen_mse={last.get("gen_mse", float("nan")):.4f}'
+          f' | enc_recon {er0:.4f}->{er_last:.4f} emb_std={last.get("std", float("nan")):.3f}')
     for name, passed in checks.items():
         print(f'    {name:58s} {"✓" if passed else "✗"}')
     if all(checks.values()):

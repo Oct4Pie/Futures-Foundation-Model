@@ -119,7 +119,45 @@ def test_base_cfg_keeps_electra_knobs():
     assert cfg['mask_ratio'] == 0.15
 
 
+def test_base_cfg_keeps_recon_weight():
+    # v2 encoder-side anchor knob MUST thread through the silent-drop filter (default 1.0), else the
+    # runner's RECON_WEIGHT never reaches the trainer and we silently re-run the failed v1 (pure RTD).
+    from futures_foundation.finetune.ssl import _base_cfg
+    assert _base_cfg(pretext='electra')['recon_weight'] == 1.0        # default = anchored
+    assert _base_cfg(pretext='electra', recon_weight=0.0)['recon_weight'] == 0.0   # v1 ablation
+    assert _base_cfg(pretext='electra', recon_weight=2.0)['recon_weight'] == 2.0
+
+
 # ---------------------------------------------------------------- torch parity (gated)
+@torch_test
+def test_encoder_recon_head_shapes():
+    import torch
+    from futures_foundation.finetune.pretext._torch.electra import ElectraNetwork
+    net = ElectraNetwork(C=5, new_channels=3, seq=64, gen_width=16)
+    x = torch.randn(4, 5, 64)
+    rtd, rec = net.heads(x)
+    assert rtd.shape == (4, 64)                            # per-bar real/replaced logits
+    assert rec.shape == (4, 5, 64)                         # reconstructed [C, seq] window
+    assert torch.isfinite(rtd).all() and torch.isfinite(rec).all()
+
+
+@torch_test
+def test_encoder_gets_reconstruction_gradient():
+    # THE v2 FIX, verified: a loss on the ENCODER's reconstruction ALONE (rtd_weight=0 case) must
+    # produce non-zero gradients on the Mantis encoder + adapter. v1 had NO such path -> the encoder
+    # drifted; this anchor is what keeps it tied to the data.
+    import torch
+    from futures_foundation.finetune.pretext._torch.electra import ElectraNetwork
+    net = ElectraNetwork(C=5, new_channels=3, seq=64, gen_width=16)
+    x = torch.randn(4, 5, 64)
+    _, rec = net.heads(x)
+    net.zero_grad()
+    torch.nn.functional.mse_loss(rec, x).backward()        # enc_recon anchor only (no RTD)
+    enc_grad = sum(float(p.grad.abs().sum()) for p in net.encoder.parameters() if p.grad is not None)
+    adapt_grad = sum(float(p.grad.abs().sum()) for p in net.adapter.parameters() if p.grad is not None)
+    assert enc_grad > 0 and adapt_grad > 0                 # encoder IS anchored by the recon head
+
+
 @torch_test
 def test_torch_clamp_matches_numpy_reference():
     import torch

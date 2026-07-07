@@ -186,7 +186,10 @@ def _base_cfg(**kw):
              # shared with stage-1 (electra default 0.15 is set by its runner script).
              # span_mean>0 = span-ELECTRA (SpanBERT move): corrupt CONTIGUOUS multi-bar spans
              # (geometric mean span_mean, clipped span_max) — models development-over-bars.
-             rtd_weight=5.0, gen_width=48, span_mean=0.0, span_max=10,
+             # recon_weight (v2 fix) = lambda on the ENCODER-SIDE reconstruction anchor: v1 pure-RTD
+             # drifted the encoder off the data (no recon gradient -> -12pt); recon_weight>0 makes
+             # the encoder rebuild the clean window too. 0 = v1 pure-RTD; rtd_weight=0 = denoising-AE.
+             rtd_weight=5.0, recon_weight=1.0, gen_width=48, span_mean=0.0, span_max=10,
              # crash-safe progressive best-save + resume + anti-forgetting layer-freeze (ALL pretexts,
              # real run only; controls never touch the ckpt). ckpt_path is set to out_path by loop_ssl.
              ckpt_path=None, resume=False, freeze_encoder_layers=0,
