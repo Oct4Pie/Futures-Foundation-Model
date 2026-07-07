@@ -25,6 +25,70 @@ from .wf import (_pct_threshold, _arm_R, _meanR, _standardize_on_train,
                  OP_PERCENTILE, PASS_LIFT_MARGIN_R)
 
 
+def _oos_days(ts):
+    return max(1, int(pd.DatetimeIndex(ts).normalize().nunique())) if len(ts) else 1
+
+
+def operating_points(eval_lab, keys, proba, ts, rates=(5, 3, 2, 1)):
+    """OOS quality at DEPLOY operating points (CUMULATIVE): rank all OOS pivots by score, take the
+    top N = rate * trading_days, report WR@3R + meanR + count at each per-day trade rate. The honest
+    read of the signal-count floor ('1-2 A+ trades/day, not per week') — the pooled top-50% meanR
+    proves the edge; THIS shows the quality at the volume you deploy at. Returns list of dicts."""
+    proba = np.asarray(proba, float)
+    if len(proba) == 0:
+        return []
+    R_all = np.asarray(eval_lab.evaluate(list(keys), np.ones(len(keys), int)), float)  # take-all R
+    days = _oos_days(ts)
+    order = np.argsort(-proba)                             # best pivots first
+    rows = []
+    for r in rates:
+        n = int(min(len(proba), max(1, round(r * days))))
+        Rs = R_all[order[:n]]
+        rows.append(dict(rate=r, n=n, days=days, wr3R=float((Rs > 0).mean()),
+                         meanR=float(Rs.mean())))
+    return rows
+
+
+def wr_by_score(eval_lab, keys, proba, ts, edges=(0.90, 0.75, 0.50, 0.25, 0.0)):
+    """OOS WR@3R broken down by MODEL SCORE band (NON-cumulative) — 'is a higher score actually a
+    better trade?'. Splits pivots into score quantile bands (top 10% / 10-25% / 25-50% / 50-75% /
+    bottom 25%) and reports per-band WR@3R + meanR + count + trades/day. A monotone WR down the
+    bands = the ranking is real and the top band is where the A+ signals live. Score = the ranking
+    output (calibrated proba for the single head; expected-R for the ladder). Returns list of dicts."""
+    proba = np.asarray(proba, float)
+    if len(proba) == 0:
+        return []
+    R_all = np.asarray(eval_lab.evaluate(list(keys), np.ones(len(keys), int)), float)
+    days = _oos_days(ts)
+    qs = [float(np.quantile(proba, e)) for e in edges]     # score thresholds (desc)
+    rows, hi = [], np.inf
+    labels = ['top10%', '10-25%', '25-50%', '50-75%', 'bot25%'][:len(qs)]
+    for lab, lo in zip(labels, qs):
+        m = (proba < hi) & (proba >= lo)
+        Rs = R_all[m]
+        rows.append(dict(band=lab, lo=lo, n=int(m.sum()), per_day=float(m.sum()) / days,
+                         wr3R=(float((Rs > 0).mean()) if len(Rs) else float('nan')),
+                         meanR=(float(Rs.mean()) if len(Rs) else float('nan'))))
+        hi = lo
+    return rows
+
+
+def _print_operating_points(op_rows, band_rows, title='2026 OOS'):
+    if band_rows:
+        print(f"  {title} — WR@3R by score band (non-cumulative; monotone WR down the bands = the "
+              "ranking is real, top band = the A+ signals):", flush=True)
+        print(f"    {'band':>7} {'n':>6} {'trades/day':>11} {'WR@3R':>8} {'meanR':>8}", flush=True)
+        for b in band_rows:
+            print(f"    {b['band']:>7} {b['n']:>6} {b['per_day']:>11.2f} "
+                  f"{b['wr3R']:>8.1%} {b['meanR']:>+8.3f}", flush=True)
+    if op_rows:
+        print(f"  {title} — CUMULATIVE operating points (take top N/day, {op_rows[0]['days']} OOS days):",
+              flush=True)
+        for r in op_rows:
+            print(f"    ~{r['rate']}/day: n={r['n']:>5}  WR@3R={r['wr3R']:6.1%}  "
+                  f"meanR={r['meanR']:+.3f}", flush=True)
+
+
 def _contract(labeler, classifier, ck, C, seq, mu, sd, out, onnx_path, sha,
               holdout_start, n_train, n_oos):
     tfs = sorted({k[1] for k in getattr(labeler, '_b', {})}) or None
@@ -102,14 +166,15 @@ def _emit(out, classifier, ck, eval_lab, mu, sd, C, seq,
 
 
 def _fit_score(classifier, ck, eval_lab, Xtr, Ytr_tr, Xval, Ytr_va, Xte, Kte, Yte, seed, verbose,
-               onnx_path=None, keys_tr=None, keys_val=None):
+               onnx_path=None, keys_tr=None, keys_val=None, oos_ts=None):
     """Fit REAL (exporting ONNX during that fit when onnx_path is set) + SHUFFLE control.
     Two fits total — the export must ride the REAL fit; a separate export refit doubles
     peak RAM (fresh standardized copies on top of allocator creep) and OOMs at full scale.
 
     keys_tr/keys_val (distributional reach-ladder produce) carry the per-target labels; the
     SHUFFLE control permutes them in lockstep with the label (else the ladder is untouched and the
-    control collapses onto REAL)."""
+    control collapses onto REAL). oos_ts (OOS key timestamps) -> the per-day operating-point table
+    (WR@3R at 5/3/2/1 trades/day) so the deploy signal-count floor is read directly."""
     import gc
     dist = (ck or {}).get('rank') == 'expected_reach'
     rng = np.random.default_rng(seed)
@@ -146,12 +211,17 @@ def _fit_score(classifier, ck, eval_lab, Xtr, Ytr_tr, Xval, Ytr_va, Xte, Kte, Yt
         from sklearn.metrics import roc_auc_score
         auc = float(roc_auc_score(Yte, p_te))
     edge = (_meanR(R) - _meanR(Rs)) if Rs is not None else None
+    # WR@3R by score band + trades/day at deploy operating points (the '1-2 A+ trades/day' read).
+    bands = wr_by_score(eval_lab, Kte, p_te, oos_ts) if oos_ts is not None else []
+    ops = operating_points(eval_lab, Kte, p_te, oos_ts) if oos_ts is not None else []
     out = dict(oos_auc=auc, best_val_auc=ba, oos_meanR=_meanR(R),
                shuffle_meanR=(_meanR(Rs) if Rs is not None else None), edge_shuffle=edge,
                n_train=len(Ytr_tr), n_oos=len(Kte), oos_trades=int(len(R)),
                beats_shuffle=(bool(edge >= PASS_LIFT_MARGIN_R) if edge is not None else None),
+               wr_by_score=bands, operating_points=ops,
                platt=getattr(clf_real, '_platt', None))       # Platt (A,B) -> deploy contract
     if verbose:
+        _print_operating_points(ops, bands)
         print(f"  OOS AUC {auc:.4f}" if auc is not None else "  OOS AUC n/a")
         if edge is not None:
             print(f"  OOS meanR REAL {out['oos_meanR']:+.3f} SHUFFLE {out['shuffle_meanR']:+.3f} "
@@ -178,7 +248,7 @@ def train_final_streamed(make_labeler, streams, classifier, clf_kwargs=None,
     rundir.mkdir(parents=True, exist_ok=True)
 
     tr_parts, va_parts, te_parts = [], [], []
-    Ytr_tr, Ytr_va, all_Kte, all_Yte = [], [], [], []
+    Ytr_tr, Ytr_va, all_Kte, all_Yte, all_te_ts = [], [], [], [], []
     Ktr_tr, Ktr_va = [], []                          # per-subset keys (distributional ladder labels)
     channel_names = None; C = seq = None; eval_lab = None
     for i, (tk, tf) in enumerate(streams):
@@ -204,6 +274,10 @@ def train_final_streamed(make_labeler, streams, classifier, clf_kwargs=None,
             p = str(rundir / f'_te{i}.npy')
             featurize_to_memmap(clf, lab, list(Kte), p, chunk)
             te_parts.append((p, len(Kte))); all_Kte += list(Kte); all_Yte += list(Yte)
+            try:                                          # OOS timestamps (per-day operating points)
+                all_te_ts += [lab._b[(tk, tf)]['ts'][int(k[1])] for k in Kte]
+            except Exception:
+                all_te_ts += [pd.NaT] * len(Kte)
         if verbose:
             print(f"  [stream {tk}@{tf}] train={len(Ktr)} oos={len(Kte)}", flush=True)
         for attr in ('_b', '_labels'):                   # release bars (evaluate uses keys)
@@ -233,7 +307,8 @@ def train_final_streamed(make_labeler, streams, classifier, clf_kwargs=None,
     dist = ck.get('rank') == 'expected_reach'
     out = _fit_score(classifier, ck, eval_lab, Xtr, Ytr_tr, Xval, Ytr_va, Xte, all_Kte, Yte,
                      seed, verbose, onnx_path=onnx_path,
-                     keys_tr=(Ktr_tr if dist else None), keys_val=(Ktr_va if dist else None))
+                     keys_tr=(Ktr_tr if dist else None), keys_val=(Ktr_va if dist else None),
+                     oos_ts=all_te_ts)
     return _emit(out, classifier, ck, eval_lab, mu, sd, C, seq,
                  channel_names, tks, tfs, holdout_start, export_onnx, output_path, verbose)
 
@@ -248,6 +323,11 @@ def train_final(labeler, classifier, clf_kwargs=None, holdout_start='2026-01-01'
     Ctr, Ytr, Ktr = labeler.build(lo, hs, hs)
     Cte, Yte, Kte = labeler.build(hs, hi + pd.Timedelta('1ns'), None)
     Ytr = np.asarray(Ytr).astype(int); Yte = np.asarray(Yte).astype(int)
+    oos_ts = []                                          # OOS timestamps for per-day operating points
+    try:
+        oos_ts = [labeler._b[tuple(k[0].split('@'))]['ts'][int(k[1])] for k in Kte]
+    except Exception:
+        oos_ts = []
     if len(Ytr) < 50 or len(Kte) < 20:
         raise ValueError(f"insufficient data: train={len(Ytr)} oos={len(Kte)}")
     if max_train and len(Ktr) > max_train:
@@ -329,14 +409,18 @@ def train_final(labeler, classifier, clf_kwargs=None, holdout_start='2026-01-01'
         from sklearn.metrics import roc_auc_score
         auc = float(roc_auc_score(Yte, p_te))
     edge = _meanR(R) - _meanR(Rs)
+    bands = wr_by_score(labeler, Kte, p_te, oos_ts) if oos_ts else []
+    ops = operating_points(labeler, Kte, p_te, oos_ts) if oos_ts else []
     out = dict(oos_auc=auc, best_val_auc=ba, oos_meanR=_meanR(R), shuffle_meanR=_meanR(Rs),
                edge_shuffle=edge, n_train=len(tr_i), n_oos=len(Kte), oos_trades=int(len(R)),
-               beats_shuffle=bool(edge >= PASS_LIFT_MARGIN_R))
+               beats_shuffle=bool(edge >= PASS_LIFT_MARGIN_R),
+               wr_by_score=bands, operating_points=ops)
     if verbose:
         print(f"  OOS AUC {auc:.4f}" if auc is not None else "  OOS AUC n/a")
         print(f"  OOS meanR REAL {out['oos_meanR']:+.3f} SHUFFLE {out['shuffle_meanR']:+.3f} "
               f"edge {edge:+.3f} (trades={out['oos_trades']})")
         print(f"  -> {'beats SHUFFLE' if out['beats_shuffle'] else 'does NOT beat SHUFFLE'}")
+        _print_operating_points(ops, bands)
 
     if export_onnx and output_path:
         base = Path(output_path).with_suffix('')

@@ -97,6 +97,17 @@ def test_keys_backcompat_single_head_unchanged():
     assert base[2] == pytest.approx(withk[2])
 
 
+def test_distributional_onnx_export_fails_loud():
+    # ladder ONNX bundle isn't wired yet -> must RAISE (not silently export nothing) so a produce
+    # run with EXPORT_ONNX=1 can't ship a headless bundle
+    import pytest
+    Xtr, ytr, ktr = _data(400, seed=14)
+    Xval, yval, kval = _data(150, seed=15)
+    clf = _clf(rank='expected_reach', reach_targets=list(TARGETS), export_onnx_path='/tmp/x.onnx')
+    with pytest.raises(NotImplementedError):
+        clf.fit_predict(Xtr, ytr, Xval, yval, Xval, seed=0, keys_tr=ktr, keys_val=kval)
+
+
 def test_distributional_falls_back_without_keys():
     # rank= set but keys not threaded -> single-head path (never crashes on a missing ladder)
     Xtr, ytr, _ = _data(700, seed=11)

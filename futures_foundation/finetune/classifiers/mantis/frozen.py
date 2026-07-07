@@ -302,6 +302,15 @@ class MantisFrozenClassifier(Classifier):
         # signal head) so every rung is an MLPClassifier.
         if self.cfg.get('rank') == 'expected_reach' and keys_tr is not None:
             from ...risk_head import RiskHead, TARGETS
+            if self.cfg.get('export_onnx_path'):
+                # The ladder head is 5 per-rung MLPs + the survival->expected_reach reduction; that
+                # ONNX graph isn't wired yet. Fail LOUD instead of silently exporting nothing (this
+                # branch returns before the single-head export block below).
+                raise NotImplementedError(
+                    "ONNX export for the distributional reach-ladder head is not implemented yet "
+                    "(rank='expected_reach'). Run produce with EXPORT_ONNX=0 to get the 2026 OOS "
+                    "metrics; build the ladder ONNX bundle (5 rungs + expected-R reduction) before "
+                    "deploying it to the bot.")
             targets = tuple(self.cfg.get('reach_targets', TARGETS))
             rh = RiskHead(targets=targets, head=self.cfg.get('head', 'mlp'),
                           calibrate=bool(self.cfg.get('calibrate', True)),
