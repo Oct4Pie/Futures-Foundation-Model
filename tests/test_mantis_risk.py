@@ -97,15 +97,32 @@ def test_keys_backcompat_single_head_unchanged():
     assert base[2] == pytest.approx(withk[2])
 
 
-def test_distributional_onnx_export_fails_loud():
-    # ladder ONNX bundle isn't wired yet -> must RAISE (not silently export nothing) so a produce
-    # run with EXPORT_ONNX=1 can't ship a headless bundle
-    import pytest
-    Xtr, ytr, ktr = _data(400, seed=14)
-    Xval, yval, kval = _data(150, seed=15)
-    clf = _clf(rank='expected_reach', reach_targets=list(TARGETS), export_onnx_path='/tmp/x.onnx')
-    with pytest.raises(NotImplementedError):
-        clf.fit_predict(Xtr, ytr, Xval, yval, Xval, seed=0, keys_tr=ktr, keys_val=kval)
+def test_ladder_head_onnx_parity(tmp_path):
+    # the exported ONNX head must match the sklearn RiskHead: p_3r == the calibrated 3R rung,
+    # expected_reach == the area-under-survival ranking. This is the deploy-correctness gate.
+    import onnxruntime as ort
+    from futures_foundation.finetune.risk_head import (
+        RiskHead, export_ladder_head_onnx, reach_labels)
+    Xtr, ytr, ktr = _data(2500, seed=14)
+    Xev, yev, kev = _data(600, seed=15)
+    Xtr2 = Xtr[:, :, 0]; Xev2 = Xev[:, :, 0]              # [N, D] (risk head takes flat features)
+    rh = RiskHead(head='mlp', calibrate=True, mlp_batch=256, max_iter=200).fit(Xtr2, ktr, Xtr2, ktr)
+    path = str(tmp_path / 'ladder_head.onnx')
+    ti = list(TARGETS).index(3.0)
+    export_ladder_head_onnx(rh._heads, TARGETS, Xtr2.shape[1], path, primary_ti=ti)
+    sess = ort.InferenceSession(path, providers=['CPUExecutionProvider'])
+    res = dict(zip([o.name for o in sess.get_outputs()],
+                   sess.run(None, {'input': Xev2.astype(np.float32)})))
+    assert np.abs(res['p_3r'][:, 0] - rh.predict_rung(Xev2, ti)).max() < 1e-4
+    assert np.abs(res['expected_reach'][:, 0] - rh.predict_stats(Xev2)['exp_reach']).max() < 1e-4
+
+
+def test_expected_reach_weights_area():
+    # the linear reduction weights must reproduce the Riemann area: all-survival=1 -> E[R]=max target
+    from futures_foundation.finetune.risk_head import expected_reach_weights
+    w = expected_reach_weights(TARGETS)
+    assert np.isclose(w.sum(), TARGETS[-1])               # surv all-ones -> expected_reach == 8R
+    assert np.isclose(w[0], TARGETS[0] + 0.5 * (TARGETS[1] - TARGETS[0]))
 
 
 def test_distributional_falls_back_without_keys():

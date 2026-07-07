@@ -132,6 +132,7 @@ def _emit(out, classifier, ck, eval_lab, mu, sd, C, seq,
     bundle = _bundle_files(base)
     sha = (hashlib.sha256(b''.join(Path(p).read_bytes() for p in bundle)).hexdigest()
            if bundle else None)
+    dist = (ck or {}).get('rank') == 'expected_reach'     # reach-LADDER head (p_3r entry signal)
     contract = {
         'contract_version': '1.0', 'role': 'signal', 'classifier': classifier,
         'input': {'channels': int(C), 'seq_len': int(seq),
@@ -144,19 +145,36 @@ def _emit(out, classifier, ck, eval_lab, mu, sd, C, seq,
         'ft_config': {k: v for k, v in (ck or {}).items()
                       if k not in ('standardize_mu', 'standardize_sd', 'log_path')},
         'n_classes': 2,
-        'proba_meaning': ('P(reach target before stop) — Platt-CALIBRATED to the empirical hit rate'
-                          if out.get('platt') else 'P(good trend pivot reaches target before stop)'),
-        # head.onnx emits RAW proba; the bot applies calibration AFTER it -> cal = sigmoid(A*logit(p)+B).
-        # None = serve raw. Carrying it here is what keeps serve-time proba == the calibrated produce metric.
-        'calibration': ({'method': 'platt', 'formula': 'sigmoid(A*logit(p_raw)+B)',
-                         'A': out['platt'][0], 'B': out['platt'][1]} if out.get('platt') else None),
-        'output_fn': ('platt(head_raw_proba)' if out.get('platt') else 'softmax(logits)[:,1]'),
         'train_scope': {'tickers': tks, 'timeframes': tfs, 'holdout_start': holdout_start,
                         'n_train': int(out['n_train']), 'n_oos': int(out['n_oos'])},
         'oos_metrics': {k: out.get(k) for k in
                         ('oos_auc', 'oos_meanR', 'shuffle_meanR', 'edge_shuffle', 'oos_trades')},
         'onnx': ([Path(p).name for p in bundle] if sha else None), 'content_sha': sha,
     }
+    if dist:
+        # reach-LADDER head: the signal_head.onnx emits p_3r (calibrated P(reach>=3R) = the ENTRY
+        # signal the bot thresholds) + expected_reach (area-under-survival ranking). Per-rung Platt
+        # is BAKED INTO the graph, so the bot reads p_3r directly (no post-calibration step).
+        contract.update({
+            'head_type': 'reach_ladder',
+            'reach_targets': list(ck.get('reach_targets', [])),
+            'head_outputs': ['p_3r', 'expected_reach'],
+            'entry_signal': 'p_3r',
+            'proba_meaning': 'p_3r = P(reach>=3R before stop), Platt-CALIBRATED (baked into onnx); '
+                             'expected_reach = E[peak favorable R] (area under survival) = ranking',
+            'calibration': {'method': 'platt', 'baked_into_onnx': True,
+                            'note': 'per-rung Platt applied inside signal_head.onnx; read p_3r as-is'},
+            'output_fn': 'signal_head.onnx -> {p_3r, expected_reach}',
+        })
+    else:
+        contract.update({
+            'proba_meaning': ('P(reach target before stop) — Platt-CALIBRATED to the empirical hit '
+                              'rate' if out.get('platt') else 'P(good trend pivot reaches target)'),
+            # head.onnx emits RAW proba; the bot applies calibration AFTER -> sigmoid(A*logit(p)+B).
+            'calibration': ({'method': 'platt', 'formula': 'sigmoid(A*logit(p_raw)+B)',
+                             'A': out['platt'][0], 'B': out['platt'][1]} if out.get('platt') else None),
+            'output_fn': ('platt(head_raw_proba)' if out.get('platt') else 'softmax(logits)[:,1]'),
+        })
     cpath = str(base) + '_signal.json'
     Path(cpath).write_text(json.dumps(contract, indent=2))
     out['artifacts'] = {'onnx': (bundle if sha else None), 'contract': cpath, 'content_sha': sha}

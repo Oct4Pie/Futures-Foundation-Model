@@ -164,17 +164,9 @@ def export_head_onnx(clf, n_features, path):
     return path
 
 
-def _export_frozen_bundle(cfg, clf, n_features, Xval_std):
-    """Deployable ONNX bundle in the incumbent format: <base>_encoder.onnx (raw OHLCV window ->
-    Mantis embedding) + <base>_signal_head.onnx (standardized [emb|handcraft] -> P). The encoder
-    runs in the isolated subprocess (parent stays torch-free); the head converts via skl2onnx
-    in-process. Head output is parity-checked vs the sklearn head. Bot serves: window ->
-    encoder.onnx -> concat handcraft -> standardize (contract mu/sd) -> head.onnx -> P."""
-    base = str(cfg['export_onnx_path'])
-    if base.endswith('.onnx'):
-        base = base[:-5]
-    head_path, enc_path = base + '_signal_head.onnx', base + '_encoder.onnx'
-    export_head_onnx(clf, n_features, head_path)
+def _export_encoder_onnx(cfg, enc_path):
+    """Export the frozen Mantis encoder (raw OHLCV window -> embedding) to ONNX via the isolated
+    subprocess worker (parent stays torch-free). Shared by the single-head and ladder bundles."""
     ecfg = dict(_export_encoder=enc_path, ckpt=cfg.get('backbone_ckpt'),
                 C=int(cfg.get('raw_C', 5)), seq=int(cfg.get('raw_seq', 64)),
                 model_id=cfg.get('model_id', 'paris-noah/Mantis-8M'))
@@ -184,6 +176,24 @@ def _export_frozen_bundle(cfg, clf, n_features, Xval_std):
         r = subprocess.run(cmd + [str(d)], capture_output=True, text=True)
         if r.returncode != 0:
             raise RuntimeError(f"encoder onnx export failed:\n{r.stderr[-2000:]}")
+    return enc_path
+
+
+def _bundle_base(cfg):
+    base = str(cfg['export_onnx_path'])
+    return base[:-5] if base.endswith('.onnx') else base
+
+
+def _export_frozen_bundle(cfg, clf, n_features, Xval_std):
+    """Deployable ONNX bundle in the incumbent format: <base>_encoder.onnx (raw OHLCV window ->
+    Mantis embedding) + <base>_signal_head.onnx (standardized [emb|handcraft] -> P). The encoder
+    runs in the isolated subprocess (parent stays torch-free); the head converts via skl2onnx
+    in-process. Head output is parity-checked vs the sklearn head. Bot serves: window ->
+    encoder.onnx -> concat handcraft -> standardize (contract mu/sd) -> head.onnx -> P."""
+    base = _bundle_base(cfg)
+    head_path, enc_path = base + '_signal_head.onnx', base + '_encoder.onnx'
+    export_head_onnx(clf, n_features, head_path)
+    _export_encoder_onnx(cfg, enc_path)
     diff = -1.0
     try:                                              # parity: onnx head vs sklearn head
         import onnxruntime as ort
@@ -194,6 +204,35 @@ def _export_frozen_bundle(cfg, clf, n_features, Xval_std):
     except Exception as e:                            # pragma: no cover
         print(f"[onnx] head parity check skipped: {e}", flush=True)
     print(f"[onnx] wrote {enc_path} + {head_path}  head-parity max|diff|={diff:.2e}", flush=True)
+    return enc_path, head_path
+
+
+def _export_ladder_bundle(cfg, risk_head, targets, n_features, Xval_std):
+    """Deployable ONNX bundle for the reach-LADDER entry head: <base>_encoder.onnx (shared) +
+    <base>_signal_head.onnx (standardized emb -> p_3r [entry signal] + expected_reach [ranking]).
+    Calibration is BAKED INTO the head graph (per-rung Platt), so the bot reads p_3r directly — no
+    post-step. Parity-checked vs the sklearn RiskHead. Bot serves: window -> encoder.onnx ->
+    standardize (contract mu/sd) -> head.onnx -> p_3r."""
+    from ...risk_head import export_ladder_head_onnx
+    base = _bundle_base(cfg)
+    head_path, enc_path = base + '_signal_head.onnx', base + '_encoder.onnx'
+    primary_ti = list(targets).index(3.0) if 3.0 in list(targets) else 0
+    export_ladder_head_onnx(risk_head._heads, targets, n_features, head_path, primary_ti=primary_ti)
+    _export_encoder_onnx(cfg, enc_path)
+    d_p3, d_er = -1.0, -1.0
+    try:                                              # parity: onnx head vs sklearn RiskHead
+        import onnxruntime as ort
+        sess = ort.InferenceSession(head_path, providers=['CPUExecutionProvider'])
+        res = dict(zip([o.name for o in sess.get_outputs()],
+                       sess.run(None, {'input': np.asarray(Xval_std, np.float32)})))
+        d_er = float(np.abs(res['expected_reach'][:, 0]
+                            - risk_head.predict_stats(Xval_std)['exp_reach']).max())
+        d_p3 = float(np.abs(res['p_3r'][:, 0]
+                            - risk_head.predict_rung(Xval_std, primary_ti)).max())
+    except Exception as e:                            # pragma: no cover
+        print(f"[onnx] ladder head parity check skipped: {e}", flush=True)
+    print(f"[onnx] wrote {enc_path} + {head_path}  ladder-parity max|diff| "
+          f"p_3r={d_p3:.2e} expected_reach={d_er:.2e}", flush=True)
     return enc_path, head_path
 
 
@@ -302,15 +341,6 @@ class MantisFrozenClassifier(Classifier):
         # signal head) so every rung is an MLPClassifier.
         if self.cfg.get('rank') == 'expected_reach' and keys_tr is not None:
             from ...risk_head import RiskHead, TARGETS
-            if self.cfg.get('export_onnx_path'):
-                # The ladder head is 5 per-rung MLPs + the survival->expected_reach reduction; that
-                # ONNX graph isn't wired yet. Fail LOUD instead of silently exporting nothing (this
-                # branch returns before the single-head export block below).
-                raise NotImplementedError(
-                    "ONNX export for the distributional reach-ladder head is not implemented yet "
-                    "(rank='expected_reach'). Run produce with EXPORT_ONNX=0 to get the 2026 OOS "
-                    "metrics; build the ladder ONNX bundle (5 rungs + expected-R reduction) before "
-                    "deploying it to the bot.")
             targets = tuple(self.cfg.get('reach_targets', TARGETS))
             rh = RiskHead(targets=targets, head=self.cfg.get('head', 'mlp'),
                           calibrate=bool(self.cfg.get('calibrate', True)),
@@ -321,6 +351,8 @@ class MantisFrozenClassifier(Classifier):
                           C=float(self.cfg.get('C', 1.0)))
             rh.fit(Xtr, keys_tr, Xval, keys_val, seed=seed)
             self._risk_head = rh
+            if self.cfg.get('export_onnx_path'):          # deployable bundle: encoder + ladder head
+                _export_ladder_bundle(self.cfg, rh, targets, Xtr.shape[1], Xval[:2048])
             p_val = rh.predict_stats(Xval)['exp_reach']
             p_eval = rh.predict_stats(Xeval)['exp_reach']
             auc = roc_auc_score(yval, p_val) if len(np.unique(yval)) == 2 else 0.5

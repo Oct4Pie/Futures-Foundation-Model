@@ -79,6 +79,100 @@ def survival_to_stats(surv, targets=TARGETS, q_tp=0.33):
     return {'surv': surv, 'exp_reach': exp_reach, 'p_bigwin': surv[:, -1], 'tp': tp}
 
 
+def expected_reach_weights(targets=TARGETS):
+    """Linear weights w such that expected_reach = monotone_survival @ w — the Riemann area under
+    the survival curve is LINEAR in the per-rung probabilities, so the whole reduction is one
+    MatMul (this is what lets the ladder ENTRY signal export to a plain ONNX graph)."""
+    t = np.asarray(targets, np.float64)
+    w = np.zeros(len(t))
+    w[0] += t[0]
+    for i in range(len(t) - 1):
+        d = 0.5 * (t[i + 1] - t[i])
+        w[i] += d
+        w[i + 1] += d
+    return w
+
+
+_ONNX_ACT = {'relu': 'Relu', 'tanh': 'Tanh', 'logistic': 'Sigmoid', 'identity': 'Identity'}
+
+
+def export_ladder_head_onnx(heads, targets, n_features, path, primary_ti=None):
+    """Export the fitted reach-ladder as a plain ONNX graph: standardized features [N, n_features]
+    -> TWO outputs: p_3r [N,1] = the calibrated P(reach>=3R) rung (THE deploy entry signal — a
+    thresholdable probability) and expected_reach [N,1] = the area-under-survival ranking score
+    (what the WF/produce ranked by). Built by hand from each rung's weights (MLP hidden->relu->out,
+    or logistic, or a constant degenerate head) + its Platt (applied on the logit, since
+    logit(sigmoid(z))=z) -> per-rung survival -> monotone (min-accumulate) -> MatMul the
+    expected-reach weights. No skl2onnx: the head is small and the reduction is linear.
+    primary_ti = the rung index whose calibrated proba IS p_3r (default = the 3.0R rung)."""
+    if primary_ti is None:
+        primary_ti = list(targets).index(3.0) if 3.0 in list(targets) else 0
+    import onnx
+    from onnx import helper, TensorProto, numpy_helper
+    T = len(targets)
+    nodes, inits = [], []
+
+    def add_init(name, arr):
+        inits.append(numpy_helper.from_array(np.asarray(arr, np.float32), name))
+
+    surv_cols = []
+    for i, (clf, platt) in enumerate(heads):
+        p = f'r{i}_'
+        if clf is None:                                    # degenerate rung -> constant survival
+            add_init(p + 'zeros', np.zeros((n_features, 1)))
+            add_init(p + 'c', np.array([[float(platt)]]))
+            nodes += [helper.make_node('MatMul', ['input', p + 'zeros'], [p + 'mm']),
+                      helper.make_node('Add', [p + 'mm', p + 'c'], [p + 'surv'])]
+            surv_cols.append(p + 'surv')
+            continue
+        if hasattr(clf, 'coefs_'):                         # MLPClassifier: hidden layers + output
+            coefs, inters = clf.coefs_, clf.intercepts_
+            act = _ONNX_ACT.get(clf.activation, 'Relu')
+            prev = 'input'
+            for k in range(len(coefs) - 1):
+                add_init(p + f'W{k}', coefs[k]); add_init(p + f'b{k}', inters[k].reshape(1, -1))
+                nodes += [helper.make_node('MatMul', [prev, p + f'W{k}'], [p + f'mm{k}']),
+                          helper.make_node('Add', [p + f'mm{k}', p + f'b{k}'], [p + f'z{k}']),
+                          helper.make_node(act, [p + f'z{k}'], [p + f'a{k}'])]
+                prev = p + f'a{k}'
+            add_init(p + 'Wo', coefs[-1]); add_init(p + 'bo', inters[-1].reshape(1, -1))
+            nodes += [helper.make_node('MatMul', [prev, p + 'Wo'], [p + 'mmo']),
+                      helper.make_node('Add', [p + 'mmo', p + 'bo'], [p + 'zout'])]
+        else:                                              # LogisticRegression
+            add_init(p + 'Wo', clf.coef_.T); add_init(p + 'bo', clf.intercept_.reshape(1, -1))
+            nodes += [helper.make_node('MatMul', ['input', p + 'Wo'], [p + 'mmo']),
+                      helper.make_node('Add', [p + 'mmo', p + 'bo'], [p + 'zout'])]
+        logit = p + 'zout'
+        if platt is not None:                              # Platt on the logit (logit(sigmoid(z))=z)
+            A, B = platt
+            add_init(p + 'A', np.array([[A]])); add_init(p + 'B', np.array([[B]]))
+            nodes += [helper.make_node('Mul', [p + 'zout', p + 'A'], [p + 'sc']),
+                      helper.make_node('Add', [p + 'sc', p + 'B'], [p + 'cl'])]
+            logit = p + 'cl'
+        nodes.append(helper.make_node('Sigmoid', [logit], [p + 'surv']))
+        surv_cols.append(p + 'surv')
+
+    # p_3r = the calibrated P(reach>=3R) rung, straight out (THE deploy entry signal)
+    nodes.append(helper.make_node('Identity', [surv_cols[primary_ti]], ['p_3r']))
+    mono = [surv_cols[0]]                                   # monotone: m_i = min(m_{i-1}, surv_i)
+    for i in range(1, T):
+        nodes.append(helper.make_node('Min', [mono[-1], surv_cols[i]], [f'm{i}']))
+        mono.append(f'm{i}')
+    nodes.append(helper.make_node('Concat', mono, ['M'], axis=1))
+    add_init('erw', expected_reach_weights(targets).reshape(T, 1))
+    nodes.append(helper.make_node('MatMul', ['M', 'erw'], ['expected_reach']))
+
+    graph = helper.make_graph(
+        nodes, 'ladder_entry_head',
+        [helper.make_tensor_value_info('input', TensorProto.FLOAT, [None, int(n_features)])],
+        [helper.make_tensor_value_info('p_3r', TensorProto.FLOAT, [None, 1]),
+         helper.make_tensor_value_info('expected_reach', TensorProto.FLOAT, [None, 1])], inits)
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid('', 15)])
+    model.ir_version = 9                                   # onnxruntime-compatible IR
+    onnx.save(model, path)
+    return path
+
+
 class RiskHead:
     """Per-threshold Platt-calibrated survival head on a frozen embedding (backbone-agnostic).
     fit(X, keys) reads labels from the keys; predict_survival(X) returns the monotone calibrated
@@ -166,14 +260,17 @@ class RiskHead:
         self._heads = heads
         return self
 
+    def predict_rung(self, X, ti):
+        """The RAW calibrated proba for a single rung P(reach>=targets[ti]) — pre-monotone. This is
+        the deploy entry signal for ti=the 3R rung (what the ONNX p_3r output emits)."""
+        clf, platt = self._heads[ti]
+        if clf is None:                                 # constant head (degenerate threshold)
+            return np.full(len(X), float(platt))
+        raw = clf.predict_proba(X)[:, 1]
+        return apply_platt(raw, platt) if isinstance(platt, tuple) else raw
+
     def predict_survival(self, X):
-        cols = []
-        for clf, platt in self._heads:
-            if clf is None:                             # constant head (degenerate threshold)
-                cols.append(np.full(len(X), float(platt)))
-            else:
-                raw = clf.predict_proba(X)[:, 1]
-                cols.append(apply_platt(raw, platt) if isinstance(platt, tuple) else raw)
+        cols = [self.predict_rung(X, ti) for ti in range(len(self._heads))]
         return monotone_survival(np.stack(cols, axis=1))
 
     def predict_stats(self, X, q_tp=0.33):

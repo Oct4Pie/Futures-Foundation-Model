@@ -104,6 +104,24 @@ def test_operating_points_empty_is_safe():
     assert produce.wr_by_score(_RLabeler(), [], np.array([]), []) == []
 
 
+def test_ladder_signal_contract_shape(tmp_path):
+    # the reach-ladder produce must write a ladder-shaped signal.json: entry_signal=p_3r, both head
+    # outputs, reach_targets, and calibration baked into the onnx (bot reads p_3r as-is).
+    import json
+    out = dict(oos_auc=0.6, oos_meanR=0.63, shuffle_meanR=None, edge_shuffle=None,
+               oos_trades=1000, n_train=100, n_oos=50, platt=None)
+    ck = {'rank': 'expected_reach', 'reach_targets': [2.0, 3.0, 4.0, 6.0, 8.0], 'head': 'mlp'}
+    lab = SyntheticLabeler(n_bars=200)
+    produce._emit(out, 'mantis_frozen', ck, lab, None, None, 5, 1, ['c0'], ['ES'], ['3min'],
+                  '2026-01-01', True, str(tmp_path / 'model'), verbose=False)
+    c = json.loads((tmp_path / 'model_signal.json').read_text())
+    assert c['head_type'] == 'reach_ladder'
+    assert c['entry_signal'] == 'p_3r'
+    assert c['head_outputs'] == ['p_3r', 'expected_reach']
+    assert c['reach_targets'] == [2.0, 3.0, 4.0, 6.0, 8.0]
+    assert c['calibration']['baked_into_onnx'] is True    # bot reads p_3r directly, no post-step
+
+
 def test_train_final_writes_signal_contract(tmp_path):
     import json
     lab = SyntheticLabeler(n_bars=1600, seed=0)
