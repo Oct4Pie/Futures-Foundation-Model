@@ -80,13 +80,16 @@ def _embed_cache_path(cfg, labeler, keys):
 
 
 def _bar_cache_path(cfg, labeler, keys):
-    """Per-stream BAR-INDEXED cache (ohlcv mode): ONE file per (ticker,tf,ckpt,nbars,seq).
-    In ohlcv mode the embedding of a window depends ONLY on its bar index (no direction flip),
-    so ANY keyset that needs bar i reuses it — WF full-stream, produce train/val/oos subsets,
-    and any head (logistic/MLP) all share one embed. None = caching off / non-ohlcv mode."""
+    """Per-stream BAR-INDEXED cache (ohlcv-family modes): ONE file per (ticker,tf,ckpt,nbars,
+    seq,mode). In these modes the embedding of a window depends ONLY on its bar index (no
+    direction flip; multi-scale aggregation is deterministic from the bars), so ANY keyset that
+    needs bar i reuses it — WF full-stream, produce train/val/oos subsets, and any head share one
+    embed. Mode variants (e.g. 'ohlcv_agg1-5' = multi-TF) get DISTINCT files; the plain 'ohlcv'
+    filename is unchanged so existing caches keep hitting. None = caching off / non-ohlcv mode."""
     if os.environ.get('EMBED_CACHE', '1') != '1' or not keys:
         return None
-    if getattr(labeler, 'MV_MODE', '?') != 'ohlcv':       # only ohlcv: emb independent of dir
+    mv_mode = str(getattr(labeler, 'MV_MODE', '?'))
+    if not mv_mode.startswith('ohlcv'):                   # ohlcv family: emb independent of dir
         return None
     ckpt = cfg.get('backbone_ckpt')
     if ckpt and Path(ckpt).exists():
@@ -101,7 +104,8 @@ def _bar_cache_path(cfg, labeler, keys):
     except Exception:
         nbars = -1
     cache_dir = Path(os.environ.get('EMBED_CACHE_DIR', 'temp/embed_cache'))
-    return cache_dir / f"bars_{tk}_{tf}_{ckpt_id}_{nbars}_{seq}.npz"
+    tag = '' if mv_mode == 'ohlcv' else f"_{mv_mode}"     # existing single-TF filenames untouched
+    return cache_dir / f"bars_{tk}_{tf}_{ckpt_id}_{nbars}_{seq}{tag}.npz"
 
 
 def _load_bar_cache(path):

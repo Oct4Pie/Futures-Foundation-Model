@@ -90,6 +90,35 @@ def test_legacy_cache_preferred(tmp_path, monkeypatch):
     assert X.shape[0] == 10 and np.allclose(X[:, 0, 0], 9.0)
 
 
+def test_bar_cache_multi_tf_mode_distinct_and_reusable(tmp_path, monkeypatch):
+    """Multi-TF modes (MV_MODE='ohlcv_agg1-5') get their OWN bar-cache file — never colliding with
+    the single-TF cache — and the plain 'ohlcv' filename is UNCHANGED (existing caches keep
+    hitting). Non-ohlcv modes stay uncached."""
+    monkeypatch.setenv('EMBED_CACHE_DIR', str(tmp_path))
+    monkeypatch.setenv('EMBED_CACHE', '1')
+    keys = _keys(range(5))
+    single = FakeLab()
+    multi = FakeLab(); multi.MV_MODE = 'ohlcv_agg1-5'
+    other = FakeLab(); other.MV_MODE = 'zscore'
+    p_single = _bar_cache_path({'backbone_ckpt': None}, single, keys)
+    p_multi = _bar_cache_path({'backbone_ckpt': None}, multi, keys)
+    assert p_single is not None and p_multi is not None
+    assert p_single != p_multi                                 # distinct files, no collision
+    assert p_single.name.endswith('_64.npz')                   # plain-ohlcv filename unchanged
+    assert 'ohlcv_agg1-5' in p_multi.name                      # mode-tagged
+    assert _bar_cache_path({'backbone_ckpt': None}, other, keys) is None   # non-ohlcv -> uncached
+
+    # the multi-TF cache round-trips through featurize (seed then subset-hit, no re-embed)
+    clf = MantisFrozenClassifier(backbone_ckpt=None, with_features=False)
+    calls = []
+    clf._embed = lambda l, k: (calls.append(sorted(int(x[1]) for x in k)) or _emb_for(k))
+    clf.featurize(multi, _keys(range(10)))
+    assert calls == [list(range(10))]
+    calls.clear()
+    Xs = clf.featurize(multi, _keys(range(3, 7)))
+    assert calls == [] and np.allclose(Xs[:, 0, 0], [3, 4, 5, 6])
+
+
 def test_cache_off(tmp_path, monkeypatch):
     monkeypatch.setenv('EMBED_CACHE', '0')
     clf = MantisFrozenClassifier(backbone_ckpt=None, with_features=False)
