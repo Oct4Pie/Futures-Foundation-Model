@@ -78,8 +78,18 @@ HOLDOUT_START = '2026-01-01'          # EXCLUDED from SSL (downstream OOS stays 
 VAL_FRAC      = 0.1
 
 # ── MULTI-HORIZON / VARIABLE-CONTEXT candle forecast (sweep-winner) ──
-HORIZONS        = (5, 10, 20, 25)             # predict the CANDLE at each (near..far), in bars
-CONTEXT_LENGTHS = (64, 100, 150, 200)         # sample a context length per step (short..long)
+def _int_tuple(env, default):                 # "10,25,50,75" -> (10,25,50,75); unset -> default
+    v = os.environ.get(env)
+    return tuple(int(x) for x in v.split(',') if x.strip()) if v else default
+HORIZONS        = _int_tuple('HORIZONS', (5, 10, 20, 25))    # predict the CANDLE at each (bars ahead)
+CONTEXT_LENGTHS = _int_tuple('CONTEXT_LENGTHS', (64, 100, 150, 200))   # context length per step
+# LONG-HORIZON EXTENSION (build on what ctr_seq2seq knows -> reach FURTHER): the base only forecasts
+# 25 bars ahead but a trade runs 150 (VERT) — extend the horizons so the encoder learns how moves
+# DEVELOP over the range where runners form. Keep the count at 4 (head shape matches the warm-start)
+# and 50 as the stepping-stone anchor for 75 (halfway to the trade horizon; further = too noisy).
+#   HORIZONS=10,25,50,75 CONTEXT_LENGTHS=100,150,200,200 \
+#   EXTEND_FROM=.../mantis_ssl_ctr_seq2seq.pt OUT_PATH=.../mantis_ssl_lh75_seq2seq.pt EPOCHS=120
+# Judge on the 2025 dry-run vs ctr_seq2seq + the trend_eff/range_expand probes; one-shot 2026 if it wins.
 # DEFAULTS = the REORDER-sweep winner (trial 3): candle_mse / nc=3 / wd=0 / freeze=2 / lr=1.19e-4.
 # All env-overridable so any sweep config can be full-trained without editing (e.g. OBJECTIVE=
 # candle_direction DIR_WEIGHT=0.29 for trial 5; NEW_CHANNELS=4 LR=1.1e-4 for trial 6).
