@@ -32,7 +32,7 @@ os.chdir('/content')
 from google.colab import drive
 drive.mount('/content/drive', force_remount=True)
 
-print('Cloning FFM repo (mantis branch)...')
+print('Cloning FFM repo (main)...')
 os.system('rm -rf /content/Futures-Foundation-Model')
 r = subprocess.run(['git', 'clone', '--branch', 'main',
                     'https://github.com/johnamcruz/Futures-Foundation-Model.git',
@@ -67,9 +67,10 @@ WARM_CKPT = os.environ.get('WARM_CKPT', '/content/drive/MyDrive/AI_Models/mantis
 # DEFAULT OUT = the TUNED reorder (Optuna sweep winner, trial 3) — a DISTINCT file so the manual
 # freeze=3 anchor (mantis_ssl_seq2seq_reordered.pt, 52.6%) is NEVER overwritten. The two are the
 # freeze-2-vs-3 A/B: this tuned freeze=2 winner vs the anchor freeze=3, both vs seq2seq.
-# DEFAULT OUT = the EXTENSION file (plain run = the RoBERTa extension; the promoted base is
-# never the default output). For the original stage-2 recipe set OUT_PATH + EXTEND_FROM='' .
-OUT_PATH  = os.environ.get('OUT_PATH', '/content/drive/MyDrive/AI_Models/mantis_ssl_ctr_seq2seq_ext.pt')
+# DEFAULT OUT = the LONG-HORIZON extension file (plain run = warm-start ctr_seq2seq + reach to 75).
+# DISTINCT from the short-horizon ext (ctr_seq2seq_ext.pt) so this can't resume/overwrite it. For the
+# short-horizon RoBERTa ext set OUT_PATH=...ctr_seq2seq_ext.pt HORIZONS=5,10,20,25 .
+OUT_PATH  = os.environ.get('OUT_PATH', '/content/drive/MyDrive/AI_Models/mantis_ssl_lh75_seq2seq.pt')
 
 # ── CORPUS (same as stage 1) ──
 TICKERS = ['ES', 'NQ', 'RTY', 'YM', 'GC', 'SI', 'CL', 'ZB', 'ZN']      # all 9
@@ -81,8 +82,9 @@ VAL_FRAC      = 0.1
 def _int_tuple(env, default):                 # "10,25,50,75" -> (10,25,50,75); unset -> default
     v = os.environ.get(env)
     return tuple(int(x) for x in v.split(',') if x.strip()) if v else default
-HORIZONS        = _int_tuple('HORIZONS', (5, 10, 20, 25))    # predict the CANDLE at each (bars ahead)
-CONTEXT_LENGTHS = _int_tuple('CONTEXT_LENGTHS', (64, 100, 150, 200))   # context length per step
+HORIZONS        = _int_tuple('HORIZONS', (10, 25, 50, 75))   # DEFAULT = long-horizon extension (reach
+#                                       to 75 = halfway to the 150-bar trade horizon; 50 anchors it)
+CONTEXT_LENGTHS = _int_tuple('CONTEXT_LENGTHS', (100, 150, 200, 200))  # longer context to support it
 # LONG-HORIZON EXTENSION (build on what ctr_seq2seq knows -> reach FURTHER): the base only forecasts
 # 25 bars ahead but a trade runs 150 (VERT) — extend the horizons so the encoder learns how moves
 # DEVELOP over the range where runners form. Keep the count at 4 (head shape matches the warm-start)
