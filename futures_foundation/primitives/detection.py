@@ -121,58 +121,6 @@ def detect_atr_zigzag_pivots(o, h, l, c, atr_period=20, rev_atr=1.25,
     return pivots
 
 
-def detect_supertrend_zigzag_pivots(o, h, l, c, atr_period=10, factor=3.0,
-                                    min_r=3.0, min_bars=5):
-    """SUPERTREND-flip zigzag pivots — the [JL] Supertrend-Zone-Pivot zigzag core, ported (the
-    fib/label blocks of the source are display-only and dropped). An ALTERNATIVE confirm mechanism
-    to detect_atr_zigzag_pivots for the trigger A/B:
-
-      ATR-zigzag   confirms on a FIXED reversal (rev_atr*ATR off the extreme) — identical distance
-                   in every structure.
-      This one     confirms when close crosses the Supertrend TRAILING band (factor*ATR(atr_period),
-                   RATCHETED at the leg's hl2 extremes) — the confirmation distance ADAPTS to how
-                   the leg developed; typically later but with fewer fake flips per confirm.
-
-    On each direction flip the completed leg's extreme becomes the pivot (Pine: highest(high)/
-    lowest(low) over the bars since the previous flip, flip bar inclusive). Strictly causal:
-    confirm = the flip bar, ENTER at confirm+1; the extreme lookback is entirely in the past.
-
-    Returns the SAME schema as detect_atr_zigzag_pivots — dict(confirm, direction, origin, leg_end,
-    R, is_trend) — so every consumer (labeler, caches, floors, scans) accepts it as a drop-in
-    trigger variant. direction = the NEW leg (+1 long at a confirmed pivot LOW / -1 short at a
-    pivot HIGH); origin = the completed leg's START extreme; leg_end = the confirmed pivot extreme;
-    R = |leg move| / ATR(leg_end)."""
-    from .indicators import compute_supertrend
-    o = np.asarray(o, float); h = np.asarray(h, float)
-    l = np.asarray(l, float); c = np.asarray(c, float)
-    n = len(c)
-    if n < 3:
-        return []
-    direction, _st, atr = compute_supertrend(h, l, c, atr_period, factor)
-    flips = np.flatnonzero(direction[1:] != direction[:-1]) + 1
-    pivots = []
-    prev_flip = 0
-    prev_ext_idx = None
-    prev_ext_px = None
-    for cf in flips:
-        newd = int(direction[cf])                    # +1 flip-to-bull (pivot LOW), -1 flip-to-bear
-        lo_b = prev_flip + 1                         # Pine window: (last flip, this flip] inclusive
-        seg = slice(min(lo_b, cf), cf + 1)
-        if newd == 1:                                # completed DOWN leg -> pivot LOW -> go long
-            ei = seg.start + int(np.argmin(l[seg])); px = float(l[ei])
-        else:                                        # completed UP leg -> pivot HIGH -> go short
-            ei = seg.start + int(np.argmax(h[seg])); px = float(h[ei])
-        a = atr[ei]
-        if (prev_ext_px is not None and cf + 1 < n           # seed leg dropped / causal entry exists
-                and np.isfinite(a) and a > 0):
-            R = abs(px - prev_ext_px) / float(a)
-            pivots.append({'confirm': int(cf), 'direction': newd,
-                           'origin': int(prev_ext_idx), 'leg_end': int(ei), 'R': float(R),
-                           'is_trend': bool(R >= min_r and (ei - prev_ext_idx) >= min_bars)})
-        prev_ext_idx, prev_ext_px, prev_flip = ei, px, cf
-    return pivots
-
-
 def detect_cisd_signals(o, h, l, c, tolerance=0.70, expiry_bars=50,
                         body_ratio_min=0.50, close_str_min=0.60):
     """
