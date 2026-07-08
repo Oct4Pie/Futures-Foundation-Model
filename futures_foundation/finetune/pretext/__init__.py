@@ -11,20 +11,22 @@ its own file keeps ssl.py a clean orchestrator.
   contrastive   (stage 3)   — TEMPORAL-NEIGHBORHOOD contrastive: regime geometry from
                               multi-scale time proximity + augmentations, sigma-weighted
                               (replaced the outcome-keyed v1-v3, dropped 2026-07-02)
-  electra       (stage 4)   — ELECTRA-style REPLACED-CANDLE DETECTION (RTD): a weak generator
-                              plants plausible fakes, the encoder labels EVERY bar real/fake —
-                              discriminative every-bar signal = sample-efficiency for our
-                              data-limited regime; warm from the promoted base
+  electra       (stage 4)   — BREAK-HOLD discriminative (the rewritten discriminative slot): at each
+                              window's causal anchor, does a structural break HOLD or FAIL over the
+                              reserved future bars? Makes FAKEOUT-detection the objective (not a
+                              hoped-for byproduct), self-supervised from raw OHLCV, generator-free;
+                              warm from the promoted base. A GENERIC foundation objective — every
+                              downstream head inherits an encoder that knows real breaks from traps.
 """
 from .base import PretextTask
 from .mask import MaskTask
 from .forecast import ForecastTask
 from .forecast_dist import ForecastDistTask
 from .contrastive import ContrastiveTask
-from .electra import ElectraTask
+from .electra import BreakHoldTask
 
 PRETEXTS = {t.name: t for t in (MaskTask(), ForecastTask(), ForecastDistTask(),
-                                ContrastiveTask(), ElectraTask())}
+                                ContrastiveTask(), BreakHoldTask())}
 
 
 def get_pretext(name):
@@ -33,4 +35,4 @@ def get_pretext(name):
 
 
 __all__ = ['PretextTask', 'MaskTask', 'ForecastTask', 'ForecastDistTask', 'ContrastiveTask',
-           'ElectraTask', 'PRETEXTS', 'get_pretext']
+           'BreakHoldTask', 'PRETEXTS', 'get_pretext']

@@ -1,51 +1,41 @@
 # ==============================================================================
-# MANTIS SSL STAGE 4 — ELECTRA-STYLE REPLACED-CANDLE DETECTION (RTD) (Colab GPU)
+# MANTIS SSL STAGE 4 — BREAK-HOLD DISCRIMINATIVE PRETEXT (the rewritten electra slot, Colab GPU)
 # ==============================================================================
 #
-# ██ v1 FAILED (2026-07-06) → v2 ENCODER-SIDE JOINT LOSS now BUILT (the data-backed fix) ██
-#   v1 (pure RTD, recon_weight=0): 52.7% vs base 64.6% WR@3R @1/d — lost at EVERY op point despite
-#   warm-starting FROM the base. ROOT CAUSE: the ENCODER's only gradient was the RTD BCE (the recon
-#   loss trained just the GENERATOR) → pure discrimination destroyed the reconstruction lineage
-#   (emb_std 1.0->2.35 drift). The reconstruction anchor is LOAD-BEARING.
-#   ── v2 FIX (now default, RECON_WEIGHT=1.0): the encoder gets its OWN reconstruction head (hidden
-#   states -> the clean OHLCV window) so loss = gen_recon + RTD_WEIGHT*bce + RECON_WEIGHT*enc_recon.
-#   The encoder is pulled back toward the physical data (a DENOISING objective) while RTD adds
-#   discrimination. Watch `enc_recon` in the log: it must DROP (encoder learning to rebuild) while
-#   emb_std stays ~1 (NOT drifting to 2+). ABLATION to prove RTD earns its place:
-#     RECON_WEIGHT=1 RTD_WEIGHT=0  -> denoising-AE only (the anchor alone)
-#     RECON_WEIGHT=1 RTD_WEIGHT=5  -> the v2 joint (does RTD beat the anchor-only run?)
-#   SHIP GATE unchanged: one-shot 2026 WR@3R vs ctr_seq2seq; probe is a ticket, never a verdict.
-#   2026 one-shot NOT spent; ctr_seq2seq remains the base until v2 clears the gate.
+# ██ THE IDEA — make FAKEOUT-DETECTION the objective, not a hope ██
+#   Every prior objective (reconstruct/forecast candles) was INDIRECT — we hoped the encoder would
+#   incidentally learn "real break vs fakeout." This makes it the TASK. At each window's causal
+#   ANCHOR (last bar), a structural break (close through the swing high/low of the prior
+#   BREAK_LOOKBACK bars) is labeled HOLD or FAIL over the next HOLD_K bars:
+#     HOLD = price extends >= HOLD_THETA*ATR in the break direction BEFORE retracing the broken level
+#     FAIL = it falls back through the level (trap) OR stalls (dead bounce) within HOLD_K bars.
+#   That hold-vs-fail label is the atomic unit of a fakeout — self-supervised from raw OHLCV, millions
+#   of examples, NO strategy outcome, NO leak (the HOLD_K future bars are RESERVED, never encoded).
+#   This is a GENERIC FOUNDATION objective: it sharpens the SHIPPED embedding so EVERY downstream head
+#   (pivot, kalman, any strategy) inherits an encoder that knows real breaks from fakeouts.
 #
-# Refines the PROMOTED base (ctr_seq2seq) with a DISCRIMINATIVE objective. A small, deliberately
-# weak conv GENERATOR fills masked bars with plausible fakes; the Mantis encoder (the foundation
-# we keep) labels EVERY bar real-vs-replaced. Every bar carries a training signal (vs ~15% for
-# generative masking) — the ELECTRA sample-efficiency insight, our highest-leverage axis on
-# limited financial data. Non-adversarial: generator trains on recon only (no GAN loop).
+#   Discriminative like electra (encoder is the keeper, a binary head reads it out) but GENERATOR-FREE
+#   — the "fake" is a REAL failed break, not a synthesized candle (no GAN, no OHLC-clamp cheat). The
+#   one electra-v2 piece that worked MECHANICALLY is KEPT: the encoder-side RECON anchor.
+#     loss = RECON_WEIGHT * enc_recon(clean window) + HOLD_WEIGHT * BCE(hold | is_break)
 #
-# ── HOW WE VERIFY IT'S ACTUALLY LEARNING (not cheating) — read the per-epoch log + final block ──
-#   rtd_bal_acc  BALANCED accuracy (fake-recall + real-acc)/2 — the honest signal. A lazy
-#                all-real predictor scores 0.5 here (it would score 85% RAW accuracy!).
-#                LEARNING = rises from ~0.5 and lands in the ~0.60-0.95 band.
-#                ~0.50 flat = not learning (generator too strong / encoder blind).
-#                >0.97     = fakes trivially detectable => a SHORTCUT TELL or too-weak generator
-#                            (lower gen quality bar: raise GEN_WIDTH, or raise MASK_RATIO).
-#   fake_recall / real_acc  the two error modes split out (both should be well off 0/1 extremes).
-#   gen_mse      generator plausibility — should FALL early then flatten; if it keeps falling fast
-#                while rtd_bal_acc drops toward 0.5, the generator is getting too good.
-#   std          embedding collapse guard (must stay > 0.01).
-#   PROBE        (report-only gate) frozen-embedding probe: mean_core_delta must stay positive —
-#                the encoder still encodes regime/vol/structure better than vanilla, i.e. the
-#                RTD refine did not destroy the reconstruction lineage it warmed from.
-#   Anti-cheat baked into the trainer: OHLC-clamped fakes (no impossible-candle tell), BCE
-#   pos_weight (loss can't be gamed by predicting all-real), detached fakes (no adversarial loop).
+# ── HOW WE VERIFY IT'S LEARNING (read the per-epoch log + final block) ──
+#   hold_bal_acc  BALANCED accuracy over break windows (hold_recall + fail_recall)/2 — the honest
+#                 signal (a lazy majority predictor scores 0.5). LEARNING = rises off ~0.5.
+#                 >~0.55 = there IS fakeout signal in OHLCV the indirect objectives missed.
+#                 ~0.50 flat = the discriminator is NOT in price -> it's order flow (a CLEAN verdict).
+#   hold_recall / fail_recall  the two error modes (both should be off the 0/1 extremes).
+#   break_rate    fraction of windows that are breaks (label density); hold_rate = of those, % held.
+#   enc_recon     the anchor — should DROP (encoder rebuilding the clean window).
+#   std           embedding-collapse guard (must stay > 0.01, and NOT drift to 2+).
+#   PROBE         report-only gate: mean_core_delta stays positive (didn't destroy the base lineage).
 #
-# SHIP GATE UNCHANGED (never the pretext metrics): downstream one-shot 2026 WR@3R vs the current
-# base + generality probes (forecast skill / regime separation). This checkpoint is a CANDIDATE:
-#   S3_CKPT=<this .pt>  python3 colabs/mantis_2026_benchmark.py   (promote iff it wins)
+# SHIP GATE UNCHANGED (never the pretext metrics): downstream one-shot 2026 WR@3R vs the current base
+#   + generality probes. This checkpoint is a CANDIDATE:
+#     S3_CKPT=<this .pt>  python3 colabs/mantis_2026_benchmark.py   (promote iff it wins)
 #
-# SAFETY: writes a DISTINCT checkpoint (mantis_ssl_electra.pt). NEVER overwrites the promoted
-# bases (ctr_seq2seq / seq2seq / ohlcv) — preflight hard-fails.
+# SAFETY: writes a DISTINCT checkpoint (mantis_ssl_breakhold.pt). NEVER overwrites the promoted bases
+#   (ctr_seq2seq / seq2seq / ohlcv) — preflight hard-fails.
 # ==============================================================================
 
 
@@ -81,20 +71,10 @@ except ImportError as e:
 # ======================================= CELL 2 — CONFIG + pre-flight ==========================
 import os, torch
 
-# ── SPAN MODE (SpanBERT move) — 0 = original bar-ELECTRA; >0 (e.g. 4) = span-ELECTRA: corrupt
-# CONTIGUOUS multi-bar spans (geometric mean SPAN_MEAN, clipped SPAN_MAX). The generator must fake
-# a plausible MOVE and the encoder must detect the fake SPAN -> models development-over-bars.
-# Recommended span run: SPAN_MEAN=4 MASK_RATIO=0.2, WARM_CKPT = whichever base won the benchmark.
-SPAN_MEAN = float(os.environ.get('SPAN_MEAN', '0'))
-SPAN_MAX  = int(os.environ.get('SPAN_MAX', '10'))
-
-# ── PATHS (Drive) — warm from the PROMOTED base (the validated ctr_seq2seq lineage). OUT_PATH
-# auto-switches for span runs so a span experiment can NEVER clobber the bar-mode candidate. ──
+# ── PATHS (Drive) — warm from the PROMOTED base (the validated ctr_seq2seq lineage) ──
 DATA_DIR  = os.environ.get('DATA_DIR', '/content/drive/MyDrive/Futures Data')
 WARM_CKPT = os.environ.get('WARM_CKPT', '/content/drive/MyDrive/AI_Models/mantis_ssl_ctr_seq2seq.pt')
-_DEFAULT_OUT = ('/content/drive/MyDrive/AI_Models/mantis_ssl_span_electra.pt' if SPAN_MEAN > 0
-                else '/content/drive/MyDrive/AI_Models/mantis_ssl_electra.pt')
-OUT_PATH  = os.environ.get('OUT_PATH', _DEFAULT_OUT)
+OUT_PATH  = os.environ.get('OUT_PATH', '/content/drive/MyDrive/AI_Models/mantis_ssl_breakhold.pt')
 
 # ── CORPUS (same universe as every stage — the ruler must not drift) ──
 TICKERS = ['ES', 'NQ', 'RTY', 'YM', 'GC', 'SI', 'CL', 'ZB', 'ZN']
@@ -102,13 +82,14 @@ TFS     = ['1min', '3min', '5min', '15min']
 HOLDOUT_START = '2026-01-01'          # EXCLUDED from SSL (downstream OOS stays clean)
 VAL_FRAC      = 0.1
 
-# ── ELECTRA / RTD knobs ──
-SEQ         = 64                      # window parity with the base + downstream MV_SEQ
-MASK_RATIO  = float(os.environ.get('MASK_RATIO', '0.15'))   # fraction of bars replaced
-RTD_WEIGHT  = float(os.environ.get('RTD_WEIGHT', '5.0'))    # bce weight (0 = denoising-AE ablation)
-RECON_WEIGHT = float(os.environ.get('RECON_WEIGHT', '1.0')) # v2 ENCODER-recon anchor (0 = failed v1)
-GEN_WIDTH   = int(os.environ.get('GEN_WIDTH', '48'))        # generator size — the strength knob
-NEW_CHANNELS = 3                      # overcomplete adapter — sweep-winner setting of the base
+# ── BREAK-HOLD knobs ──
+SEQ           = 64                     # window parity with the base + downstream MV_SEQ
+HOLD_K        = int(os.environ.get('HOLD_K', '12'))          # future bars the label races over
+BREAK_LOOKBACK = int(os.environ.get('BREAK_LOOKBACK', '20')) # swing window the break must clear
+HOLD_THETA    = float(os.environ.get('HOLD_THETA', '1.0'))  # hold = extend >= theta*ATR before retrace
+HOLD_WEIGHT   = float(os.environ.get('HOLD_WEIGHT', '5.0'))  # BCE weight (0 = denoising-AE ablation)
+RECON_WEIGHT  = float(os.environ.get('RECON_WEIGHT', '1.0')) # encoder-recon anchor (0 = pure discrim)
+NEW_CHANNELS  = 3                     # overcomplete adapter — sweep-winner setting of the base
 FREEZE_ENCODER_LAYERS = int(os.environ.get('FREEZE_ENCODER_LAYERS', '2'))  # anti-forgetting (base=frz2)
 
 # ── TRAINING ──
@@ -142,10 +123,9 @@ found = [f'{tk}_{tf}' for tk in TICKERS for tf in TFS
 if not found:
     raise FileNotFoundError(f'No {{TICKER}}_{{TF}}.csv files under {DATA_DIR}.')
 print(f'✅ PRE-FLIGHT: {len(found)}/{len(TICKERS)*len(TFS)} CSVs | warm-start <- {WARM_CKPT}')
-print(f'   mode={"SPAN-electra (mean=" + str(SPAN_MEAN) + ", max=" + str(SPAN_MAX) + ")" if SPAN_MEAN > 0 else "bar-electra"} '
-      f'[{"v2-joint" if RECON_WEIGHT > 0 else "v1-pureRTD(FAILED)"}] '
-      f'| mask={MASK_RATIO} rtd_w={RTD_WEIGHT} recon_w={RECON_WEIGHT} gen_width={GEN_WIDTH} '
-      f'lr={LR:.1e} batch={BATCH} frz={FREEZE_ENCODER_LAYERS}')
+print(f'   break-hold [{"v-anchored" if RECON_WEIGHT > 0 else "pure-discrim(drift risk)"}] '
+      f'| hold_k={HOLD_K} lookback={BREAK_LOOKBACK} theta={HOLD_THETA} '
+      f'hold_w={HOLD_WEIGHT} recon_w={RECON_WEIGHT} lr={LR:.1e} batch={BATCH} frz={FREEZE_ENCODER_LAYERS}')
 print(f'   OUTPUT -> {OUT_PATH}   (promoted bases UNTOUCHED)')
 
 
@@ -153,62 +133,58 @@ print(f'   OUTPUT -> {OUT_PATH}   (promoted bases UNTOUCHED)')
 verdict = ssl.loop_ssl(
     data_dir=DATA_DIR, out_path=OUT_PATH, tickers=TICKERS, tfs=TFS,
     pretext='electra', backbone_ckpt=WARM_CKPT,
-    seq=SEQ, mask_ratio=MASK_RATIO, rtd_weight=RTD_WEIGHT, recon_weight=RECON_WEIGHT,
-    gen_width=GEN_WIDTH, span_mean=SPAN_MEAN, span_max=SPAN_MAX,
-    new_channels=NEW_CHANNELS,
+    seq=SEQ, hold_k=HOLD_K, break_lookback=BREAK_LOOKBACK, hold_theta=HOLD_THETA,
+    hold_weight=HOLD_WEIGHT, recon_weight=RECON_WEIGHT, new_channels=NEW_CHANNELS,
     batch=BATCH, epochs=EPOCHS, steps_per_epoch=STEPS, lr=LR, weight_decay=WEIGHT_DECAY,
     patience=PATIENCE, val_frac=VAL_FRAC, holdout_start=HOLDOUT_START,
     controls=CONTROLS, probe=PROBE, resume=RESUME,
     freeze_encoder_layers=FREEZE_ENCODER_LAYERS, device=device.type, seed=SEED)
 
-print('\n' + '=' * 60 + '\n  SSL STAGE 4 (ELECTRA replaced-candle detection) VERDICT\n' + '=' * 60)
+print('\n' + '=' * 60 + '\n  SSL STAGE 4 (BREAK-HOLD discriminative) VERDICT\n' + '=' * 60)
 for k, v in verdict.items():
     if k not in ('history', 'epochs'):
         print(f'  {k:>22}: {v}')
 
-# ── LEARNING-VERIFICATION BLOCK — is the discriminator actually learning (and not cheating)? ──
-hist = [h for h in (verdict.get('epochs') or []) if isinstance(h, dict) and 'rtd_bal_acc' in h]
+# ── LEARNING-VERIFICATION BLOCK — is the discriminator actually learning (and is fakeout signal in OHLCV)? ──
+hist = [h for h in (verdict.get('epochs') or []) if isinstance(h, dict) and 'hold_bal_acc' in h]
 print('-' * 60)
 if hist:
-    first, best = hist[0], max(hist, key=lambda h: h['rtd_bal_acc'])
+    first, best = hist[0], max(hist, key=lambda h: h['hold_bal_acc'])
     last = hist[-1]
-    ba0, ba_best, ba_last = first['rtd_bal_acc'], best['rtd_bal_acc'], last['rtd_bal_acc']
-    # v2 anchor health: enc_recon should DROP off its start (encoder learning to rebuild the clean
-    # window) and emb_std must stay ~1 (NOT drift to 2+ like v1's unanchored failure).
-    er0 = first.get('enc_recon', float('nan'))
-    er_last = last.get('enc_recon', float('nan'))
+    ba0, ba_best, ba_last = first['hold_bal_acc'], best['hold_bal_acc'], last['hold_bal_acc']
+    er0, er_last = first.get('enc_recon', float('nan')), last.get('enc_recon', float('nan'))
     anchored = RECON_WEIGHT == 0 or (er_last == er_last and er0 == er0 and er_last <= er0)  # NaN-safe
-    std_ok_v2 = last.get('std', 1.0) <= 1.6                # v1 drifted to 2.35; anchored stays ~1
+    std_ok = last.get('std', 1.0) <= 1.6                   # anchored stays ~1 (drift guard)
     checks = {
         'learning (bal_acc rose >= +0.03 off start)': ba_best >= ba0 + 0.03,
-        'non-trivial (bal_acc <= 0.97, no shortcut tell)': ba_best <= 0.97,
-        'above chance (bal_acc >= 0.55)': ba_best >= 0.55,
-        'both error modes off extremes (recall/realacc in 0.2..0.995)':
-            0.2 <= last['fake_recall'] <= 0.995 and 0.2 <= last['real_acc'] <= 0.995,
+        'fakeout signal in OHLCV (bal_acc >= 0.55)': ba_best >= 0.55,
+        'not a shortcut (bal_acc <= 0.97)': ba_best <= 0.97,
+        'both error modes off extremes (recall in 0.2..0.995)':
+            0.2 <= last['hold_recall'] <= 0.995 and 0.2 <= last['fail_recall'] <= 0.995,
         'no collapse (std > 0.01)': last.get('std', 1.0) > 0.01,
-        'v2 ANCHOR: enc_recon dropped (encoder rebuilding clean window)': anchored,
-        'v2 NO DRIFT: emb_std <= 1.6 (v1 failure drifted to 2.35)': std_ok_v2,
+        'ANCHOR: enc_recon dropped (encoder rebuilding clean window)': anchored,
+        'NO DRIFT: emb_std <= 1.6': std_ok,
     }
-    print(f'  RTD LEARNING CHECK: start bal_acc={ba0:.3f} -> best={ba_best:.3f} last={ba_last:.3f}'
-          f' | fake_recall={last["fake_recall"]:.3f} real_acc={last["real_acc"]:.3f}'
-          f' gen_mse={last.get("gen_mse", float("nan")):.4f}'
+    print(f'  BREAK-HOLD CHECK: start bal_acc={ba0:.3f} -> best={ba_best:.3f} last={ba_last:.3f}'
+          f' | hold_recall={last["hold_recall"]:.3f} fail_recall={last["fail_recall"]:.3f}'
+          f' | break_rate={last.get("break_rate", float("nan")):.3f}'
+          f' hold_rate={last.get("hold_rate", float("nan")):.3f}'
           f' | enc_recon {er0:.4f}->{er_last:.4f} emb_std={last.get("std", float("nan")):.3f}')
     for name, passed in checks.items():
         print(f'    {name:58s} {"✓" if passed else "✗"}')
     if all(checks.values()):
-        print('  => DISCRIMINATOR IS LEARNING in the healthy band.')
-    elif ba_best > 0.97:
-        print('  => TASK TOO EASY — likely a shortcut tell or too-weak generator: raise GEN_WIDTH'
-              ' and/or MASK_RATIO, re-run.')
+        print('  => DISCRIMINATOR IS LEARNING — real fakeout signal exists in OHLCV. Spend the benchmark.')
     elif ba_best < 0.55:
-        print('  => NOT LEARNING — generator too strong or encoder blind: lower GEN_WIDTH, raise'
-              ' RTD_WEIGHT, re-run.')
+        print('  => bal_acc ~0.5: the fakeout discriminator is likely NOT in price (order-flow) —'
+              ' a CLEAN, valuable negative. Inspect break_rate/hold_rate before concluding.')
+    elif ba_best > 0.97:
+        print('  => TASK TOO EASY — a shortcut tell (check break detection). Inspect the log.')
     else:
         print('  => MIXED — inspect the per-epoch log before spending the downstream benchmark.')
 else:
-    print('  (no rtd_bal_acc in history — inspect the per-epoch log above)')
+    print('  (no hold_bal_acc in history — inspect the per-epoch log above)')
 print('=' * 60)
 print(f'\nadapted encoder  -> {OUT_PATH}   (promoted bases UNTOUCHED)')
 print('\nNext: the SHIP gate is unchanged — one-shot 2026 WR@3R vs the current base'
-      ' + generality probes (forecast/regime):')
+      ' + generality probes:')
 print(f'  S3_CKPT={OUT_PATH}  python3 colabs/mantis_2026_benchmark.py   (promote iff it wins)')

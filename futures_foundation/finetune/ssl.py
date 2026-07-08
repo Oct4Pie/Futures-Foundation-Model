@@ -159,6 +159,9 @@ def _base_cfg(**kw):
              model_id='paris-noah/Mantis-8M', compile_model=False, device=None,
              seed=0, verbose=True, backbone_ckpt=None,
              pretext='mask',                                  # 'mask' (1) | 'forecast' (2) | 'forecast_dist' (2.5) | 'contrastive' (3)
+             # mask SpanBERT mode (shared by the mask pretext): span_mean>0 = corrupt CONTIGUOUS
+             # multi-bar spans (geometric mean span_mean, clipped span_max); 0 = single-bar masking.
+             span_mean=0.0, span_max=10,
              # stage-2 multi-horizon / variable-context candle forecasting:
              horizons=(5, 10, 20, 25), context_lengths=(64, 100, 150, 200),
              grad_clip=1.0, clamp=10.0,
@@ -181,15 +184,14 @@ def _base_cfg(**kw):
              temperature=0.1, crop_max=0.2, proj_dim=128,
              pos_deltas=(2, 16, 64), far_min=512, aug_noise=0.10, aug_scale=0.20,
              aug_tmask=0.15, vol_weight=1.0, w_clip=4.0, metrics_n=768,
-             # stage-4 ELECTRA replaced-candle detection (RTD): BCE weight vs recon + the weak
-             # generator's size (the fake-plausibility / task-difficulty knob). mask_ratio is
-             # shared with stage-1 (electra default 0.15 is set by its runner script).
-             # span_mean>0 = span-ELECTRA (SpanBERT move): corrupt CONTIGUOUS multi-bar spans
-             # (geometric mean span_mean, clipped span_max) — models development-over-bars.
-             # recon_weight (v2 fix) = lambda on the ENCODER-SIDE reconstruction anchor: v1 pure-RTD
-             # drifted the encoder off the data (no recon gradient -> -12pt); recon_weight>0 makes
-             # the encoder rebuild the clean window too. 0 = v1 pure-RTD; rtd_weight=0 = denoising-AE.
-             rtd_weight=5.0, recon_weight=1.0, gen_width=48, span_mean=0.0, span_max=10,
+             # stage-4 BREAK-HOLD discriminative (the rewritten electra slot, GENERIC foundation
+             # objective): at each window's causal anchor, does a structural break (close through the
+             # swing high/low of the prior break_lookback bars) HOLD or FAIL over hold_k reserved
+             # future bars? hold = extends >= hold_theta*ATR before retracing the broken level; else
+             # fail (trap / dead-bounce). hold_weight = BCE weight; recon_weight = the encoder-side
+             # reconstruction anchor (keeps emb_std ~1 while it learns to discriminate — 0 = pure
+             # discrimination / drift risk; hold_weight=0 = denoising-AE only). No generator.
+             hold_k=12, break_lookback=20, hold_theta=1.0, hold_weight=5.0, recon_weight=1.0,
              # crash-safe progressive best-save + resume + anti-forgetting layer-freeze (ALL pretexts,
              # real run only; controls never touch the ckpt). ckpt_path is set to out_path by loop_ssl.
              ckpt_path=None, resume=False, freeze_encoder_layers=0,
