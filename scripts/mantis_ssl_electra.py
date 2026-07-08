@@ -1,41 +1,40 @@
 # ==============================================================================
-# MANTIS SSL STAGE 4 — BREAK-HOLD DISCRIMINATIVE PRETEXT (the rewritten electra slot, Colab GPU)
+# MANTIS SSL STAGE 4 — TURN-ELECTRA: REPLACED-TURN DETECTION (Colab GPU)
 # ==============================================================================
 #
-# ██ THE IDEA — make FAKEOUT-DETECTION the objective, not a hope ██
-#   Every prior objective (reconstruct/forecast candles) was INDIRECT — we hoped the encoder would
-#   incidentally learn "real break vs fakeout." This makes it the TASK. At each window's causal
-#   ANCHOR (last bar), a structural break (close through the swing high/low of the prior
-#   BREAK_LOOKBACK bars) is labeled HOLD or FAIL over the next HOLD_K bars:
-#     HOLD = price extends >= HOLD_THETA*ATR in the break direction BEFORE retracing the broken level
-#     FAIL = it falls back through the level (trap) OR stalls (dead bounce) within HOLD_K bars.
-#   That hold-vs-fail label is the atomic unit of a fakeout — self-supervised from raw OHLCV, millions
-#   of examples, NO strategy outcome, NO leak (the HOLD_K future bars are RESERVED, never encoded).
-#   This is a GENERIC FOUNDATION objective: it sharpens the SHIPPED embedding so EVERY downstream head
-#   (pivot, kalman, any strategy) inherits an encoder that knows real breaks from fakeouts.
-#
-#   Discriminative like electra (encoder is the keeper, a binary head reads it out) but GENERATOR-FREE
-#   — the "fake" is a REAL failed break, not a synthesized candle (no GAN, no OHLC-clamp cheat). The
-#   one electra-v2 piece that worked MECHANICALLY is KEPT: the encoder-side RECON anchor.
-#     loss = RECON_WEIGHT * enc_recon(clean window) + HOLD_WEIGHT * BCE(hold | is_break)
+# ██ THE IDEA — teach the encoder REAL TURN vs FAKE TURN, as pure SSL ██
+#   The pivot strategy enters AT the swing; its live losers are FAKE turns (relief bounces in a
+#   grinding trend that look like reversals and die). Prior discriminative refines missed the event:
+#   replaced-candle ELECTRA corrupted UNIFORM bars; break-hold anchored on the BREAK bar (after the
+#   entry). TURN-ELECTRA keeps the objective 100% self-supervised and changes WHERE the corruption
+#   lands (the salient-span insight): span-mask the regions AROUND DETECTED TURNS (local swing
+#   highs/lows — the same structural event the pivot trades), let a deliberately-weak generator fill
+#   each masked turn with a PLAUSIBLE alternative development — functionally a SYNTHETIC FAKE TURN —
+#   and train the encoder to label every bar real-vs-replaced. To win, the encoder must learn how
+#   GENUINE turns develop vs plausible imposters: the fakeout-vs-real skill, zero labels, generic.
+#     loss = gen_recon(masked) + RTD_WEIGHT*bce(all bars) + RECON_WEIGHT*enc_recon(clean window)
+#   ABLATION: TURN_BIAS=0 -> uniform span-ELECTRA (does TURN placement earn the lift?).
 #
 # ── HOW WE VERIFY IT'S LEARNING (read the per-epoch log + final block) ──
-#   hold_bal_acc  BALANCED accuracy over break windows (hold_recall + fail_recall)/2 — the honest
-#                 signal (a lazy majority predictor scores 0.5). LEARNING = rises off ~0.5.
-#                 >~0.55 = there IS fakeout signal in OHLCV the indirect objectives missed.
-#                 ~0.50 flat = the discriminator is NOT in price -> it's order flow (a CLEAN verdict).
-#   hold_recall / fail_recall  the two error modes (both should be off the 0/1 extremes).
-#   break_rate    fraction of windows that are breaks (label density); hold_rate = of those, % held.
-#   enc_recon     the anchor — should DROP (encoder rebuilding the clean window).
-#   std           embedding-collapse guard (must stay > 0.01, and NOT drift to 2+).
-#   PROBE         report-only gate: mean_core_delta stays positive (didn't destroy the base lineage).
+#   rtd_bal_acc  BALANCED accuracy (fake-recall + real-acc)/2 — a lazy all-real predictor scores
+#                0.5. LEARNING = rises off ~0.5 into the ~0.60-0.95 band. >0.97 = shortcut tell or
+#                too-weak generator (raise GEN_WIDTH / MASK_RATIO); ~0.50 flat = not learning.
+#   turn_cov     fraction of masked bars within ±TURN_W of a detected turn — the corruption is only
+#                doing its job if this is HIGH (~0.8+ at TURN_BIAS=0.85). Low = placement broken.
+#   fake_recall / real_acc  the two error modes (both off the 0/1 extremes).
+#   gen_mse      generator plausibility — falls early then flattens.
+#   enc_recon    the anchor — should DROP (encoder rebuilding the clean window).
+#   std          embedding-collapse guard (> 0.01, and NOT drifting toward 2).
+#   PROBE        report-only gate: mean_core_delta stays positive (didn't destroy the base lineage).
 #
-# SHIP GATE UNCHANGED (never the pretext metrics): downstream one-shot 2026 WR@3R vs the current base
-#   + generality probes. This checkpoint is a CANDIDATE:
-#     S3_CKPT=<this .pt>  python3 colabs/mantis_2026_benchmark.py   (promote iff it wins)
+# SHIP GATE (per the user's rule — judge ONLY on the metric specific to what this tests): fakeout
+#   discrimination among COUNTER-TREND / turn pivots (the produce alignment table WR@3R-by-score),
+#   NOT the aggregate (that's the forecasting objective's home turf). Pipeline: this run -> pivot WF
+#   (2026 untouched) -> produce dry-run (HOLDOUT_START=2025-01-01) -> read the counter-trend table
+#   vs the base's. rtd_bal_acc / probe are tickets, never verdicts.
 #
-# SAFETY: writes a DISTINCT checkpoint (mantis_ssl_breakhold.pt). NEVER overwrites the promoted bases
-#   (ctr_seq2seq / seq2seq / ohlcv) — preflight hard-fails.
+# SAFETY: writes a DISTINCT checkpoint (mantis_ssl_turnelectra.pt). NEVER overwrites the promoted
+#   bases (ctr_seq2seq / seq2seq / ohlcv) — preflight hard-fails.
 # ==============================================================================
 
 
@@ -74,7 +73,7 @@ import os, torch
 # ── PATHS (Drive) — warm from the PROMOTED base (the validated ctr_seq2seq lineage) ──
 DATA_DIR  = os.environ.get('DATA_DIR', '/content/drive/MyDrive/Futures Data')
 WARM_CKPT = os.environ.get('WARM_CKPT', '/content/drive/MyDrive/AI_Models/mantis_ssl_ctr_seq2seq.pt')
-OUT_PATH  = os.environ.get('OUT_PATH', '/content/drive/MyDrive/AI_Models/mantis_ssl_breakhold.pt')
+OUT_PATH  = os.environ.get('OUT_PATH', '/content/drive/MyDrive/AI_Models/mantis_ssl_turnelectra.pt')
 
 # ── CORPUS (same universe as every stage — the ruler must not drift) ──
 TICKERS = ['ES', 'NQ', 'RTY', 'YM', 'GC', 'SI', 'CL', 'ZB', 'ZN']
@@ -82,14 +81,17 @@ TFS     = ['1min', '3min', '5min', '15min']
 HOLDOUT_START = '2026-01-01'          # EXCLUDED from SSL (downstream OOS stays clean)
 VAL_FRAC      = 0.1
 
-# ── BREAK-HOLD knobs ──
-SEQ           = 64                     # window parity with the base + downstream MV_SEQ
-HOLD_K        = int(os.environ.get('HOLD_K', '12'))          # future bars the label races over
-BREAK_LOOKBACK = int(os.environ.get('BREAK_LOOKBACK', '20')) # swing window the break must clear
-HOLD_THETA    = float(os.environ.get('HOLD_THETA', '1.0'))  # hold = extend >= theta*ATR before retrace
-HOLD_WEIGHT   = float(os.environ.get('HOLD_WEIGHT', '5.0'))  # BCE weight (0 = denoising-AE ablation)
-RECON_WEIGHT  = float(os.environ.get('RECON_WEIGHT', '1.0')) # encoder-recon anchor (0 = pure discrim)
-NEW_CHANNELS  = 3                     # overcomplete adapter — sweep-winner setting of the base
+# ── TURN-ELECTRA knobs ──
+SEQ         = 64                      # window parity with the base + downstream MV_SEQ
+MASK_RATIO  = float(os.environ.get('MASK_RATIO', '0.2'))    # fraction of bars replaced
+SPAN_MEAN   = float(os.environ.get('SPAN_MEAN', '4'))       # geometric mean span length (bars)
+SPAN_MAX    = int(os.environ.get('SPAN_MAX', '10'))
+TURN_W      = int(os.environ.get('TURN_W', '3'))            # swing neighborhood (±bars)
+TURN_BIAS   = float(os.environ.get('TURN_BIAS', '0.85'))    # P(span centered on a turn); 0 = uniform ablation
+RTD_WEIGHT  = float(os.environ.get('RTD_WEIGHT', '5.0'))    # bce weight (0 = denoising-AE ablation)
+RECON_WEIGHT = float(os.environ.get('RECON_WEIGHT', '1.0')) # encoder-recon anchor (0 = pure discrim)
+GEN_WIDTH   = int(os.environ.get('GEN_WIDTH', '48'))        # generator size — the strength knob
+NEW_CHANNELS = 3                      # overcomplete adapter — sweep-winner setting of the base
 FREEZE_ENCODER_LAYERS = int(os.environ.get('FREEZE_ENCODER_LAYERS', '2'))  # anti-forgetting (base=frz2)
 
 # ── TRAINING ──
@@ -98,10 +100,7 @@ EPOCHS  = int(os.environ.get('EPOCHS', '60'))               # cosine LR anneals 
 STEPS   = 200
 LR      = float(os.environ.get('LR', '1e-4'))               # gentle: a REFINE of a proven base
 WEIGHT_DECAY = 0.05
-# PATIENCE must scale with EPOCHS or a long run early-stops in the first ~15% (the refine converges
-# fast — it peaked ~ep9 on a 60-epoch schedule). For EPOCHS=120 use PATIENCE~20 so the gentler cosine
-# decay has room to keep improving. Default tracks EPOCHS (min 8) so long runs "just work".
-PATIENCE = int(os.environ.get('PATIENCE', str(max(8, EPOCHS // 6))))
+PATIENCE = int(os.environ.get('PATIENCE', str(max(8, EPOCHS // 6))))   # scales with EPOCHS
 CONTROLS = ()                          # honest-ruler controls run downstream (WF), not here
 PROBE = True                           # frozen-embedding probe = the representation gate
 SEED  = 0
@@ -127,9 +126,10 @@ found = [f'{tk}_{tf}' for tk in TICKERS for tf in TFS
 if not found:
     raise FileNotFoundError(f'No {{TICKER}}_{{TF}}.csv files under {DATA_DIR}.')
 print(f'✅ PRE-FLIGHT: {len(found)}/{len(TICKERS)*len(TFS)} CSVs | warm-start <- {WARM_CKPT}')
-print(f'   break-hold [{"v-anchored" if RECON_WEIGHT > 0 else "pure-discrim(drift risk)"}] '
-      f'| hold_k={HOLD_K} lookback={BREAK_LOOKBACK} theta={HOLD_THETA} '
-      f'hold_w={HOLD_WEIGHT} recon_w={RECON_WEIGHT} lr={LR:.1e} batch={BATCH} frz={FREEZE_ENCODER_LAYERS}')
+print(f'   turn-electra [{"anchored" if RECON_WEIGHT > 0 else "pure-discrim(drift risk)"}] '
+      f'| mask={MASK_RATIO} span={SPAN_MEAN}/{SPAN_MAX} turn_w={TURN_W} turn_bias={TURN_BIAS} '
+      f'rtd_w={RTD_WEIGHT} recon_w={RECON_WEIGHT} gen_width={GEN_WIDTH} '
+      f'lr={LR:.1e} batch={BATCH} frz={FREEZE_ENCODER_LAYERS} patience={PATIENCE}')
 print(f'   OUTPUT -> {OUT_PATH}   (promoted bases UNTOUCHED)')
 
 
@@ -137,58 +137,61 @@ print(f'   OUTPUT -> {OUT_PATH}   (promoted bases UNTOUCHED)')
 verdict = ssl.loop_ssl(
     data_dir=DATA_DIR, out_path=OUT_PATH, tickers=TICKERS, tfs=TFS,
     pretext='electra', backbone_ckpt=WARM_CKPT,
-    seq=SEQ, hold_k=HOLD_K, break_lookback=BREAK_LOOKBACK, hold_theta=HOLD_THETA,
-    hold_weight=HOLD_WEIGHT, recon_weight=RECON_WEIGHT, new_channels=NEW_CHANNELS,
+    seq=SEQ, mask_ratio=MASK_RATIO, span_mean=SPAN_MEAN, span_max=SPAN_MAX,
+    turn_w=TURN_W, turn_bias=TURN_BIAS, rtd_weight=RTD_WEIGHT, recon_weight=RECON_WEIGHT,
+    gen_width=GEN_WIDTH, new_channels=NEW_CHANNELS,
     batch=BATCH, epochs=EPOCHS, steps_per_epoch=STEPS, lr=LR, weight_decay=WEIGHT_DECAY,
     patience=PATIENCE, val_frac=VAL_FRAC, holdout_start=HOLDOUT_START,
     controls=CONTROLS, probe=PROBE, resume=RESUME,
     freeze_encoder_layers=FREEZE_ENCODER_LAYERS, device=device.type, seed=SEED)
 
-print('\n' + '=' * 60 + '\n  SSL STAGE 4 (BREAK-HOLD discriminative) VERDICT\n' + '=' * 60)
+print('\n' + '=' * 60 + '\n  SSL STAGE 4 (TURN-ELECTRA replaced-turn detection) VERDICT\n' + '=' * 60)
 for k, v in verdict.items():
     if k not in ('history', 'epochs'):
         print(f'  {k:>22}: {v}')
 
-# ── LEARNING-VERIFICATION BLOCK — is the discriminator actually learning (and is fakeout signal in OHLCV)? ──
-hist = [h for h in (verdict.get('epochs') or []) if isinstance(h, dict) and 'hold_bal_acc' in h]
+# ── LEARNING-VERIFICATION BLOCK — is it learning real-vs-fake TURNS (and not cheating)? ──
+hist = [h for h in (verdict.get('epochs') or []) if isinstance(h, dict) and 'rtd_bal_acc' in h]
 print('-' * 60)
 if hist:
-    first, best = hist[0], max(hist, key=lambda h: h['hold_bal_acc'])
+    first, best = hist[0], max(hist, key=lambda h: h['rtd_bal_acc'])
     last = hist[-1]
-    ba0, ba_best, ba_last = first['hold_bal_acc'], best['hold_bal_acc'], last['hold_bal_acc']
+    ba0, ba_best, ba_last = first['rtd_bal_acc'], best['rtd_bal_acc'], last['rtd_bal_acc']
     er0, er_last = first.get('enc_recon', float('nan')), last.get('enc_recon', float('nan'))
     anchored = RECON_WEIGHT == 0 or (er_last == er_last and er0 == er0 and er_last <= er0)  # NaN-safe
-    std_ok = last.get('std', 1.0) <= 1.6                   # anchored stays ~1 (drift guard)
+    tc = last.get('turn_cov', float('nan'))
     checks = {
         'learning (bal_acc rose >= +0.03 off start)': ba_best >= ba0 + 0.03,
-        'fakeout signal in OHLCV (bal_acc >= 0.55)': ba_best >= 0.55,
+        'above chance (bal_acc >= 0.55)': ba_best >= 0.55,
         'not a shortcut (bal_acc <= 0.97)': ba_best <= 0.97,
-        'both error modes off extremes (recall in 0.2..0.995)':
-            0.2 <= last['hold_recall'] <= 0.995 and 0.2 <= last['fail_recall'] <= 0.995,
+        'both error modes off extremes (recall/realacc in 0.2..0.995)':
+            0.2 <= last['fake_recall'] <= 0.995 and 0.2 <= last['real_acc'] <= 0.995,
+        'corruption IS turn-focused (turn_cov >= 0.6)': tc == tc and tc >= 0.6,
         'no collapse (std > 0.01)': last.get('std', 1.0) > 0.01,
         'ANCHOR: enc_recon dropped (encoder rebuilding clean window)': anchored,
-        'NO DRIFT: emb_std <= 1.6': std_ok,
+        'NO DRIFT: emb_std <= 1.6': last.get('std', 1.0) <= 1.6,
     }
-    print(f'  BREAK-HOLD CHECK: start bal_acc={ba0:.3f} -> best={ba_best:.3f} last={ba_last:.3f}'
-          f' | hold_recall={last["hold_recall"]:.3f} fail_recall={last["fail_recall"]:.3f}'
-          f' | break_rate={last.get("break_rate", float("nan")):.3f}'
-          f' hold_rate={last.get("hold_rate", float("nan")):.3f}'
+    print(f'  TURN-ELECTRA CHECK: start bal_acc={ba0:.3f} -> best={ba_best:.3f} last={ba_last:.3f}'
+          f' | fake_recall={last["fake_recall"]:.3f} real_acc={last["real_acc"]:.3f}'
+          f' | turn_cov={tc:.2f} gen_mse={last.get("gen_mse", float("nan")):.4f}'
           f' | enc_recon {er0:.4f}->{er_last:.4f} emb_std={last.get("std", float("nan")):.3f}')
     for name, passed in checks.items():
         print(f'    {name:58s} {"✓" if passed else "✗"}')
     if all(checks.values()):
-        print('  => DISCRIMINATOR IS LEARNING — real fakeout signal exists in OHLCV. Spend the benchmark.')
-    elif ba_best < 0.55:
-        print('  => bal_acc ~0.5: the fakeout discriminator is likely NOT in price (order-flow) —'
-              ' a CLEAN, valuable negative. Inspect break_rate/hold_rate before concluding.')
+        print('  => LEARNING real-vs-fake TURNS in the healthy band. Next: pivot WF -> produce'
+              ' dry-run -> the COUNTER-TREND table (the ONLY valid verdict for this pretext).')
     elif ba_best > 0.97:
-        print('  => TASK TOO EASY — a shortcut tell (check break detection). Inspect the log.')
+        print('  => TASK TOO EASY — shortcut tell or too-weak generator: raise GEN_WIDTH and/or'
+              ' MASK_RATIO, re-run.')
+    elif ba_best < 0.55:
+        print('  => NOT LEARNING — generator too strong or encoder blind: lower GEN_WIDTH, raise'
+              ' RTD_WEIGHT, re-run.')
     else:
-        print('  => MIXED — inspect the per-epoch log before spending the downstream benchmark.')
+        print('  => MIXED — inspect the per-epoch log before spending downstream runs.')
 else:
-    print('  (no hold_bal_acc in history — inspect the per-epoch log above)')
+    print('  (no rtd_bal_acc in history — inspect the per-epoch log above)')
 print('=' * 60)
 print(f'\nadapted encoder  -> {OUT_PATH}   (promoted bases UNTOUCHED)')
-print('\nNext: the SHIP gate is unchanged — one-shot 2026 WR@3R vs the current base'
-      ' + generality probes:')
-print(f'  S3_CKPT={OUT_PATH}  python3 colabs/mantis_2026_benchmark.py   (promote iff it wins)')
+print('\nNext (2026 stays reserved): pivot WF with BACKBONE_CKPT={} ,'.format(OUT_PATH))
+print('then MODE=produce HOLDOUT_START=2025-01-01 -> read the counter-trend alignment table'
+      ' vs the base (fakeout discrimination among counter-trend pivots = the verdict).')

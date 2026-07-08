@@ -11,22 +11,24 @@ its own file keeps ssl.py a clean orchestrator.
   contrastive   (stage 3)   — TEMPORAL-NEIGHBORHOOD contrastive: regime geometry from
                               multi-scale time proximity + augmentations, sigma-weighted
                               (replaced the outcome-keyed v1-v3, dropped 2026-07-02)
-  electra       (stage 4)   — BREAK-HOLD discriminative (the rewritten discriminative slot): at each
-                              window's causal anchor, does a structural break HOLD or FAIL over the
-                              reserved future bars? Makes FAKEOUT-detection the objective (not a
-                              hoped-for byproduct), self-supervised from raw OHLCV, generator-free;
-                              warm from the promoted base. A GENERIC foundation objective — every
-                              downstream head inherits an encoder that knows real breaks from traps.
+  electra       (stage 4)   — TURN-ELECTRA (replaced-TURN detection): span-mask the regions around
+                              DETECTED SWINGS (the event a pivot entry trades), a weak generator
+                              fills each masked turn with a plausible alternative development (a
+                              SYNTHETIC FAKE TURN), the encoder labels every bar real/replaced —
+                              so it must learn how GENUINE turns develop vs plausible imposters
+                              (fakeout-vs-real), pure SSL, zero labels, fully generic; warm from
+                              the promoted base. (Prior slot occupants in git history: replaced-
+                              candle RTD, break-hold.)
 """
 from .base import PretextTask
 from .mask import MaskTask
 from .forecast import ForecastTask
 from .forecast_dist import ForecastDistTask
 from .contrastive import ContrastiveTask
-from .electra import BreakHoldTask
+from .electra import TurnElectraTask
 
 PRETEXTS = {t.name: t for t in (MaskTask(), ForecastTask(), ForecastDistTask(),
-                                ContrastiveTask(), BreakHoldTask())}
+                                ContrastiveTask(), TurnElectraTask())}
 
 
 def get_pretext(name):
@@ -35,4 +37,4 @@ def get_pretext(name):
 
 
 __all__ = ['PretextTask', 'MaskTask', 'ForecastTask', 'ForecastDistTask', 'ContrastiveTask',
-           'BreakHoldTask', 'PRETEXTS', 'get_pretext']
+           'TurnElectraTask', 'PRETEXTS', 'get_pretext']

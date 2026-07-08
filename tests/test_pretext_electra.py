@@ -1,11 +1,11 @@
-"""BREAK-HOLD discriminative pretext (stage 4, the rewritten electra slot): registry, gate, cfg
-plumbing, and the pure break-detection + hold/fail labeling math (unit-testable, torch-free). The
-torch parity (vectorized labeler matches the numpy reference, encoder-recon anchor gradient) is
-gated behind CHRONOS_TORCH_TESTS=1 like the other SSL trainers (libomp isolation).
+"""TURN-ELECTRA pretext (stage 4, the discriminative slot): registry, gate, cfg plumbing, and the
+pure corruption math — turn detection (local_turns), the TURN-BIASED span sampler (spans land on
+swings), and the valid-OHLC clamp. Torch parts (network shapes, encoder-anchor gradient, clamp
+parity) are gated behind CHRONOS_TORCH_TESTS=1 like the other SSL trainers (libomp isolation).
 
-The MOTIVATING SCENARIO (see test_strong_downtrend_fake_pullback_is_fail): a strong downtrend with a
-relief pullback that pokes above a recent swing high then rolls over is the LIVE loser — the label
-MUST call that break a FAIL so the downstream head learns to ignore pivot longs there.
+THE POINT UNDER TEST: the corruption must land ON THE TURNS (the swing event a pivot entry trades)
+— that placement is the entire difference from the uniform span/candle ELECTRAs that came before.
+If the mask isn't turn-focused (turn_cov low), the pretext degenerates to the old uniform variant.
 """
 import os
 
@@ -13,30 +13,21 @@ import numpy as np
 import pytest
 
 from futures_foundation.finetune.pretext import PRETEXTS, get_pretext
-from futures_foundation.finetune.pretext.electra import (
-    BreakHoldTask, detect_break, label_hold)
+from futures_foundation.finetune.pretext.electra import TurnElectraTask, clamp_valid_ohlc
+from futures_foundation.finetune.pretext.spans import local_turns, sample_turn_span_mask
 
 torch_test = pytest.mark.skipif(
     os.environ.get('CHRONOS_TORCH_TESTS') != '1',
     reason='torch test — set CHRONOS_TORCH_TESTS=1 (libomp isolation)')
 
-_O, _H, _L, _C, _V = 0, 1, 2, 3, 4
-
-
-def _win(o, h, l, c, v=None):
-    """[C, seq] window from per-bar lists."""
-    v = v if v is not None else [1.0] * len(o)
-    return np.stack([o, h, l, c, v]).astype(float)
-
 
 # ---------------------------------------------------------------- registry + task
 def test_registered_in_pretexts():
-    assert 'electra' in PRETEXTS                            # the discriminative slot, now break-hold
+    assert 'electra' in PRETEXTS                           # the discriminative slot, now turn-electra
     t = get_pretext('electra')
-    assert isinstance(t, BreakHoldTask)
-    assert t.trainer == 'train_ssl_electra'                # resolved via _ssl_torch by the base task
-    assert t.reserve({'seq': 64}) == 64 + 12               # seq + hold_k future bars (label only)
-    assert t.reserve({'seq': 64, 'hold_k': 20}) == 84
+    assert isinstance(t, TurnElectraTask)
+    assert t.trainer == 'train_ssl_electra'               # resolved via _ssl_torch by the base task
+    assert t.reserve({'seq': 64}) == 0                    # in-window corruption: nothing reserved
 
 
 def test_trainer_importable_from_ssl_torch_shim():
@@ -54,180 +45,182 @@ def test_gate_passes_and_fails_like_mask():
     ok_c, _ = t.gate(probe, std=0.0, margin=0.0, dir_margin=0.0)      # collapsed embedding
     assert not ok_c
     ok_m, _ = t.gate({**probe, 'mean_core_delta': -0.01}, std=0.5, margin=0.0, dir_margin=0.0)
-    assert not ok_m                                        # probe below margin -> fail
+    assert not ok_m                                       # probe below margin -> fail
 
 
-def test_finalize_verdict_notes_downstream_judging():
+def test_finalize_verdict_notes_the_specific_metric():
     v = get_pretext('electra').finalize_verdict({}, None, None)
-    assert 'WR@3R' in v['pretext_note']                    # the ship gate stays downstream
+    # the ONLY valid verdict for this pretext is fakeout discrimination on the counter-trend/turn
+    # subset — the note must say so (aggregate is the forecasting objective's home turf).
+    assert 'counter-trend' in v['pretext_note']
+    assert 'aggregate' in v['pretext_note']
 
 
-# ---------------------------------------------------------------- break detection
-def test_detect_upside_break():
-    # prior 20 bars top out at high=10; the anchor closes at 11 -> upside break of the swing high
-    o = [9.0] * 20 + [10.0]
-    h = [10.0] * 20 + [11.2]
-    l = [8.0] * 20 + [9.5]
-    c = [9.5] * 20 + [11.0]
-    d, level = detect_break(_win(o, h, l, c), anchor=20, lookback=20)
-    assert d == 1 and level == 10.0
+# ---------------------------------------------------------------- turn detection
+def _tri(seq=64, peak=32):
+    """Triangle window: strictly rising into `peak`, strictly falling after — ONE swing high at
+    `peak` (plus trough turns at the edges by construction)."""
+    t = np.arange(seq, dtype=float)
+    h = -np.abs(t - peak)                                 # max (peak) exactly at `peak`
+    l = h - 1.0
+    return h, l
 
 
-def test_detect_downside_break():
-    o = [9.0] * 20 + [8.0]
-    h = [10.0] * 20 + [8.5]
-    l = [8.0] * 20 + [6.8]
-    c = [9.5] * 20 + [7.0]
-    d, level = detect_break(_win(o, h, l, c), anchor=20, lookback=20)
-    assert d == -1 and level == 8.0                        # broke the swing low
+def test_local_turns_finds_the_swing_high():
+    h, l = _tri(peak=32)
+    turns = local_turns(h, l, w=3)
+    assert 32 in turns                                    # THE swing high is detected
+    assert 0 in turns and 63 in turns                     # edge troughs (lowest lows) detected
+    assert 20 not in turns and 45 not in turns            # mid-leg bars are NOT turns
 
 
-def test_detect_no_break_inside_range():
-    o = [9.0] * 20 + [9.4]
-    h = [10.0] * 20 + [9.8]
-    l = [8.0] * 20 + [9.1]
-    c = [9.5] * 20 + [9.5]                                 # closes inside [8,10] -> no break
-    d, level = detect_break(_win(o, h, l, c), anchor=20, lookback=20)
-    assert d == 0 and np.isnan(level)
+def test_local_turns_on_monotonic_ramp_only_edges():
+    h = np.arange(64, dtype=float)
+    l = h - 1.0
+    turns = local_turns(h, l, w=3)
+    assert set(turns) == {0, 63}                          # a pure trend has no interior turn
 
 
-# ---------------------------------------------------------------- hold / fail labeling
-def test_hold_when_break_extends():
-    # up-break of level=10, anchor close 11, atr=1: target = 11 + 1*1 = 12. Future extends to 12.5
-    # without ever dipping below 10 -> HOLD.
-    fut = _win(o=[11.5, 12.2], h=[11.8, 12.6], l=[11.1, 12.0], c=[11.6, 12.5])
-    assert label_hold(fut, anchor_close=11.0, direction=1, level=10.0, atr=1.0, theta=1.0) == 1
+def test_local_turns_v_shape_finds_the_bottom():
+    # V-shape = the pivot-entry event itself (a swing LOW): must be detected via the LOW channel
+    t = np.arange(64, dtype=float)
+    l = np.abs(t - 40)                                    # min (bottom) exactly at 40
+    h = l + 1.0
+    assert 40 in local_turns(h, l, w=3)
 
 
-def test_fail_when_break_retraces_through_level():
-    # up-break of level=10; price falls back BELOW 10 before reaching target -> FAIL (bull trap)
-    fut = _win(o=[10.5, 9.5], h=[10.8, 9.8], l=[10.1, 9.2], c=[10.4, 9.4])
-    assert label_hold(fut, anchor_close=11.0, direction=1, level=10.0, atr=1.0, theta=1.0) == 0
+# ---------------------------------------------------------------- turn-biased span sampler
+def test_turn_span_mask_shape_coverage_min_one():
+    rng = np.random.default_rng(0)
+    h, l = _tri()
+    H, L = np.tile(h, (32, 1)), np.tile(l, (32, 1))
+    m, cov = sample_turn_span_mask(rng, H, L, ratio=0.2, mean_span=4, max_span=10)
+    assert m.shape == (32, 64) and m.dtype == bool
+    assert m.any(axis=1).all()                            # >=1 masked bar per row, always
+    assert 0.10 < m.mean() < 0.40                         # ~ratio (spans overshoot a little)
+    assert 0.0 <= cov <= 1.0
 
 
-def test_fail_when_break_stalls():
-    # up-break but price just chops between the level and the target for all k bars -> stall = FAIL
-    fut = _win(o=[11.1, 11.2, 11.0], h=[11.4, 11.5, 11.3], l=[10.6, 10.7, 10.5],
-               c=[11.2, 11.1, 11.0])
-    assert label_hold(fut, anchor_close=11.0, direction=1, level=10.0, atr=1.0, theta=1.0) == 0
+def test_turn_span_mask_lands_on_turns_when_biased():
+    # THE core property: with turn_bias=1 the masked bars concentrate AROUND the detected turns.
+    rng = np.random.default_rng(1)
+    h, l = _tri(peak=32)
+    H, L = np.tile(h, (64, 1)), np.tile(l, (64, 1))
+    m, cov = sample_turn_span_mask(rng, H, L, ratio=0.15, mean_span=4, max_span=8,
+                                   turn_w=3, turn_bias=1.0)
+    assert cov >= 0.6                                     # corruption is turn-focused
+    # every span was CENTERED on a turn (0, 32, or 63) -> masked bars live within max_span of one
+    turns = np.array([0, 32, 63])
+    for b in range(m.shape[0]):
+        for t in np.flatnonzero(m[b]):
+            assert np.abs(turns - t).min() <= 8, f'masked bar {t} is far from every turn'
 
 
-def test_same_bar_tie_is_fail():
-    # a bar that both pokes the target AND wicks back through the level = not a hold (invalidation wins)
-    fut = _win(o=[11.5], h=[12.5], l=[9.5], c=[10.0])       # hi>=12 target AND lo<10 level, same bar
-    assert label_hold(fut, anchor_close=11.0, direction=1, level=10.0, atr=1.0, theta=1.0) == 0
+def test_turn_bias_zero_is_uniform_ablation():
+    # turn_bias=0 = the uniform span-ELECTRA ablation: coverage of the (small) turn region should
+    # be well BELOW the biased run's — the knob genuinely changes placement.
+    h, l = _tri(peak=32)
+    H, L = np.tile(h, (64, 1)), np.tile(l, (64, 1))
+    _, cov_biased = sample_turn_span_mask(np.random.default_rng(2), H, L, 0.15, 4, 8,
+                                          turn_w=3, turn_bias=1.0)
+    _, cov_uniform = sample_turn_span_mask(np.random.default_rng(2), H, L, 0.15, 4, 8,
+                                           turn_w=3, turn_bias=0.0)
+    assert cov_biased > cov_uniform + 0.2
 
 
-def test_no_break_is_zero():
-    fut = _win(o=[9.5], h=[9.8], l=[9.2], c=[9.5])
-    assert label_hold(fut, anchor_close=9.5, direction=0, level=float('nan'), atr=1.0, theta=1.0) == 0
+def test_turn_span_mask_deterministic_with_seed():
+    h, l = _tri()
+    H, L = np.tile(h, (16, 1)), np.tile(l, (16, 1))
+    a, ca = sample_turn_span_mask(np.random.default_rng(7), H, L, 0.2, 4, 10)
+    b, cb = sample_turn_span_mask(np.random.default_rng(7), H, L, 0.2, 4, 10)
+    assert np.array_equal(a, b) and ca == cb
 
 
-def test_strong_downtrend_fake_pullback_is_fail():
-    """THE MOTIVATING CASE (user, 2026-07-08): a strong downtrend, a relief pullback pokes ABOVE the
-    recent swing high (a long-side break — exactly where a counter-trend pivot long would fire), then
-    the downtrend resumes. The label MUST be FAIL so the downstream head learns to IGNORE those longs.
-
-    Construct 20 falling bars, then an anchor bar whose close breaks just above the local swing high,
-    then future bars that roll back below the broken level (the trend reasserts)."""
-    # falling swing: highs drift down from 30 to 12; the last few bars' swing high ~ 12.5
-    highs = list(np.linspace(30, 12.5, 20))
-    lows = [h - 2 for h in highs]
-    closes = [h - 1 for h in highs]
-    opens = [h - 0.5 for h in highs]
-    swing_hi = max(highs[-20:])
-    # anchor: a fake-pullback bar that closes just ABOVE the swing high (the bull-trap poke)
-    opens.append(12.0); highs.append(swing_hi + 1.0); lows.append(11.8); closes.append(swing_hi + 0.5)
-    w = _win(opens, highs, lows, closes)
-    d, level = detect_break(w, anchor=20, lookback=20)
-    assert d == 1                                          # it IS an upside break (the trap trigger)
-    # future: downtrend resumes — price falls back through the broken swing high almost immediately
-    fut = _win(o=[swing_hi - 0.2, swing_hi - 2],
-               h=[swing_hi + 0.1, swing_hi - 1],
-               l=[swing_hi - 1.5, swing_hi - 3],
-               c=[swing_hi - 1.0, swing_hi - 2.5])
-    atr = float((w[_H] - w[_L]).mean())
-    assert label_hold(fut, anchor_close=closes[-1], direction=d, level=level, atr=atr, theta=1.0) == 0
+def test_turn_span_mask_flat_window_still_valid():
+    # flat H/L = every bar ties as a "turn" — degenerate but must stay valid (mask non-empty, no crash)
+    H = np.ones((8, 64)); L = np.zeros((8, 64))
+    m, cov = sample_turn_span_mask(np.random.default_rng(3), H, L, 0.2, 4, 10)
+    assert m.any(axis=1).all()
+    assert cov == 1.0                                     # everything is "near a turn" in a flat window
 
 
-def test_real_breakout_holds():
-    """Contrast: a genuine breakout that keeps going must be HOLD — the label isn't just 'always fail
-    counter-trend', it separates the two. Rising bars, anchor breaks the swing high, price extends."""
-    highs = list(np.linspace(10, 20, 20))
-    lows = [h - 2 for h in highs]
-    closes = [h - 0.5 for h in highs]
-    opens = [h - 1 for h in highs]
-    swing_hi = max(highs[-20:])
-    opens.append(swing_hi - 0.5); highs.append(swing_hi + 1.5)
-    lows.append(swing_hi - 1.0); closes.append(swing_hi + 1.0)
-    w = _win(opens, highs, lows, closes)
-    d, level = detect_break(w, anchor=20, lookback=20)
-    assert d == 1
-    atr = float((w[_H] - w[_L]).mean())
-    target = closes[-1] + atr                              # theta=1
-    fut = _win(o=[target + 0.2, target + 1], h=[target + 0.5, target + 2],
-               l=[closes[-1] + 0.1, target], c=[target + 0.3, target + 1.5])
-    assert label_hold(fut, anchor_close=closes[-1], direction=d, level=level, atr=atr, theta=1.0) == 1
+# ---------------------------------------------------------------- valid-OHLC clamp
+def _candles(o, h, l, c, v=None):
+    """[1, C, seq] window from per-bar lists."""
+    v = v if v is not None else [1.0] * len(o)
+    return np.stack([o, h, l, c, v]).astype(float)[None]
+
+
+def test_clamp_fixes_invalid_high_low():
+    w = _candles(o=[10.0], h=[9.0], l=[11.0], c=[12.0])   # impossible: H under body, L above
+    out = clamp_valid_ohlc(w)
+    o, h, l, c = out[0, 0, 0], out[0, 1, 0], out[0, 2, 0], out[0, 3, 0]
+    assert h >= max(o, c) and l <= min(o, c)
+    assert h >= l
+
+
+def test_clamp_valid_candles_unchanged_and_idempotent():
+    w = _candles(o=[10.0, 11.0], h=[12.0, 11.5], l=[9.5, 10.2], c=[11.5, 10.4])
+    out = clamp_valid_ohlc(w)
+    assert np.allclose(out, w)                            # already valid -> untouched
+    assert np.allclose(clamp_valid_ohlc(out), out)        # idempotent
+
+
+def test_clamp_leaves_volume_alone_and_no_mutation():
+    w = _candles(o=[10.0], h=[9.0], l=[11.0], c=[12.0], v=[123.0])
+    keep = w.copy()
+    out = clamp_valid_ohlc(w)
+    assert out[0, 4, 0] == 123.0
+    assert np.array_equal(w, keep)                        # input untouched
 
 
 # ---------------------------------------------------------------- cfg plumbing
-def test_base_cfg_keeps_break_hold_knobs():
-    # _base_cfg drops UNKNOWN keys silently — the break-hold knobs must be registered defaults or the
-    # runner's knobs would never reach the trainer (the silent-drop trap).
+def test_base_cfg_keeps_turn_electra_knobs():
+    # _base_cfg drops UNKNOWN keys silently — every runner knob must be a registered default or it
+    # never reaches the trainer (the silent-drop trap).
     from futures_foundation.finetune.ssl import _base_cfg
-    cfg = _base_cfg(pretext='electra', hold_k=20, break_lookback=30, hold_theta=1.5, hold_weight=3.0)
-    assert cfg['hold_k'] == 20 and cfg['break_lookback'] == 30
-    assert cfg['hold_theta'] == 1.5 and cfg['hold_weight'] == 3.0
+    cfg = _base_cfg(pretext='electra', turn_w=5, turn_bias=0.5, rtd_weight=7.5, gen_width=32,
+                    recon_weight=2.0, span_mean=4.0, span_max=8, mask_ratio=0.2)
+    assert cfg['turn_w'] == 5 and cfg['turn_bias'] == 0.5
+    assert cfg['rtd_weight'] == 7.5 and cfg['gen_width'] == 32 and cfg['recon_weight'] == 2.0
+    assert cfg['span_mean'] == 4.0 and cfg['span_max'] == 8 and cfg['mask_ratio'] == 0.2
 
 
-def test_base_cfg_keeps_recon_weight():
-    # the encoder-side anchor knob MUST thread through the silent-drop filter (default 1.0), else the
-    # runner's RECON_WEIGHT never reaches the trainer and pure discrimination drifts the encoder.
+def test_base_cfg_defaults_are_turn_biased():
     from futures_foundation.finetune.ssl import _base_cfg
-    assert _base_cfg(pretext='electra')['recon_weight'] == 1.0        # default = anchored
-    assert _base_cfg(pretext='electra', recon_weight=0.0)['recon_weight'] == 0.0   # pure-discrim ablation
+    cfg = _base_cfg(pretext='electra')
+    assert cfg['turn_bias'] > 0.5                         # turn placement ON by default
+    assert cfg['recon_weight'] == 1.0                     # anchored by default (drift guard)
 
 
 # ---------------------------------------------------------------- torch parity (gated)
 @torch_test
-def test_vectorized_labeler_matches_numpy_reference():
-    # the trainer's vectorized break_hold_labels must equal the per-window numpy detect_break+label_hold
+def test_network_heads_shapes_and_encoder_anchor_gradient():
     import torch
-    from futures_foundation.finetune.pretext._torch.electra import break_hold_labels
-    rng = np.random.default_rng(3)
-    seq, k, B, lookback, theta = 64, 12, 32, 20, 1.0
-    base = np.cumsum(rng.normal(0, 1, size=(B, seq + k)), axis=1) + 100
-    O = base + rng.normal(0, 0.1, (B, seq + k))
-    Cl = base + rng.normal(0, 0.1, (B, seq + k))
-    H = np.maximum(O, Cl) + np.abs(rng.normal(0, 0.5, (B, seq + k)))
-    L = np.minimum(O, Cl) - np.abs(rng.normal(0, 0.5, (B, seq + k)))
-    V = np.abs(rng.normal(1000, 100, (B, seq + k)))
-    full = np.stack([O, H, L, Cl, V], axis=1).astype(np.float32)      # [B, C, seq+k]
-    w, fut = full[:, :, :seq], full[:, :, seq:]
-    lab_t, brk_t = break_hold_labels(torch.tensor(w), torch.tensor(fut), lookback, theta)
-    for b in range(B):
-        d, level = detect_break(w[b], anchor=seq - 1, lookback=lookback)
-        atr = float((w[b, _H] - w[b, _L]).mean())
-        ref = label_hold(fut[b], float(w[b, _C, seq - 1]), d, level, atr, theta) if d != 0 else 0
-        assert bool(brk_t[b]) == (d != 0), f'break mismatch at {b}'
-        if d != 0:
-            assert int(lab_t[b]) == ref, f'hold mismatch at {b}: {int(lab_t[b])} vs {ref}'
+    from futures_foundation.finetune.pretext._torch.electra import ElectraNetwork
+    net = ElectraNetwork(C=5, new_channels=3, seq=64, gen_width=16)
+    x = torch.randn(4, 5, 64)
+    rtd, rec = net.heads(x)
+    assert rtd.shape == (4, 64)                           # per-bar real/replaced logits
+    assert rec.shape == (4, 5, 64)                        # reconstructed [C, seq] window
+    assert torch.isfinite(rtd).all() and torch.isfinite(rec).all()
+    net.zero_grad()
+    torch.nn.functional.mse_loss(rec, x).backward()       # enc_recon anchor only (no RTD)
+    enc_grad = sum(float(p.grad.abs().sum()) for p in net.encoder.parameters() if p.grad is not None)
+    adapt_grad = sum(float(p.grad.abs().sum()) for p in net.adapter.parameters() if p.grad is not None)
+    assert enc_grad > 0 and adapt_grad > 0                # encoder IS anchored by the recon head
 
 
 @torch_test
-def test_encoder_recon_head_shapes_and_gradient():
-    # the break-hold head + encoder-recon anchor: shapes, and the anchor DOES gradient the encoder
-    # (the piece that keeps emb_std ~1 while it learns to discriminate).
+def test_torch_clamp_matches_numpy_reference():
     import torch
-    from futures_foundation.finetune.pretext._torch.electra import BreakHoldNetwork
-    net = BreakHoldNetwork(C=5, new_channels=3, seq=64)
-    x = torch.randn(4, 5, 64)
-    hold, rec = net.heads(x)
-    assert hold.shape == (4,)                              # per-window hold/fail logit
-    assert rec.shape == (4, 5, 64)                         # reconstructed [C, seq] window
-    assert torch.isfinite(hold).all() and torch.isfinite(rec).all()
-    net.zero_grad()
-    torch.nn.functional.mse_loss(rec, x).backward()        # enc_recon anchor only
-    enc_grad = sum(float(p.grad.abs().sum()) for p in net.encoder.parameters() if p.grad is not None)
-    adapt_grad = sum(float(p.grad.abs().sum()) for p in net.adapter.parameters() if p.grad is not None)
-    assert enc_grad > 0 and adapt_grad > 0                 # encoder IS anchored by the recon head
+    from futures_foundation.finetune.pretext._torch.electra import clamp_valid_ohlc_t
+    rng = np.random.default_rng(3)
+    raw = rng.normal(100.0, 5.0, size=(4, 5, 16))         # random (mostly invalid) raw candles
+    mu = raw.mean(axis=2, keepdims=True)
+    sd = raw.std(axis=2, keepdims=True) + 1e-6
+    std = (raw - mu) / sd
+    out_t = clamp_valid_ohlc_t(torch.tensor(std), torch.tensor(mu), torch.tensor(sd))
+    back = out_t.numpy() * sd + mu                        # un-standardize the torch result
+    ref = clamp_valid_ohlc(raw)                           # numpy reference on raw
+    assert np.allclose(back, ref, atol=1e-8)

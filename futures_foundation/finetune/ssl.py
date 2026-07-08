@@ -184,14 +184,14 @@ def _base_cfg(**kw):
              temperature=0.1, crop_max=0.2, proj_dim=128,
              pos_deltas=(2, 16, 64), far_min=512, aug_noise=0.10, aug_scale=0.20,
              aug_tmask=0.15, vol_weight=1.0, w_clip=4.0, metrics_n=768,
-             # stage-4 BREAK-HOLD discriminative (the rewritten electra slot, GENERIC foundation
-             # objective): at each window's causal anchor, does a structural break (close through the
-             # swing high/low of the prior break_lookback bars) HOLD or FAIL over hold_k reserved
-             # future bars? hold = extends >= hold_theta*ATR before retracing the broken level; else
-             # fail (trap / dead-bounce). hold_weight = BCE weight; recon_weight = the encoder-side
-             # reconstruction anchor (keeps emb_std ~1 while it learns to discriminate — 0 = pure
-             # discrimination / drift risk; hold_weight=0 = denoising-AE only). No generator.
-             hold_k=12, break_lookback=20, hold_theta=1.0, hold_weight=5.0, recon_weight=1.0,
+             # stage-4 TURN-ELECTRA (replaced-TURN detection — the discriminative slot): spans are
+             # CENTERED ON DETECTED TURNS (local swing highs/lows, neighborhood ±turn_w) with prob
+             # turn_bias (0 = uniform span-ELECTRA, the placement ablation); a weak generator
+             # (gen_width) fills each masked turn = a SYNTHETIC FAKE TURN; the encoder labels every
+             # bar real/replaced (rtd_weight) while the encoder-side recon anchor (recon_weight)
+             # keeps the embedding tied to the data (0 = pure discrimination / drift risk).
+             # span_mean/span_max (shared above) set span lengths; electra coerces span_mean<=0 to 4.
+             rtd_weight=5.0, recon_weight=1.0, gen_width=48, turn_w=3, turn_bias=0.85,
              # crash-safe progressive best-save + resume + anti-forgetting layer-freeze (ALL pretexts,
              # real run only; controls never touch the ckpt). ckpt_path is set to out_path by loop_ssl.
              ckpt_path=None, resume=False, freeze_encoder_layers=0,
