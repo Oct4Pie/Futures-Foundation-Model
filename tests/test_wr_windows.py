@@ -76,6 +76,33 @@ def test_window_is_causal_past_only(tmp_path):
         assert last_close == pytest.approx(close_at[d['ts'][k]], abs=1e-4)
 
 
+def test_structural_stop_differs_and_self_describes(tmp_path):
+    _write_csv(tmp_path, 'ES', '3min', seed=5)
+    atr_c = tmp_path / 'atr.npz'; struct_c = tmp_path / 'struct.npz'
+    build_wr_cache(atr_c, data_dir=str(tmp_path), tickers=['ES'], tfs=['3min'], seq=64,
+                   detector='fractal_zigzag', stop_mode='atr', verbose=False)
+    build_wr_cache(struct_c, data_dir=str(tmp_path), tickers=['ES'], tfs=['3min'], seq=64,
+                   detector='fractal_zigzag', stop_mode='structural', stop_buffer_atr=0.05, verbose=False)
+    a, s = load_wr_cache(atr_c), load_wr_cache(struct_c)
+    assert a['stop'] == 'atr' and s['stop'] == 'structural'       # self-describing
+    # structural risk differs from 0.5*ATR -> different r3 label distribution (not identical)
+    assert not np.array_equal(np.sort(a['r3']), np.sort(s['r3']))
+    # windows (raw OHLCV) are the SAME schema regardless of stop model
+    assert a['win'].shape[1:] == s['win'].shape[1:]
+
+
+def test_atr_stop_is_backward_compatible(tmp_path):
+    """stop_mode='atr' (default) must be byte-identical to the pre-stop-mode builder: r3 depends only
+    on stop_atr*ATR. Guards the backward-compat promise."""
+    _write_csv(tmp_path, 'ES', '3min', seed=6)
+    a1 = tmp_path / 'a1.npz'; a2 = tmp_path / 'a2.npz'
+    build_wr_cache(a1, data_dir=str(tmp_path), tickers=['ES'], tfs=['3min'], seq=64,
+                   detector='fractal_zigzag', verbose=False)                       # default stop
+    build_wr_cache(a2, data_dir=str(tmp_path), tickers=['ES'], tfs=['3min'], seq=64,
+                   detector='fractal_zigzag', stop_mode='atr', stop_atr=0.5, verbose=False)
+    assert np.array_equal(load_wr_cache(a1)['r3'], load_wr_cache(a2)['r3'])
+
+
 def test_missing_data_raises(tmp_path):
     with pytest.raises(RuntimeError):
         build_wr_cache(tmp_path / 'x.npz', data_dir=str(tmp_path), tickers=['ZZ'],

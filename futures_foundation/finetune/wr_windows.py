@@ -23,11 +23,11 @@ import pandas as pd
 FIXED_TARGETS = (2.0, 3.0, 4.0, 6.0)     # triple-barrier R targets (r3 = index 1)
 
 
-def _triple_barrier(o, h, l, atr, i, d, n, *, stop_atr, cost_r, vert, targets):
+def _triple_barrier(o, h, l, i, d, n, *, risk, cost_r, vert, targets):
     """Forward triple-barrier from entry i+1: first-touch TP=+X / SL=-1R per target ->
-    (realized R per targets, peak R). Pure price/ATR — no labels, no leak."""
-    a = atr[i]
-    entry = o[i + 1]; risk = stop_atr * a
+    (realized R per targets, peak R). risk = the 1R price distance (caller sets the stop model:
+    ATR-multiple or structural). Pure price, no labels, no leak."""
+    entry = o[i + 1]
     peak, last, t_stop = 0.0, i, None
     t_hit = [None] * len(targets)
     for j in range(i + 1, min(i + 1 + vert, n)):
@@ -59,13 +59,18 @@ def _triple_barrier(o, h, l, atr, i, d, n, *, stop_atr, cost_r, vert, targets):
 def build_wr_cache(path, *, data_dir, tickers, tfs, seq=64, detector='zigzag',
                    atr_period=20, min_history=128, vert=150, stop_atr=0.5, cost_r=0.03,
                    targets=FIXED_TARGETS, data_months=72, htf_gate=True, trend_n=480,
-                   rev_atr=1.25, fractal_k=2, fractal_leg_atr=1.25, verbose=True):
+                   rev_atr=1.25, fractal_k=2, fractal_leg_atr=1.25,
+                   stop_mode='atr', stop_buffer_atr=0.05, stop_cap_atr=0.0, verbose=True):
     """Build the portable window cache from RAW {ticker}_{tf}.csv OHLCV under data_dir.
 
     seq       : window length (64 = Mantis-native; 256/512 = the long-context ruler for a backbone
                 trained on whole-trend windows — embed_windows interpolates to Mantis's 512).
     detector  : 'zigzag' (ATR-zigzag == trend_scan, the historical ruler) | 'fractal_zigzag'
                 (the DEPLOYED live trigger — use this to score a backbone on the pool it will trade).
+    stop_mode : 'atr' (1R = stop_atr*ATR, DEFAULT/backward-compat) | 'structural' (1R = distance from
+                entry to the pivot extreme + stop_buffer_atr*ATR — the deployed pivot-structure stop;
+                stop_cap_atr>0 caps the tail). Match this to the strategy's STOP_MODE so the benchmark
+                scores backbones under the SAME triple-barrier the strategy trades.
     Windows are raw OHLCV [N,5,seq] ending at each pivot's confirm bar; the encoder standardizes.
     Writes an ATOMIC v2 npz: win, peak, r3, ts, tk, tf, dir, trend (+ meta: seq/detector/tickers/tfs).
     """
@@ -107,7 +112,22 @@ def build_wr_cache(path, *, data_dir, tickers, tfs, seq=64, detector='zigzag',
                     continue
                 if htf_gate and int(htf[i]) != d:                # pivot must align with the HTF trend
                     continue
-                realized, peak = _triple_barrier(o, h, l, atr, i, d, n, stop_atr=stop_atr,
+                # 1R price distance — the stop model (PARITY with pivot_trend_mantis _fixed_outcomes)
+                if stop_mode == 'structural':
+                    oi = int(p['origin'])                        # the pivot extreme bar (< i)
+                    if oi < 0:
+                        continue
+                    entry = o[i + 1]
+                    ext = l[oi] if d == 1 else h[oi]             # pivot low (long) / high (short)
+                    buf = stop_buffer_atr * a
+                    risk = (entry - (ext - buf)) if d == 1 else ((ext + buf) - entry)
+                    if not (risk > 0):                           # entry already beyond the pivot -> skip
+                        continue
+                    if stop_cap_atr > 0:
+                        risk = min(risk, stop_cap_atr * a)
+                else:
+                    risk = stop_atr * a                          # backward-compat default
+                realized, peak = _triple_barrier(o, h, l, i, d, n, risk=risk,
                                                  cost_r=cost_r, vert=vert, targets=targets)
                 sl = slice(i - seq + 1, i + 1)                   # raw OHLCV window (no direction flip)
                 w.append(np.stack([o[sl], h[sl], l[sl], c[sl], v[sl]]).astype(np.float32))
@@ -134,11 +154,13 @@ def build_wr_cache(path, *, data_dir, tickers, tfs, seq=64, detector='zigzag',
     np.savez(tmp, win=np.concatenate(Ws), peak=np.concatenate(PK), r3=np.concatenate(R3),
              ts=np.concatenate(TS), tk=np.concatenate(TK), tf=np.concatenate(TFa),
              dir=np.concatenate(DR), trend=np.concatenate(TND),
-             meta_seq=np.int64(seq), meta_detector=np.array(detector))   # self-describing v2
+             meta_seq=np.int64(seq), meta_detector=np.array(detector),
+             meta_stop=np.array(stop_mode))              # self-describing v2 (seq/detector/stop)
     os.replace(tmp, path)                            # never leaves a half-written npz at the final path
     total = sum(len(x) for x in R3)
     if verbose:
-        print(f"[cache] wrote {path}  total pivots={total}  seq={seq} trig={detector}", flush=True)
+        print(f"[cache] wrote {path}  total pivots={total}  seq={seq} trig={detector} stop={stop_mode}",
+              flush=True)
     return path
 
 
@@ -153,5 +175,6 @@ def load_wr_cache(path):
         'trend': d['trend'].astype(np.float32) if 'trend' in d.files else None,
         'seq': int(d['meta_seq']) if 'meta_seq' in d.files else int(d['win'].shape[2]),
         'detector': str(d['meta_detector']) if 'meta_detector' in d.files else 'zigzag',
+        'stop': str(d['meta_stop']) if 'meta_stop' in d.files else 'atr',
     }
     return out
