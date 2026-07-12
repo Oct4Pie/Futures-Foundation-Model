@@ -4,7 +4,7 @@
 
 **A model-agnostic classification foundation for futures markets — any pretrained time-series classification backbone learns market structure from raw OHLCV, then thin per-strategy heads finetune on top, all held to an honest-ruler walk-forward.**
 
-**Contents:** [Quick Start](#quick-start) · [Philosophy](#philosophy--bert-for-futures) · [Overview](#overview) · [Self-Supervised Pretraining (2 stages)](#self-supervised-pretraining--2-progressive-stages) · [The Classifier Seam](#the-classifier-seam--model-agnostic) · [Finetuning Pipeline](#finetuning-pipeline--walk-forward--produce) · [The Training Loop](#the-training-loop--overfit-driven) · [Add a Strategy](#add-a-strategy) · [Data](#data) · [Project Structure](#project-structure)
+**Contents:** [Quick Start](#quick-start) · [Philosophy](#philosophy--bert-for-futures) · [Overview](#overview) · [Self-Supervised Pretraining (2 stages)](#self-supervised-pretraining--2-progressive-stages) · [The Classifier Seam](#the-classifier-seam--model-agnostic) · [Finetuning Pipeline](#finetuning-pipeline--walk-forward--produce) ([Training Loop](#the-training-loop--overfit-driven)) · [Add a Strategy](#add-a-strategy) · [Data](#data) · [Project Structure](#project-structure)
 
 ---
 
@@ -68,6 +68,7 @@ raw OHLCV (multi-ticker × multi-timeframe)
 - **Honest by construction.** Every result passes the honest ruler: walk-forward × {REAL, SHUFFLE, RANDOM} with an **overfit→Optuna** loop and a pre-registered PASS/FAIL auto-verdict. A number is believed only if REAL clearly beats every control, fold after fold.
 - **2026 is a reserved out-of-sample year** — excluded from *both* pretraining and the rolling walk-forward, so the final OOS is never contaminated.
 - **Causal by contract.** Every feature/window is strictly causal (streaming == batch, per bar); the leak audit is mandatory.
+- **Bar data only, for now.** The backbone consumes fixed-interval OHLCV bars (any timeframe) — not raw tick/quote streams. Tick data must be aggregated into bars first (see [Data](#data)); FFM has no tick-level input path today. Tick and order-book data are on the roadmap, not yet supported.
 
 ---
 
@@ -188,7 +189,14 @@ data/
 └── ...
 ```
 
-`databento/build_continuous.py` resamples raw 1-min bars to any timeframe; `databento/append_update.py` splices new exports into `data/` continuously. A configurable `data_dir` (e.g. a Google-Drive mount on Colab) lets pretraining and finetuning read the same CSVs anywhere.
+**Fixed-interval OHLCV bars — not tick/quote data.** Every CSV is one row per closed bar at a
+chosen timeframe; there is no tick-level or order-book input path in the pipeline today
+(tick and order-book support is on the roadmap, not yet implemented).
+If your source data is tick-by-tick, aggregate it into bars first — `databento/build_continuous.py`
+resamples raw 1-min bars to any coarser timeframe (it does not build bars from ticks); a
+tick→1-min aggregation step is on you before that. `databento/append_update.py` splices new
+exports into `data/` continuously. A configurable `data_dir` (e.g. a Google-Drive mount on
+Colab) lets pretraining and finetuning read the same CSVs anywhere.
 
 ### Features
 
