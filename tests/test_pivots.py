@@ -53,7 +53,33 @@ def test_causal_htf_dir_causal():
     B2 = {kk: (v.copy() if hasattr(v, 'copy') else v) for kk, v in B1.items()}
     B2['h'][k:] *= 1.05; B2['l'][k:] *= 1.05; B2['c'][k:] *= 1.05
     d2 = P.causal_htf_dir(B2, '1min', ts, atr_p=20)
-    assert np.array_equal(d1[:k - 60], d2[:k - 60])      # closed HTF bars only
+    assert np.array_equal(d1[:k], d2[:k])                 # every past bar is stable
+
+
+def test_causal_htf_dir_matches_prefix_terminal_values():
+    """Batch output at a bar must equal output computed live through that bar."""
+    n = 1200
+    i = np.arange(n, dtype=float)
+    c = 100 + 0.015 * i + 2.2 * np.sin(i / 13) + 0.7 * np.sin(i / 3.1)
+    o = c - 0.2 * np.cos(i / 4.7)
+    h = np.maximum(o, c) + 0.6 + 0.1 * np.sin(i / 5)
+    l = np.minimum(o, c) - 0.5 - 0.08 * np.cos(i / 7)
+    ts = pd.date_range('2026-01-01', periods=n, freq='3min', tz='UTC').values
+    bars = dict(ts=ts, o=o, h=h, l=l, c=c)
+
+    batch = P.causal_htf_dir(bars, '3min', ts, atr_p=20)
+    endpoints = np.arange(299, n, 10)
+    live = np.array([
+        P.causal_htf_dir(
+            {name: values[:endpoint + 1] for name, values in bars.items()},
+            '3min',
+            ts[:endpoint + 1],
+            atr_p=20,
+        )[-1]
+        for endpoint in endpoints
+    ])
+
+    np.testing.assert_array_equal(batch[endpoints], live)
 
 
 def test_pivot_names_match_width():
