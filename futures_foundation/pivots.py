@@ -86,34 +86,35 @@ def _resample(ts, o, h, l, c, freq):
 
 
 def _zigzag_dir(o, h, l, c, atr, rev_atr, aflr):
-    """Per-HTF-bar direction from an ATR-zigzag (the HTF trend). Returns int8[T]."""
+    """Forward-only ATR-zigzag direction known at each HTF bar close."""
     n = len(c)
     d = np.zeros(n, np.int8)
-    i0 = next((k for k in range(n) if np.isfinite(atr[k]) and atr[k] > 0), None)
+    floor = np.asarray(aflr, dtype=float)
+    if floor.ndim == 0:
+        floor = np.full(n, float(floor))
+    if len(floor) != n:
+        raise ValueError('aflr must be a scalar or match the ATR length')
+    i0 = next((k for k in range(n)
+               if np.isfinite(atr[k]) and atr[k] > 0
+               and np.isfinite(floor[k]) and floor[k] > 0), None)
     if i0 is None:
         return d
-    origin = ext_idx = i0
+    ext_idx = i0
     ext_px = c[i0]
     direction = 0
-    legs = []
     for j in range(i0 + 1, n):
         a = max(atr[ext_idx] if np.isfinite(atr[ext_idx]) and atr[ext_idx] > 0
-                else 0.0, aflr)
+                else 0.0, floor[j])
         rev = rev_atr * a
         if direction >= 0 and h[j] > ext_px:
             ext_px, ext_idx, direction = h[j], j, 1
         if direction <= 0 and l[j] < ext_px and direction != 1:
             ext_px, ext_idx, direction = l[j], j, -1
         if direction == 1 and (ext_px - l[j]) >= rev:
-            legs.append((origin, ext_idx, 1))
-            origin, ext_idx, ext_px, direction = ext_idx, j, l[j], -1
+            ext_idx, ext_px, direction = j, l[j], -1
         elif direction == -1 and (h[j] - ext_px) >= rev:
-            legs.append((origin, ext_idx, -1))
-            origin, ext_idx, ext_px, direction = ext_idx, j, h[j], 1
-    for (oi, ei, dr) in legs:
-        d[oi:ei + 1] = dr
-    if direction != 0:
-        d[ext_idx:] = direction
+            ext_idx, ext_px, direction = j, h[j], 1
+        d[j] = direction
     return d
 
 
@@ -126,10 +127,10 @@ def causal_htf_dir(B1, tf, base_ts, atr_p, rev_atr=2.0):
         return np.zeros(len(base_ts), np.int8)
     ts_h, o, h, l, c = _resample(B1['ts'], B1['o'], B1['h'], B1['l'], B1['c'], htf)
     atr_h = compute_atr(h, l, c, atr_p)
-    fin = np.isfinite(atr_h) & (atr_h > 0)
-    if fin.sum() < 50:
-        return np.zeros(len(base_ts), np.int8)
-    aflr = 0.5 * float(np.nanmedian(atr_h[fin]))
+    # A full-series median changes past thresholds when future ATR values are
+    # appended. The expanding median is available only after 50 causal ATR
+    # observations and is prefix-stable at every later HTF bar.
+    aflr = 0.5 * pd.Series(atr_h).expanding(min_periods=50).median().to_numpy()
     dh = _zigzag_dir(o, h, l, c, atr_h, rev_atr, aflr)
     idx = np.searchsorted(_to_ns(ts_h), _to_ns(base_ts), side='right') - 1
     out = np.zeros(len(base_ts), np.int8)
