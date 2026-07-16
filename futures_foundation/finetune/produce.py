@@ -291,15 +291,35 @@ def _fit_score(classifier, ck, eval_lab, Xtr, Ytr_tr, Xval, Ytr_va, Xte, Kte, Yt
     bands = wr_by_score(eval_lab, Kte, p_te, oos_ts) if oos_ts is not None else []
     ops = operating_points(eval_lab, Kte, p_te, oos_ts) if oos_ts is not None else []
     align = alignment_breakdown(eval_lab, Kte, p_te, oos_ts)  # sighted-counter-trend readout
+    # PER-TICKER operating points (the deploy question is per-instrument: "NQ at N/day") —
+    # rank WITHIN each ticker's candidates, same forward-threshold semantics.
+    per_tk = {}
+    if oos_ts is not None and len(Kte):
+        _tks = np.array([str(k[0]).split('@')[0] for k in Kte])
+        _pa = np.asarray(p_te, float)
+        for _t in sorted(set(_tks)):
+            m = _tks == _t
+            if int(m.sum()) < 50:
+                continue
+            ks = [k for k, mm in zip(Kte, m) if mm]
+            ts_s = [t for t, mm in zip(oos_ts, m) if mm]
+            per_tk[_t] = operating_points(eval_lab, ks, _pa[m], ts_s, rates=(1, 2, 3, 4))
     out = dict(oos_auc=auc, best_val_auc=ba, oos_meanR=_meanR(R),
                shuffle_meanR=(_meanR(Rs) if Rs is not None else None), edge_shuffle=edge,
                n_train=len(Ytr_tr), n_oos=len(Kte), oos_trades=int(len(R)),
                beats_shuffle=(bool(edge >= PASS_LIFT_MARGIN_R) if edge is not None else None),
                wr_by_score=bands, operating_points=ops, wr_by_alignment=align,
+               per_ticker_ops=per_tk,
                entry_thresholds=getattr(clf_real, '_entry_thresholds', None),   # val-derived T's
                platt=getattr(clf_real, '_platt', None))       # Platt (A,B) -> deploy contract
     if verbose:
         _print_operating_points(ops, bands)
+        if per_tk:
+            print("  OOS — PER-TICKER operating points (rank within the ticker; the "
+                  "'N/day per instrument' deploy read):", flush=True)
+            for _t, rows in per_tk.items():
+                cells = '  '.join(f"{r['rate']}/d {r['wr3R']:5.1%} {r['meanR']:+.2f}" for r in rows)
+                print(f"    {_t:>4}: {cells}", flush=True)
         _print_alignment(align)
         print(f"  OOS AUC {auc:.4f}" if auc is not None else "  OOS AUC n/a")
         if edge is not None:
