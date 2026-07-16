@@ -228,10 +228,20 @@ def _emit(out, classifier, ck, eval_lab, mu, sd, C, seq,
         contract.update({
             'proba_meaning': ('P(reach target before stop) — Platt-CALIBRATED to the empirical hit '
                               'rate' if out.get('platt') else 'P(good trend pivot reaches target)'),
-            # head.onnx emits RAW proba; the bot applies calibration AFTER -> sigmoid(A*logit(p)+B).
-            'calibration': ({'method': 'platt', 'formula': 'sigmoid(A*logit(p_raw)+B)',
-                             'A': out['platt'][0], 'B': out['platt'][1]} if out.get('platt') else None),
-            'output_fn': ('platt(head_raw_proba)' if out.get('platt') else 'softmax(logits)[:,1]'),
+            # 2026-07-16 (the standard-proba-range fix): calibration is BAKED INTO the head graph
+            # (same convention as the ladder head) — signal_head.onnx's 'probabilities' output IS
+            # the calibrated proba; the bot reads it as-is, NO post-step. A/B kept for reference.
+            'calibration': ({'method': 'platt', 'baked_into_onnx': True,
+                             'formula': 'sigmoid(A*logit(p_raw)+B)',
+                             'A': out['platt'][0], 'B': out['platt'][1],
+                             'note': 'baked into signal_head.onnx; read the output as-is'}
+                            if out.get('platt') else None),
+            'output_fn': ('signal_head.onnx -> probabilities (CALIBRATED)'
+                          if out.get('platt') else 'softmax(logits)[:,1]'),
+            # DEPLOY THRESHOLDS (the remap) — calibrated-proba cutoffs per quality tier, from the
+            # VAL distribution (leak-free). The bot enters when calibrated P >= T.
+            'entry_rule': 'enter if calibrated_proba >= entry_thresholds[tier]',
+            'entry_thresholds': out.get('entry_thresholds'),
         })
     cpath = str(base) + '_signal.json'
     Path(cpath).write_text(json.dumps(contract, indent=2))

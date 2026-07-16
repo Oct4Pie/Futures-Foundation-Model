@@ -173,6 +173,52 @@ def export_head_onnx(clf, n_features, path):
     return path
 
 
+def _bake_platt_into_head(head_path, platt):
+    """Append the Platt transform to the exported head graph IN PLACE so the 'probabilities'
+    output is CALIBRATED (p_cal = sigmoid(A*logit(p_raw)+B)) — the standard proba range, same
+    baked-into-onnx convention as the ladder head: the bot reads the output as-is, no
+    post-calibration step, no A/B bookkeeping at serve time. The raw tensor is re-routed to
+    'probabilities_raw' internally; the graph's output name/shape ('probabilities', [N, 2])
+    is unchanged, so every existing consumer keeps working."""
+    import onnx
+    from onnx import helper, TensorProto
+    A, B = float(platt[0]), float(platt[1])
+    m = onnx.load(head_path)
+    g = m.graph
+    raw = 'probabilities_raw'                          # re-route the producer of 'probabilities'
+    for node in g.node:
+        node.output[:] = [raw if o == 'probabilities' else o for o in node.output]
+        node.input[:] = [raw if i == 'probabilities' else i for i in node.input]
+
+    def scal(name, v):                                 # rank-0 float constant
+        return helper.make_tensor(name, TensorProto.FLOAT, [], [float(v)])
+
+    def i64(name, vals):                               # rank-1 int64 constant (Slice params)
+        return helper.make_tensor(name, TensorProto.INT64, [len(vals)], vals)
+
+    eps = 1e-7
+    g.initializer.extend([
+        i64('_pl_s', [1]), i64('_pl_e', [2]), i64('_pl_ax', [1]),
+        scal('_pl_eps', eps), scal('_pl_1meps', 1.0 - eps), scal('_pl_one', 1.0),
+        scal('_pl_A', A), scal('_pl_B', B),
+    ])
+    g.node.extend([
+        helper.make_node('Slice', [raw, '_pl_s', '_pl_e', '_pl_ax'], ['_pl_p1']),
+        helper.make_node('Clip', ['_pl_p1', '_pl_eps', '_pl_1meps'], ['_pl_p1c']),
+        helper.make_node('Sub', ['_pl_one', '_pl_p1c'], ['_pl_q1']),
+        helper.make_node('Div', ['_pl_p1c', '_pl_q1'], ['_pl_odds']),
+        helper.make_node('Log', ['_pl_odds'], ['_pl_lg']),
+        helper.make_node('Mul', ['_pl_lg', '_pl_A'], ['_pl_axl']),
+        helper.make_node('Add', ['_pl_axl', '_pl_B'], ['_pl_axb']),
+        helper.make_node('Sigmoid', ['_pl_axb'], ['_pl_pcal']),
+        helper.make_node('Sub', ['_pl_one', '_pl_pcal'], ['_pl_qcal']),
+        helper.make_node('Concat', ['_pl_qcal', '_pl_pcal'], ['probabilities'], axis=1),
+    ])
+    onnx.checker.check_model(m)
+    Path(head_path).write_bytes(m.SerializeToString())
+    return head_path
+
+
 def _export_encoder_onnx(cfg, enc_path):
     """Export the frozen Mantis encoder (raw OHLCV window -> embedding) to ONNX via the isolated
     subprocess worker (parent stays torch-free). Shared by the single-head and ladder bundles."""
@@ -193,26 +239,33 @@ def _bundle_base(cfg):
     return base[:-5] if base.endswith('.onnx') else base
 
 
-def _export_frozen_bundle(cfg, clf, n_features, Xval_std):
+def _export_frozen_bundle(cfg, clf, n_features, Xval_std, platt=None):
     """Deployable ONNX bundle in the incumbent format: <base>_encoder.onnx (raw OHLCV window ->
     Mantis embedding) + <base>_signal_head.onnx (standardized [emb|handcraft] -> P). The encoder
     runs in the isolated subprocess (parent stays torch-free); the head converts via skl2onnx
-    in-process. Head output is parity-checked vs the sklearn head. Bot serves: window ->
-    encoder.onnx -> concat handcraft -> standardize (contract mu/sd) -> head.onnx -> P."""
+    in-process. With `platt` (A, B), the calibration is BAKED INTO the head graph (2026-07-16 —
+    the standard-proba-range fix, matching the ladder head's convention): the exported
+    'probabilities' output IS the calibrated proba, no post-step at serve. Parity-checked vs
+    apply_platt(sklearn head). Bot serves: window -> encoder.onnx -> concat handcraft ->
+    standardize (contract mu/sd) -> head.onnx -> CALIBRATED P."""
     base = _bundle_base(cfg)
     head_path, enc_path = base + '_signal_head.onnx', base + '_encoder.onnx'
     export_head_onnx(clf, n_features, head_path)
+    if platt is not None:
+        _bake_platt_into_head(head_path, platt)
     _export_encoder_onnx(cfg, enc_path)
     diff = -1.0
-    try:                                              # parity: onnx head vs sklearn head
+    try:                                              # parity: onnx head vs (calibrated) sklearn head
         import onnxruntime as ort
         sess = ort.InferenceSession(head_path, providers=['CPUExecutionProvider'])
         outs = sess.run(None, {'input': np.asarray(Xval_std, np.float32)})
         proba = [o for o in outs if getattr(o, 'ndim', 0) == 2 and o.shape[1] == 2][0]
-        diff = float(np.abs(clf.predict_proba(Xval_std)[:, 1] - proba[:, 1]).max())
+        ref = apply_platt(clf.predict_proba(Xval_std)[:, 1], platt)
+        diff = float(np.abs(ref - proba[:, 1]).max())
     except Exception as e:                            # pragma: no cover
         print(f"[onnx] head parity check skipped: {e}", flush=True)
-    print(f"[onnx] wrote {enc_path} + {head_path}  head-parity max|diff|={diff:.2e}", flush=True)
+    print(f"[onnx] wrote {enc_path} + {head_path}  "
+          f"{'CALIBRATED ' if platt is not None else ''}head-parity max|diff|={diff:.2e}", flush=True)
     return enc_path, head_path
 
 
@@ -408,18 +461,27 @@ class MantisFrozenClassifier(Classifier):
             clf = LogisticRegression(max_iter=int(self.cfg.get('max_iter', 1000)),
                                      C=float(self.cfg.get('C', 1.0)))
         _fit_with_heartbeat(clf, Xtr, ytr)
-        if self.cfg.get('export_onnx_path'):          # deployable bundle: encoder + head ONNX
-            # parity-check on a slice — running onnxruntime + predict_proba over the FULL val
-            # set (~500k x 1311 at produce scale) stacks GBs at peak RAM for no extra signal
-            _export_frozen_bundle(self.cfg, clf, Xtr.shape[1], Xval[:2048])
         # CALIBRATION (Platt) — OFF by default (cfg 'calibrate'). Fit on the VAL set, which the clf
         # never trained on (leak-free), so the proba tracks the empirical hit rate: P=0.5 => a true
         # ~50% signal, and the proba is a trustworthy regime-confidence across tiers (proba-sizing).
         # MLP proba is typically over-confident; logistic ~self-calibrated. AUC unchanged (Platt is
         # monotonic). Eval is calibrated OUT-OF-SAMPLE (Platt fit on val, applied to eval).
+        # ORDER MATTERS (2026-07-16 fix): Platt is fit BEFORE the ONNX export so it can be BAKED
+        # INTO the head graph — previously the export ran first and necessarily shipped RAW probas,
+        # leaving calibration as a serve-time step the consumer had to remember.
         raw_val = clf.predict_proba(Xval)[:, 1]
         self._platt = fit_platt(raw_val, yval) if self.cfg.get('calibrate') else None
         p_val = apply_platt(raw_val, self._platt)
         p_eval = apply_platt(clf.predict_proba(Xeval)[:, 1], self._platt)
+        # DEPLOY THRESHOLDS (the remap) — same convention as the ladder head: CALIBRATED-proba
+        # cutoffs at quality tiers, from the VAL distribution (leak-free; val is held out of train
+        # and is not the holdout). The bot enters when calibrated P >= T — ready-to-use T's.
+        _tiers = {'top0.05pct': 0.9995, 'top0.1pct': 0.999, 'top0.5pct': 0.995,
+                  'top1pct': 0.99, 'top5pct': 0.95, 'top10pct': 0.90}
+        self._entry_thresholds = {k: float(np.quantile(p_val, q)) for k, q in _tiers.items()}
+        if self.cfg.get('export_onnx_path'):          # deployable bundle: encoder + head ONNX
+            # parity-check on a slice — running onnxruntime + predict_proba over the FULL val
+            # set (~500k x 1311 at produce scale) stacks GBs at peak RAM for no extra signal
+            _export_frozen_bundle(self.cfg, clf, Xtr.shape[1], Xval[:2048], platt=self._platt)
         auc = roc_auc_score(yval, raw_val) if len(np.unique(yval)) == 2 else 0.5   # ranking-invariant
         return p_val, p_eval, float(auc)
