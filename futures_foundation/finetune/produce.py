@@ -313,15 +313,20 @@ def _fit_score(classifier, ck, eval_lab, Xtr, Ytr_tr, Xval, Ytr_va, Xte, Kte, Yt
 
 def train_final_streamed(make_labeler, streams, classifier, clf_kwargs=None,
                          holdout_start='2026-01-01', val_frac=0.15, seed=0, chunk=2000,
-                         export_onnx=False, output_path=None, verbose=True):
+                         export_onnx=False, output_path=None, verbose=True, oos_end=None):
     """Run on ALL data across many (ticker, timeframe) streams with bounded memory:
     load each stream sequentially, featurize its train/val/oos pivots to part memmaps,
     RELEASE its bars, next stream; concat parts into full memmaps; train per-batch.
-    Peak RAM = one stream + one batch. This is the full 3/5/15 (or all-tickers) run."""
+    Peak RAM = one stream + one batch. This is the full 3/5/15 (or all-tickers) run.
+
+    oos_end: optional upper bound on the OOS window (default None = end of data). The
+    ANCHORED walk-forward primitive: train <holdout_start, score [holdout_start, oos_end)
+    — one anchored fold per (holdout_start, oos_end) pair, bars/caches shared across folds."""
     import gc
     from ._memmap import featurize_to_memmap, concat_memmaps, memmap_standardize_stats
     clf = get_classifier(classifier, **dict(clf_kwargs or {}))
     hs = pd.Timestamp(holdout_start, tz='UTC')
+    oe = pd.Timestamp(oos_end, tz='UTC') if oos_end else None
     rng = np.random.default_rng(seed)
     rundir = (Path(output_path).parent if output_path else Path('.'))
     rundir.mkdir(parents=True, exist_ok=True)
@@ -334,7 +339,8 @@ def train_final_streamed(make_labeler, streams, classifier, clf_kwargs=None,
         lab = make_labeler(tk, tf)                       # loads ONLY this stream's bars
         cal = lab.calendar(); lo, hi = cal['timestamp'].min(), cal['timestamp'].max()
         _, Ytr, Ktr = lab.build(lo, hs, hs)
-        _, Yte, Kte = lab.build(hs, hi + pd.Timedelta('1ns'), None)
+        _hi = min(hi + pd.Timedelta('1ns'), oe) if oe is not None else hi + pd.Timedelta('1ns')
+        _, Yte, Kte = lab.build(hs, _hi, None)
         Ytr = np.asarray(Ytr).astype(int); Yte = np.asarray(Yte).astype(int)
         if channel_names is None and hasattr(lab, 'mv_feature_names'):
             channel_names = lab.mv_feature_names()
