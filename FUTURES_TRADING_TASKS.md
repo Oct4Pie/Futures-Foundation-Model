@@ -8,7 +8,7 @@ verification item is also checked.
 
 - [x] Write the canonical execution plan and define its authority over stale execution/OOS wording.
 - [x] Preserve historical tournament documents and checkpoints as evidence.
-- [ ] Commit and publish the exact source patch and dependency environment.
+- [x] Commit and publish the exact source patch and dependency environment.
 - [x] Add the canonical-plan link to README and mark the older tournament TODO as historical.
 - [x] Inventory hashes for the sealed windows, current embeddings and all checkpoints used by the
   frozen downstream comparison. Verified manifest:
