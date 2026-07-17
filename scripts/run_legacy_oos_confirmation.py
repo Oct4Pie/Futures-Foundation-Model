@@ -606,18 +606,33 @@ def _run_confirmation(args, oos_sample, oos_events, oos_embeddings, output_dir: 
 
     comparisons = []
     times = oos_events["signal_time_ns"][candidate_events]
-    for baseline in ("raw_all", "causal_barrier"):
-        for arm in arms:
-            if arm == baseline:
-                continue
-            comparisons.append({
-                "arm": arm, "baseline": baseline,
-                **_paired_block_interval(
-                    utilities[arm] - utilities[baseline], times,
-                    repetitions=args.bootstrap_repetitions,
-                    seed=args.seed + len(comparisons),
-                ),
-            })
+    comparison_pairs = [
+        (arm, baseline)
+        for baseline in ("raw_all", "causal_barrier")
+        for arm in arms if arm != baseline
+    ] + [
+        ("mantis_v1:stage2", "mantis_v1:vanilla"),
+        ("mantis_v2:stage2", "mantis_v2:vanilla"),
+    ]
+    for arm, baseline in comparison_pairs:
+        comparisons.append({
+            "arm": arm, "baseline": baseline,
+            **_paired_block_interval(
+                utilities[arm] - utilities[baseline], times,
+                repetitions=args.bootstrap_repetitions,
+                seed=args.seed + len(comparisons),
+            ),
+        })
+
+    utility_path = output_dir / "oos_frozen_execution_utilities.npz"
+    _atomic_npz(
+        utility_path,
+        event_row=candidate_events.astype(np.int64),
+        signal_time_ns=np.asarray(times, np.int64),
+        arm_names=np.asarray(arms),
+        utility=np.column_stack([utilities[arm] for arm in arms]).astype(np.float32),
+        executed=np.column_stack([executed_flags[arm] for arm in arms]),
+    )
 
     report = {
         "schema_version": "ffm_legacy_oos_confirmation_v1", "status": "complete",
@@ -648,6 +663,9 @@ def _run_confirmation(args, oos_sample, oos_events, oos_embeddings, output_dir: 
         "summaries_zero_tick": summaries,
         "summaries_one_tick_frozen_reprice": one_tick,
         "paired_oos_comparisons": comparisons,
+        "frozen_execution_utilities": {
+            "path": str(utility_path.resolve()), "sha256": _sha256(utility_path),
+        },
     }
     report_path = output_dir / "legacy_oos_confirmation.json"
     _atomic_json(report_path, report)

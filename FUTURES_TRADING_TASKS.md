@@ -128,11 +128,12 @@ verification item is also checked.
 - [x] Reject both ATR-stop lanes, residual fusion and VICReg promotion for this task.
 - [x] Freeze raw pullback, causal barrier pullback, vanilla direct-head pullback and VICReg negative
   control as the only legacy-confirmation arms.
-- [ ] **IN PROGRESS — PROTOCOL AMENDED BEFORE OUTCOME READ:** run all nine symbols and all six
-  timeframes on the complete common-coverage interval `[2025-07-01, 2026-04-14)`. The endpoint is
-  imposed by the canonical CL/GC/SI source timestamps, not selected from performance. SSL, heads,
-  PCA, calibration and thresholds remain pre-OOS-only. See
-  [LEGACY_OOS_CONFIRMATION_PROTOCOL.md](LEGACY_OOS_CONFIRMATION_PROTOCOL.md).
+- [x] Run all nine symbols and all six timeframes on the predeclared common-timestamp interval
+  `[2025-07-01, 2026-04-14)`. SSL, heads, PCA, calibration and thresholds remained pre-OOS-only.
+  The causal selector produced `+0.1253R/trade`, PF `1.185` at zero tick and `+0.0646R/trade`, PF
+  `1.090` under frozen one-tick repricing. Neither vanilla Mantis family added resolved paired
+  utility over causal features, and both VICReg adaptations degraded their vanilla point estimate.
+  See [LEGACY_OOS_CONFIRMATION_RESULTS.md](LEGACY_OOS_CONFIRMATION_RESULTS.md).
 
 ## Gate 5 — bounded MantisV2 revised-stage research exception
 
@@ -192,11 +193,9 @@ verification item is also checked.
   exposed to OOS. See [REVISED_MANTIS_SSL_OBJECTIVES.md](REVISED_MANTIS_SSL_OBJECTIVES.md).
 - [x] Deny a second seed because the branch failed to beat its vanilla backbone and failed the
   one-tick sensitivity (`-0.0802R`, PF `0.895` on pullbacks).
-- [ ] Diagnose the failed path objective from training-only labels and saved development
-  predictions without changing the frozen checkpoint or reopening its ruler. Quantify target
-  balance, horizon dominance, anchor drift and per-timeframe/per-symbol failure concentration.
-- [ ] Predeclare a genuinely new objective hypothesis and fresh development contract before any
-  additional SSL training. Do not tune this failed recipe's weights or horizons on the same rows.
+- [ ] **NOT FUNDED:** further path-objective diagnosis or adaptation. The confirmation read found
+  no resolved vanilla-Mantis lift over the causal selector and the adapted Stage 2 controls were
+  worse. Reopen only for a genuinely new, predeclared representation hypothesis and fresh ruler.
 
 ## Gate 6 — full cross-family training, blocked until pilots pass
 
@@ -217,9 +216,11 @@ verification item is also checked.
 
 ## Gate 7 — confirmation and deployment
 
-- [ ] Freeze finalist checkpoints, bundles, labels, folds, thresholds and execution policy.
-- [ ] Read the legacy 2025-07 to 2026-07 interval once for qualified confirmatory evidence.
-- [ ] Report its known prior-inspection caveat prominently.
+- [x] Freeze finalist checkpoints, bundles, labels, folds, thresholds and execution policy.
+- [x] Read the predeclared legacy common-timestamp interval `[2025-07-01, 2026-04-14)` once for
+  qualified confirmatory evidence; the original full-year all-stream endpoint was unavailable in
+  the canonical source.
+- [x] Report its known prior-inspection and sparse-ZB-short-timeframe caveats prominently.
 - [ ] Run prospective confirmation on data arriving after the full plan/finalist freeze.
 - [ ] Require monitoring for drift, calibration, costs, capacity and contract-roll behavior before
   production use.
