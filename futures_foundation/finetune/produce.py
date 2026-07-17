@@ -284,8 +284,11 @@ def _ledger_append(record, output_path=None):
     DIAGNOSTIC context for SSL-objective design — never a ship gate (the corpus-label paradox:
     heads can train beautifully while tiers pay nothing; gates stay scorecard -> tiers -> ruler).
     Cross-run comparisons are only valid at matched protocol (apples-to-apples law)."""
-    p = os.environ.get('RUN_LEDGER') or (
-        str(Path(output_path).with_suffix('').parent / 'run_ledger.jsonl') if output_path else None)
+    # OPT-IN ONLY (2026-07-17, user directive): no ledger unless RUN_LEDGER names a path.
+    # The old output_path fallback wrote run_ledger.jsonl on every produce/anchored run —
+    # unwanted by default. Set RUN_LEDGER=/path/to/run_ledger.jsonl to re-enable the
+    # longitudinal encoder-evaluation dataset described above.
+    p = os.environ.get('RUN_LEDGER')
     if not p:
         return None
 
@@ -302,7 +305,8 @@ def _ledger_append(record, output_path=None):
         Path(p).parent.mkdir(parents=True, exist_ok=True)
         with open(p, 'a') as f:
             f.write(json.dumps(record, default=_san) + '\n')
-        print(f"[ledger] appended -> {p}", flush=True)
+        # silent on success (2026-07-17) — the record is IN the file; only a failed append
+        # is worth a stdout line (a silently lost ledger record is the real bug).
     except Exception as e:                                # pragma: no cover — never fail a run
         print(f"[ledger] append skipped: {e}", flush=True)
     return p
