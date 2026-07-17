@@ -181,6 +181,46 @@ def _print_alignment(ab, title='OOS'):
                   f"WR@3R={r['wr3R']:6.1%}  meanR={r['meanR']:+.3f}", flush=True)
 
 
+def per_stream_percentiles(proba, keys, pcts=(10, 25, 50, 75, 90, 95, 97, 99, 99.5)):
+    """VAL proba -> a PER-STREAM percentile table, so a consumer can score on a 0-100 scale that
+    means the same thing on every stream, in every regime.
+
+    WHY THIS EXISTS. A calibrated proba is anchored to its LABEL'S BASE RATE, so its absolute
+    scale moves whenever the label moves — a 4R head (base 23%) centres near 0.24, a strict-6R
+    head (base 14.9%) centres near 0.15. A floor of 0.44 is meaningful for one and takes LITERALLY
+    NOTHING from the other. And the scale differs BY STREAM at a fixed rate: measured on fold 1,
+    15 takes/day needs 0.145 on ES@3min but 0.186 on NQ@1min — one global floor cannot serve both.
+    A percentile is invariant to both: 'p90' is the top decile of THAT stream, whatever the label
+    or the regime.
+
+    THE TRADE-OFF, stated so a caller chooses it deliberately: a percentile floor ALWAYS FIRES.
+    In a genuinely dead regime the top decile of junk is still p90. That is why a deploy contract
+    should pair this with an ABSOLUTE backstop (`p_min`): the percentile sets FREQUENCY, the
+    backstop preserves the model's ability to stand down. Backstop low — when it binds, that is
+    information, not noise.
+
+    FORWARD-LEGAL ONLY IF `proba` IS THE VAL DISTRIBUTION. Val is held out of train and is not the
+    sealed holdout, so these cutoffs are usable live. Percentiles taken over the TEST year would be
+    hindsight ranking — the same defect as the tier table.
+
+    GENERIC: groups by the OPAQUE key the labeler emits (`k[0]`) — no '@', no ticker/timeframe
+    parsing, no strategy knowledge. A stream is whatever the strategy says it is.
+
+    -> {stream: {"p50": float, "p90": float, ...}, ...}; streams with <200 val rows are skipped
+       (a quantile off a handful of rows is noise a bot would deploy on)."""
+    proba = np.asarray(proba, float)
+    if len(proba) == 0 or keys is None or len(keys) != len(proba):
+        return {}
+    sids = np.array([str(k[0]) for k in keys])
+    out = {}
+    for s in sorted(set(sids.tolist())):
+        m = sids == s
+        if int(m.sum()) < 200:
+            continue
+        out[str(s)] = {f'p{q:g}': float(np.percentile(proba[m], q)) for q in pcts}
+    return out
+
+
 def _print_operating_points(op_rows, band_rows, title='OOS'):
     if band_rows:
         print(f"  {title} — WR@3R by score band (non-cumulative; monotone WR down the bands = the "
@@ -353,6 +393,31 @@ def _emit(out, classifier, ck, eval_lab, mu, sd, C, seq,
             # VAL distribution (leak-free). The bot enters when calibrated P >= T.
             'entry_rule': 'enter if calibrated_proba >= entry_thresholds[tier]',
             'entry_thresholds': out.get('entry_thresholds'),
+            # ── PER-STREAM PERCENTILE SCALE (the 0-100 deploy score) ──────────────────────────
+            # A calibrated proba is anchored to its LABEL'S BASE RATE, so its absolute scale moves
+            # with the label: a 4R head (base 23%) centres ~0.24, a strict-6R head (base 14.9%)
+            # centres ~0.15. A floor tuned for one takes LITERALLY NOTHING from the other. The
+            # scale also differs BY STREAM at a fixed rate (measured: 15 takes/day needs 0.145 on
+            # ES@3min but 0.186 on NQ@1min). `val_percentiles` maps proba -> 0-100 PER STREAM, so
+            # one floor means the same thing on every ticker/TF and across models.
+            #   score = 100 * (fraction of that stream's VAL probas below this proba)
+            #   take  if score >= score_floor AND calibrated_proba >= p_min
+            # THE BACKSTOP IS NOT OPTIONAL: a percentile floor ALWAYS FIRES — in a dead regime the
+            # top decile of junk is still p90. `p_min` is what lets the model stand down. Keep it
+            # LOW (it is a backstop, not a filter); when it binds, that is information.
+            # p_min default = the VAL median: below the median the model is, by its own
+            # distribution, not distinguishing anything. Override per deployment.
+            'score_scale': {
+                'kind': 'per_stream_val_percentile',
+                'rule': ('score = 100 * P(val proba of this stream < calibrated_proba); '
+                         'take if score >= score_floor AND calibrated_proba >= p_min'),
+                'percentiles': out.get('val_percentiles'),
+                'p_min': (float(np.median([v['p50'] for v in out['val_percentiles'].values()]))
+                          if out.get('val_percentiles') else None),
+                'note': ('percentiles are VAL-derived (forward-legal). Percentiles over the TEST '
+                         'year would be hindsight ranking — the tier-table defect. Keyed by the '
+                         "labeler's opaque stream id; a stream is whatever the strategy says."),
+            },
         })
     cpath = str(base) + '_signal.json'
     Path(cpath).write_text(json.dumps(contract, indent=2))
@@ -363,7 +428,8 @@ def _emit(out, classifier, ck, eval_lab, mu, sd, C, seq,
 
 
 def _fit_score(classifier, ck, eval_lab, Xtr, Ytr_tr, Xval, Ytr_va, Xte, Kte, Yte, seed, verbose,
-               onnx_path=None, keys_tr=None, keys_val=None, oos_ts=None, title='OOS'):
+               onnx_path=None, keys_tr=None, keys_val=None, oos_ts=None, title='OOS',
+               val_keys=None):
     """Fit REAL (exporting ONNX during that fit when onnx_path is set) + SHUFFLE control.
     Two fits total — the export must ride the REAL fit; a separate export refit doubles
     peak RAM (fresh standardized copies on top of allocator creep) and OOMs at full scale.
@@ -458,6 +524,11 @@ def _fit_score(classifier, ck, eval_lab, Xtr, Ytr_tr, Xval, Ytr_va, Xte, Kte, Yt
                beats_shuffle=(bool(edge >= PASS_LIFT_MARGIN_R) if edge is not None else None),
                wr_by_score=bands, operating_points=ops, wr_by_alignment=align,
                per_ticker_ops=per_tk, per_stream_ops=per_stream,   # per_stream keeps the TF
+               # PER-STREAM PERCENTILES from the VAL distribution -> the deploy contract's 0-100
+               # scale. val_keys is passed SEPARATELY from keys_val: the latter carries the
+               # distributional ladder's labels and is None on the single-head path, while this
+               # table must exist for EVERY head.
+               val_percentiles=per_stream_percentiles(p_val, val_keys),
                shuffle_operating_points=ops_sh,
                beats_shuffle_tiers=beats_shuffle_tiers,
                entry_thresholds=getattr(clf_real, '_entry_thresholds', None),   # val-derived T's
@@ -600,7 +671,7 @@ def train_final_streamed(make_labeler, streams, classifier, clf_kwargs=None,
     out = _fit_score(classifier, ck, eval_lab, Xtr, Ytr_tr, Xval, Ytr_va, Xte, all_Kte, Yte,
                      seed, verbose, onnx_path=onnx_path,
                      keys_tr=(Ktr_tr if dist else None), keys_val=(Ktr_va if dist else None),
-                     oos_ts=all_te_ts,
+                     oos_ts=all_te_ts, val_keys=Ktr_va,      # ALWAYS -> val_percentiles
                      title=f"OOS {holdout_start}..{oos_end or 'end'}")
     _ledger_append({
         'ts': pd.Timestamp.now('UTC').isoformat(), 'kind': 'produce_streamed',
