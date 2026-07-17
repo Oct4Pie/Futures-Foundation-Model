@@ -162,6 +162,39 @@ def _bundle_files(base):
                         str(base) + '_signal_head.onnx') if Path(p).exists()]
 
 
+def _ledger_append(record, output_path=None):
+    """DOWNSTREAM METRICS LEDGER (2026-07-16): append one run record as JSONL — the longitudinal
+    encoder-evaluation dataset. Every produce/anchored run contributes: checkpoint, config, label,
+    train size, OOS metrics, tier tables, ruler verdict — so 'does checkpoint X beat Y downstream'
+    becomes a query, not archaeology. Path: env RUN_LEDGER (set it to a Drive path on Colab for a
+    single durable ledger), else <output_path dir>/run_ledger.jsonl, else skip. Records are
+    DIAGNOSTIC context for SSL-objective design — never a ship gate (the corpus-label paradox:
+    heads can train beautifully while tiers pay nothing; gates stay scorecard -> tiers -> ruler).
+    Cross-run comparisons are only valid at matched protocol (apples-to-apples law)."""
+    p = os.environ.get('RUN_LEDGER') or (
+        str(Path(output_path).with_suffix('').parent / 'run_ledger.jsonl') if output_path else None)
+    if not p:
+        return None
+
+    def _san(o):                                          # np scalars/arrays -> JSON-safe
+        if isinstance(o, np.floating):
+            return float(o)
+        if isinstance(o, np.integer):
+            return int(o)
+        if isinstance(o, np.ndarray):
+            return o.tolist()
+        return str(o)
+
+    try:
+        Path(p).parent.mkdir(parents=True, exist_ok=True)
+        with open(p, 'a') as f:
+            f.write(json.dumps(record, default=_san) + '\n')
+        print(f"[ledger] appended -> {p}", flush=True)
+    except Exception as e:                                # pragma: no cover — never fail a run
+        print(f"[ledger] append skipped: {e}", flush=True)
+    return p
+
+
 def _emit(out, classifier, ck, eval_lab, mu, sd, C, seq,
           channel_names, tks, tfs, holdout_start, export_onnx, output_path, verbose):
     """Write the deploy contract for the ONNX exported DURING the REAL fit (no refit — a
@@ -452,6 +485,15 @@ def train_final_streamed(make_labeler, streams, classifier, clf_kwargs=None,
                      seed, verbose, onnx_path=onnx_path,
                      keys_tr=(Ktr_tr if dist else None), keys_val=(Ktr_va if dist else None),
                      oos_ts=all_te_ts)
+    _ledger_append({
+        'ts': pd.Timestamp.utcnow().isoformat(), 'kind': 'produce_streamed',
+        'classifier': classifier,
+        'backbone': os.path.basename(str(ck.get('backbone_ckpt') or '')),
+        'holdout_start': holdout_start, 'oos_end': oos_end,
+        'tickers': tks, 'timeframes': tfs, 'seed': seed,
+        'label': getattr(eval_lab, 'PRIMARY_R', None),
+        'cfg': {k: v for k, v in ck.items() if k not in ('standardize_mu', 'standardize_sd')},
+        **out}, output_path)
     return _emit(out, classifier, ck, eval_lab, mu, sd, C, seq,
                  channel_names, tks, tfs, holdout_start, export_onnx, output_path, verbose)
 
