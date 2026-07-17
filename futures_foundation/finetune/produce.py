@@ -33,6 +33,17 @@ def _oos_days(ts):
     return max(1, int(pd.DatetimeIndex(ts).normalize().nunique())) if len(ts) else 1
 
 
+# ── DEPLOY RATES (2026-07-17) — the per-stream tier ladder must COVER WHERE YOU TRADE.
+# The old ladders stopped at 4/day per-ticker and 5/day pooled, so every tier table in this
+# project was blind above ~5 takes/day — while the deploy zone is 8-15/day per stream. That is
+# not a neutral omission: it is the SELECTIVITY RULER that picked the 4R label and starved the
+# live model (WR@1/day looks great and pays +0.06R at the rate you actually trade). Measured on
+# the correct pool: 6R STRICT+resolved is +0.148R @10/day and +0.125R @15/day vs the 4R label's
+# +0.096/+0.055 — a comparison the old ladder could not even display.
+# Descending so the printed table reads high-frequency -> selective.
+DEPLOY_RATES = (15, 10, 8, 5, 4, 3, 2, 1)
+
+
 # ── VAL SPLIT (2026-07-16). The inner val set places the Platt calibration AND the entry
 # thresholds, and early-stops the head — so a val row that is a near-duplicate of a train row
 # makes all three optimistic, and the resulting probas COLLAPSE on genuinely unseen data (the
@@ -98,6 +109,12 @@ def operating_points(eval_lab, keys, proba, ts, rates=(5, 3, 2, 1)):
         Rs = R_all[sel]
         rows.append(dict(rate=r, n=n, days=days, wr3R=float((Rs > 0).mean()),
                          meanR=float(Rs.mean()),
+                         # pool = candidates AVAILABLE (n is the TAKEN count, capped by the pool).
+                         # n < rate*days => the stream CANNOT sustain that rate: its frequency
+                         # ceiling. Without this, a starved stream silently reports its best-N as
+                         # if the rate were met.
+                         pool=int(len(proba)), avail_per_day=float(len(proba) / days),
+                         rate_met=bool(n >= round(r * days)),
                          thresh=float(proba[sel[-1]])))     # the score cutoff -> 'enter if score>=thresh'
     return rows
 
@@ -410,23 +427,38 @@ def _fit_score(classifier, ck, eval_lab, Xtr, Ytr_tr, Xval, Ytr_va, Xte, Kte, Yt
             for r, s in zip(ops, ops_sh) if r['rate'] == s['rate'])
     # PER-TICKER operating points (the deploy question is per-instrument: "NQ at N/day") —
     # rank WITHIN each ticker's candidates, same forward-threshold semantics.
-    per_tk = {}
+    per_tk, per_stream = {}, {}
     if oos_ts is not None and len(Kte):
-        _tks = np.array([str(k[0]).split('@')[0] for k in Kte])
+        _sids = np.array([str(k[0]) for k in Kte])                 # 'NQ@1min' — ticker AND TF
+        _tks = np.array([s.split('@')[0] for s in _sids])
         _pa = np.asarray(p_te, float)
-        for _t in sorted(set(_tks)):
+        for _t in sorted(set(_tks.tolist())):
             m = _tks == _t
             if int(m.sum()) < 50:
                 continue
             ks = [k for k, mm in zip(Kte, m) if mm]
             ts_s = [t for t, mm in zip(oos_ts, m) if mm]
-            per_tk[_t] = operating_points(eval_lab, ks, _pa[m], ts_s, rates=(1, 2, 3, 4))
+            per_tk[_t] = operating_points(eval_lab, ks, _pa[m], ts_s, rates=DEPLOY_RATES)
+        # PER-STREAM (ticker AND TIMEFRAME). per_ticker_ops SPLITS ON '@' AND THROWS THE TF AWAY,
+        # so 'NQ' there is a BLEND of NQ@1min/3min/5min/15min — four different candidate densities
+        # (1min ~150/day vs 3min ~51/day) and four different proba distributions averaged into one
+        # number. You cannot pick a deploy timeframe from that: it is the same cross-timeframe
+        # pooling that makes a foundation benchmark unreadable. Train on every stream (the pattern
+        # is fractal); DECIDE on the stream you actually trade.
+        for _s in sorted(set(_sids.tolist())):
+            m = _sids == _s
+            if int(m.sum()) < 50:
+                continue
+            ks = [k for k, mm in zip(Kte, m) if mm]
+            ts_s = [t for t, mm in zip(oos_ts, m) if mm]
+            per_stream[_s] = operating_points(eval_lab, ks, _pa[m], ts_s, rates=DEPLOY_RATES)
     out = dict(oos_auc=auc, best_val_auc=ba, oos_meanR=_meanR(R),
                shuffle_meanR=(_meanR(Rs) if Rs is not None else None), edge_shuffle=edge,
                n_train=len(Ytr_tr), n_oos=len(Kte), oos_trades=int(len(R)),
                beats_shuffle=(bool(edge >= PASS_LIFT_MARGIN_R) if edge is not None else None),
                wr_by_score=bands, operating_points=ops, wr_by_alignment=align,
-               per_ticker_ops=per_tk, shuffle_operating_points=ops_sh,
+               per_ticker_ops=per_tk, per_stream_ops=per_stream,   # per_stream keeps the TF
+               shuffle_operating_points=ops_sh,
                beats_shuffle_tiers=beats_shuffle_tiers,
                entry_thresholds=getattr(clf_real, '_entry_thresholds', None),   # val-derived T's
                platt=getattr(clf_real, '_platt', None),      # Platt (A,B) -> deploy contract
@@ -437,11 +469,30 @@ def _fit_score(classifier, ck, eval_lab, Xtr, Ytr_tr, Xval, Ytr_va, Xte, Kte, Yt
     if verbose:
         _print_operating_points(ops, bands, title=title)
         if per_tk:
-            print(f"  {title} — PER-TICKER operating points (rank within the ticker; the "
-                  "'N/day per instrument' deploy read):", flush=True)
+            print(f"  {title} — PER-TICKER operating points (rank within the ticker; NOTE this "
+                  "BLENDS every timeframe of that ticker — see PER-STREAM below to pick a TF):",
+                  flush=True)
             for _t, rows in per_tk.items():
                 cells = '  '.join(f"{r['rate']}/d {r['wr3R']:5.1%} {r['meanR']:+.2f}" for r in rows)
                 print(f"    {_t:>4}: {cells}", flush=True)
+        if per_stream:
+            # THE DEPLOY READ: train on every stream (the pattern is fractal), but decide on the
+            # stream you actually trade. A ticker-level number averages 1min (~150 candidates/day)
+            # with 15min (~10/day) — different densities, different proba distributions, one
+            # meaningless mean.
+            print(f"  {title} — PER-STREAM operating points (ticker@TF, ranked WITHIN the stream "
+                  "— THE deploy read; pick your trading TF from THESE rows):", flush=True)
+            print(f"    {'stream':>12} {'cand/day':>9} | "
+                  + '  '.join(f"{str(r) + '/d':>16}" for r in DEPLOY_RATES), flush=True)
+            for _s, rows in per_stream.items():
+                avail = rows[0]['avail_per_day'] if rows else float('nan')
+                # '*' = the stream could NOT sustain that rate (pool exhausted) — its frequency
+                # ceiling, not a quality read.
+                cells = '  '.join(f"{r['wr3R']:6.1%} {r['meanR']:+7.3f}"
+                                  f"{'' if r['rate_met'] else '*'}" for r in rows)
+                print(f"    {_s:>12} {avail:>9.1f} | {cells}", flush=True)
+            print("      ('*' = rate NOT sustainable on that stream — pool exhausted, not a "
+                  "quality signal)", flush=True)
         _print_alignment(align, title)
         print(f"  {title} AUC {auc:.4f}" if auc is not None else f"  {title} AUC n/a")
         if edge is not None:
