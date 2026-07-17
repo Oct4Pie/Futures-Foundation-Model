@@ -182,9 +182,11 @@ verification item is also checked.
   reservation because it removed CL@60-minute validation coverage.
 - [x] Verify both objectives on V1/V2 CUDA smokes, the 90-test torch SSL suite and the full
   908-test default suite. See [REVISED_MANTIS_SSL_OBJECTIVES.md](REVISED_MANTIS_SSL_OBJECTIVES.md).
-- [ ] Run one-seed isolated objective ablations before chained lineages: vanilla, Stage 1 only,
-  direct revised Stage 2, and direct Stage 3. Chain only an objective that beats its own vanilla
-  backbone on paired pullback utility without material safety-target regression.
+- [ ] Run the single predeclared MantisV1 direct-`path` pilot from the merged source revision.
+  `structure_mask`, V2 path and all chained lineages are unfunded.
+- [ ] Require paired per-candidate lift over V1 vanilla, majority-fold stability, corrected interval
+  excluding zero, no compression-control damage, positive fee-only economics and survival at the
+  frozen one-tick sensitivity. Stop without iteration if any requirement fails.
 - [ ] Give a second seed only to a branch that beats both its vanilla backbone and causal features.
 
 ## Gate 6 — full cross-family training, blocked until pilots pass

@@ -77,14 +77,30 @@ No upstream commit was merged wholesale.
 - Initial global path reservation failed safely by removing CL@60-minute validation coverage; it
   was replaced with per-stream future filtering, after which all 54 streams remained eligible.
 
-## Pilot order
+## Frozen pilot decision
 
-Run one seed for four direct-from-vanilla arms:
+The earlier four-arm draft is retired before the canonical run. Generic descriptive adaptation has
+already failed to produce reliable trading lift twice. The only funded branch is:
 
-1. MantisV1 `structure_mask`.
-2. MantisV2 `structure_mask`.
-3. MantisV1 `path`.
-4. MantisV2 `path`.
+- MantisV1 vanilla -> direct `path`, seed 17.
+- Five epochs, 50 steps/epoch, batch 64, 256 bars.
+- Matched shuffle control and five-fold representation probe.
+- Training/validation/holdout dates remain unchanged.
 
-An objective is chained only if it beats its own vanilla backbone on the paired frozen pullback
-ruler without material safety-target regression. A second seed is funded only after that gate.
+`structure_mask` remains implemented but unfunded. One pre-merge V1 structure diagnostic passed the
+generic probe with only a small real-minus-shuffle margin; it is exploratory, is not a finalist and
+will not be rerun on the sealed trading ruler.
+
+Before training, promotion is fixed as all of:
+
+1. Positive paired R-per-candidate lift over vanilla MantisV1 on the unchanged pullback ruler.
+2. Positive lift in a declared majority of chronological folds.
+3. Paired 95% weekly-block interval excluding zero after the declared comparison correction.
+4. No material compression-control regression versus vanilla V1.
+5. Positive fee-adjusted economics under the user-declared zero-tick primary ruler and survival of
+   the frozen one-tick sensitivity.
+
+Failure stops this objective. No loss-weight, horizon, event, head or threshold iteration is
+permitted on the same development rows. A successful checkpoint remains exploratory and cannot
+rewrite the already frozen confirmation finalists; it may join a future confirmation only under a
+separately predeclared protocol before confirmation data are read.
