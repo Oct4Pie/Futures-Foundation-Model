@@ -40,6 +40,79 @@ The interval was selected from common source timestamps, not performance. It has
 prior-inspection caveat, but no OOS target or outcome entered training, validation, PCA, model
 fitting, calibration, threshold selection or trade selection.
 
+## How the causal selector works
+
+“Causal” means all inputs are known at the completed decision-bar close. It does not mean that the
+model estimates causal effects in the econometric sense. The selector is a development-trained
+XGBoost filter over the causal pullback event pool; it contains no Mantis embedding.
+
+### Candidate and feature contract
+
+The pullback detector first emits a directional candidate from completed bars. It requires an
+established trend, minimum directional efficiency and displacement, a controlled countertrend
+retracement, and executable structural risk. Entry remains the next bar open.
+
+The selector receives the following known-at-decision context features:
+
+- Current candle range, body, upper/lower wick and close position.
+- ATR fraction, log volume, close-to-EMA20, EMA20-to-EMA50 and normalized EMA50 slope.
+- Prior 20-bar range and normalized distance above/below that range.
+- Log return, realized volatility, trend efficiency, range and volume ratio over 4, 16, 64 and
+  256 bars.
+- Sine/cosine minute-of-week encoding.
+- One-hot ticker identity.
+- Event direction, log structural-risk ticks, and known fee/slippage/total-cost geometry.
+
+No MFE, MAE, future return, future volatility, barrier outcome, exit price or realized R is an
+input.
+
+### Barrier-decomposed objective
+
+For each timeframe, a three-class XGBoost classifier is trained on development events to estimate:
+
+1. The 3R favorable barrier is reached first.
+2. The 1R adverse barrier is reached first; same-bar ambiguity is included here.
+3. Neither barrier is reached during the fixed 360-minute horizon.
+
+A second XGBoost regressor is fit only on development “neither” events to estimate their terminal
+gross R. The selector composes the outputs as:
+
+```text
+expected net R =
+    P(favorable first) × 3R
+  - P(adverse or ambiguous first) × 1R
+  + P(neither) × predicted terminal R
+  - known fees
+  - declared slippage
+```
+
+The classifier and terminal regressor use 120 depth-3 trees, learning rate `0.04`, 80% row and
+column subsampling, L2 regularization `10`, and minimum child weight `20`. These were frozen before
+the OOS read.
+
+### Calibration, threshold and execution
+
+Raw development scores are converted to expected realized R with an isotonic map fit only to
+chronological out-of-fold predictions. A separate threshold is frozen for each timeframe from
+development folds. A threshold is admissible only when it has:
+
+- At least 20 executed development trades.
+- At least 2% executed coverage.
+- A positive one-standard-error lower confidence bound for R per original candidate.
+
+If no candidate threshold satisfies the rule, the declared action is no trade. That is why the
+causal OOS arm took no 1-minute trades. After selection, the concurrency layer allows one active
+trade per ticker/policy/timeframe and suppresses overlapping signals until the active event exits.
+
+### Important comparison limitation
+
+The causal arm and the Mantis arms do not differ only by representation. The causal arm uses the
+barrier-decomposed head above, while the frozen Mantis comparison arms used PCA-reduced embeddings
+plus the same causal features with direct realized-R regression. Therefore this OOS comparison
+establishes that the complete causal-selector pipeline was stronger; it does not attribute the
+entire difference to hand features versus Mantis hidden states. A future representation experiment
+must hold the barrier head and rows identical across causal-only and causal-plus-embedding arms.
+
 ## Data and breadth
 
 The run materialized 3,660 causal pullback contexts of shape `256 × 5` from all nine roots. Four
@@ -199,11 +272,16 @@ Canonical local report:
 1. Preserve the causal barrier selector and sealed ruler as the confirmed research deliverable.
 2. Retain vanilla MantisV1/V2 as compatibility controls, not as proven value-adding components.
 3. Do not deploy or further fund the current VICReg adaptations.
-4. Freeze broad SSL training. Generic representation-probe improvements have repeatedly failed to
-   transfer into paired trading utility.
+4. Freeze further SSL variants on this nine-root, 2019–2024 contract and its spent evaluation
+   ruler. Generic representation-probe improvements repeatedly failed to transfer into paired
+   trading utility at that scale.
 5. Do not tune symbols, timeframes, thresholds, policies or objectives on this read.
 6. Any new foundation-model hypothesis must use a newly predeclared development contract and earn
    a genuinely untouched prospective confirmation after it freezes.
 
 The trading-policy and risk-management work remains outside this repository. This repository's
 job is to preserve the representation artifacts, causal event/outcome contract and honest ruler.
+
+This result is not a universal scaling verdict. The separate [data-scale audit](DATA_SCALE_AUDIT.md)
+shows that substantially more governed historical tick data exists. Any scaled experiment is a
+new contract, not permission to tune this completed OOS read.

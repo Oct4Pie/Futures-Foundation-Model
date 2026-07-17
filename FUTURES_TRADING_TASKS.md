@@ -224,3 +224,24 @@ verification item is also checked.
 - [ ] Run prospective confirmation on data arriving after the full plan/finalist freeze.
 - [ ] Require monitoring for drift, calibration, costs, capacity and contract-roll behavior before
   production use.
+
+## Gate 8 — Corpus v3 scale program
+
+- [x] Audit the local data lake instead of inferring availability from the narrow training corpus.
+  The current evidence is 45.0M one-minute rows in the nine-root FFM corpus and 15.59B admitted
+  tick rows across 43 roots before 2026. General depth and Databento use remains blocked. See
+  [DATA_SCALE_AUDIT.md](DATA_SCALE_AUDIT.md).
+- [ ] Pin a Corpus v3 development contract to the admitted Sierra tick source, registry,
+  admission artifact, loader, instrument economics and lake hash-of-hashes.
+- [ ] Produce a root-by-year liquidity, continuity, roll and gap matrix; select roots without
+  reading strategy outcomes.
+- [ ] Materialize a representative tick-derived multi-resolution subset with exact ordered barrier,
+  MFE, MAE and time-to-barrier labels.
+- [ ] Measure event yield, barrier balance, effective calendar-block sample size, cross-root
+  dependence, purge loss and build throughput before claiming a 20–50× scale increase.
+- [ ] Run causal-only, frozen-Mantis, causal-plus-frozen-Mantis and end-to-end-Mantis arms with the
+  identical barrier head and identical rows. This supervised pilot comes before scaled SSL.
+- [ ] Fund one scaled SSL branch only if the measured corpus passes the scale gate and the
+  identical-head experiment shows representation learning is a plausible binding constraint.
+- [ ] Keep the read legacy OOS interval out of all Corpus v3 training, validation, calibration and
+  finalist selection. Require new unused prospective data for confirmation.
