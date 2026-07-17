@@ -180,8 +180,18 @@ def _build_oos_artifacts(args, config: EventContextConfig, output_dir: Path):
             elif current_tag != tag_index:
                 raise ValueError("pullback tag index differs across streams")
             selected = np.flatnonzero(np.asarray(arrays["tags"])[:, current_tag])
+            source_shards[f"{ticker}@{timeframe}"] = {
+                "path": str(shard_path.resolve()), "sha256": manifest["artifact"]["sha256"],
+            }
+            coverage[f"{ticker}@{timeframe}"] = {
+                "loaded_first": ts[0].isoformat(), "loaded_last": last.isoformat(),
+                "dense_rows": int(metadata["rows"]), "pullback_candidates": int(len(selected)),
+            }
             if not len(selected):
-                raise ValueError(f"{ticker}@{timeframe} has no OOS pullback candidates")
+                print(
+                    f"[oos] {ticker}@{timeframe}: candidates=0 last={last}", flush=True,
+                )
+                continue
             starts = np.asarray(arrays["context_start_source_idx"])[selected].astype(np.int64)
             decisions = np.asarray(arrays["decision_source_idx"])[selected].astype(np.int64)
             if np.any(decisions - starts + 1 != CONTEXT_BARS):
@@ -209,13 +219,6 @@ def _build_oos_artifacts(args, config: EventContextConfig, output_dir: Path):
             )
             contexts.append(value)
             context_times.append(time_value.astype(np.int64))
-            source_shards[f"{ticker}@{timeframe}"] = {
-                "path": str(shard_path.resolve()), "sha256": manifest["artifact"]["sha256"],
-            }
-            coverage[f"{ticker}@{timeframe}"] = {
-                "loaded_first": ts[0].isoformat(), "loaded_last": last.isoformat(),
-                "dense_rows": int(metadata["rows"]), "pullback_candidates": int(len(selected)),
-            }
             print(
                 f"[oos] {ticker}@{timeframe}: candidates={len(selected):,} last={last}",
                 flush=True,
