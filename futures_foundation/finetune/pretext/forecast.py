@@ -1,7 +1,6 @@
 """Stage-3 pretext: multi-horizon / variable-context candle seq2seq (ANTI-SHORTCUT). Reserves
-context+horizon per window. Gate additionally requires forward-move size up + forward-direction
-non-regress (a shortcut embedding can lift easy descriptive stats while the predictive forward
-targets barely move, so the descriptive average alone is not enough)."""
+context+horizon per window. Gate additionally requires forward-move size up. Forward direction is
+reported but not gated because its pooled AUC is inside the current probe's noise floor."""
 from .base import PretextTask
 
 

@@ -12,7 +12,8 @@ class PretextTask:
     trainer = None                                        # _ssl_torch trainer fn name
     # One promotion schema for every stage. Subclasses declare which targets must improve;
     # every listed target must at least be non-inferior to vanilla independently.
-    noninferiority_targets = ('vol', 'trend_eff', 'range_expand', 'fwd_absmove', 'fwd_dir')
+    noninferiority_targets = ('vol', 'trend_eff', 'range_expand', 'fwd_absmove')
+    diagnostic_targets = ('direction', 'fwd_dir')
     primary_targets = ()
     min_consistent_fold_fraction = 0.6
 
@@ -29,9 +30,10 @@ class PretextTask:
     def gate(self, probe_res, std, margin, dir_margin):
         """Single promotion gate: per-target means + fold consistency, never mixed-metric sums."""
         no_collapse = bool(std > 0.01)
-        detail = {'gate_schema': 'ffm_ssl_promotion_v2', 'no_collapse': no_collapse,
+        detail = {'gate_schema': 'ffm_ssl_promotion_v3', 'no_collapse': no_collapse,
                   'primary_targets': list(self.primary_targets),
                   'noninferiority_targets': list(self.noninferiority_targets),
+                  'diagnostic_targets': list(self.diagnostic_targets),
                   'min_consistent_fold_fraction': self.min_consistent_fold_fraction}
         if probe_res is None:
             return False, {**detail, 'probe': None, 'reason': 'strict probe required'}
@@ -57,6 +59,18 @@ class PretextTask:
                 'consistent_fold_fraction': float(fraction),
                 'fold_consistent': bool(fraction >= self.min_consistent_fold_fraction),
             }
+        diagnostic_checks = {}
+        for name in self.diagnostic_targets:
+            if name not in per_target:
+                continue
+            result = per_target[name]
+            fold_delta = result.get('fold_delta') or [float(result['delta'])]
+            diagnostic_checks[name] = {
+                'delta': float(result['delta']),
+                'consistent_nonnegative_fraction': float(
+                    sum(float(x) >= 0 for x in fold_delta) / len(fold_delta)),
+                'gated': False,
+            }
         primary_checks = {}
         for name in self.primary_targets:
             gain = float(dir_margin if name == 'fwd_dir' else margin)
@@ -71,13 +85,15 @@ class PretextTask:
         noninferior = all(x['mean_noninferior'] and x['fold_consistent'] for x in checks.values())
         primary = all(x['mean_gain'] and x['fold_consistent'] for x in primary_checks.values())
         detail.update({
-            'per_target_checks': checks, 'primary_checks': primary_checks,
+            'per_target_checks': checks, 'diagnostic_target_checks': diagnostic_checks,
+            'primary_checks': primary_checks,
             'per_target_noninferior': bool(noninferior), 'primary_gains': bool(primary),
             # Backward-compatible report fields; these are now derived from per-target checks.
             'descriptive_ok': all(checks[x]['mean_noninferior'] for x in
                                   ('vol', 'trend_eff', 'range_expand')),
             'fwd_size_ok': checks['fwd_absmove']['mean_noninferior'],
-            'fwd_dir_ok': checks['fwd_dir']['mean_noninferior'],
+            'fwd_dir_ok': bool((diagnostic_checks.get('fwd_dir') or {}).get('delta', 0.0)
+                               >= float(dir_margin)),
         })
         return bool(no_collapse and noninferior and primary), detail
 

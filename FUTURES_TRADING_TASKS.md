@@ -112,18 +112,23 @@ verification item is also checked.
   ATR lane, Case C for inconsistent/damaging adaptation and Case D for the fractal pool; Case E is
   rejected, so broad SSL funding remains blocked.
 
-## Gate 5 — bounded revised-stage pilots, blocked until Case E
+## Gate 5 — bounded MantisV2 revised-stage research exception
 
-- [ ] **BLOCKED:** numerical Stage 0 adapter/export/context parity.
-- [ ] **BLOCKED:** MantisV2 Stage 1 implementation/debug pilot.
-- [ ] **BLOCKED:** Chronos Bolt Stage 1 decision pilot.
-- [ ] **BLOCKED:** direct Stage 2-from-vanilla ablation.
+- [x] Numerical Stage 0 adapter/export/context parity passed at 64/128/256 bars; ONNX maximum
+  absolute error is `5.72e-6`. CUDA batch-shape sensitivity is recorded separately.
+- [ ] **NOT FUNDED:** MantisV2 Stage 1 structural-reconstruction pilot; direct Stage 2 failed the
+  downstream economic gate.
+- [ ] **BLOCKED:** new Chronos Bolt training; retain its frozen representation as a control only.
+- [x] Direct MantisV2 Stage 2-from-vanilla ablation completed at 256 bars on the locked
+  2019-07/2024-07/2025-07 calendar protocol.
 - [x] Train and evaluate the two-seed `elapsed_time_v2` correction against `bar_offset_v1`; it
   improved mean core behavior but failed the locked promotion rule and remains a baseline.
-- [ ] **BLOCKED:** implement and compare one negative-free Stage 2 objective such as VICReg.
-- [ ] **BLOCKED:** minimal Stage 3 core: MFE/MAE quantiles + forward vol + continuation + anchor.
+- [x] Implemented and compared `vicreg_v1` against `elapsed_time_v2`, with the same preprocessing,
+  anchor universe, seed and optimizer budget. VICReg passed the representation/control gate.
+- [ ] **NOT FUNDED:** minimal Stage 3 core: Stage 2 improved vanilla but did not add stable
+  forward/economic utility over causal features.
 - [ ] **BLOCKED:** add one Stage 3 objective at a time only after the core is measured.
-- [ ] **BLOCKED:** second architecture if MantisV2 and Chronos Bolt disagree.
+- [ ] **BLOCKED:** second trainable architecture; this exception is MantisV2-only.
 
 ### Gate 5 verification
 
@@ -131,9 +136,10 @@ verification item is also checked.
 - [x] Audit the historical next-leg objective. Its one-cap reserve and concatenated-stream target
   construction were unsafe; the code now reserves both legs and segments targets by stream and
   contract. Historical checkpoints remain non-promotable under the corrected contract.
-- [ ] Parent hashes and backbone changes are verified at every transition.
-- [ ] Per-target non-inferiority and downstream paired gates pass.
-- [ ] At least two seeds pass for any promoted pilot.
+- [x] Artifact hashes and direct-vanilla lineage are recorded; this branch has no parent checkpoint.
+- [x] Per-target and downstream paired gates were evaluated. Representation non-inferiority passed,
+  but paired forward/economic lift over causal features failed.
+- [ ] **NOT FUNDED:** second seed; no checkpoint passed the downstream funding gate.
 
 ## Gate 6 — full cross-family training, blocked until pilots pass
 

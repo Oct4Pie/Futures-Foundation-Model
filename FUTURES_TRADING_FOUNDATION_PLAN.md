@@ -164,7 +164,12 @@ representation must add stable value over both its vanilla backbone and the caus
 on conditional trend/path tasks or executable R, without material degradation of declared safety
 metrics.
 
-## 6. Revised training methodology, only if Case E is reached
+## 6. Revised training methodology: bounded MantisV2 research exception
+
+The locked ruler did not establish Case E, so broad SSL funding remains blocked. The project owner
+has nevertheless authorized one narrow MantisV2 experiment to determine whether a corrected
+objective can beat the current adaptation recipe. This is a research exception, not a reversal of
+the Case A/C/D diagnosis and not authorization for a cross-family sweep.
 
 ### Stage 0 — vanilla parity
 
@@ -219,17 +224,18 @@ descriptive/conditional utility.
 
 ### Pilot and family policy
 
-- MantisV2 is the low-cost implementation/debugging pilot only.
-- Chronos Bolt is the primary objective pilot because current evidence favors its representations.
-- Chronos is forecast-pretrained, not a native buy/sell/hold classifier. The Chronos arms use native
-  encoder hidden states and a separately fitted causal downstream classifier/regressor; they do not
-  relabel forecast outputs as classifications. Forecast pretraining is a hypothesis about useful
-  state features, not a guarantee of trading classification value.
-- If those families disagree, test one additional architecture before freezing a shared objective.
+- MantisV2 is the only trainable pilot in this exception.
+- Chronos Bolt and the other frozen tournament representations remain historical controls; they are
+  not funded for new SSL training in this branch.
+- Compare direct Stage 2 from vanilla at the 256-bar deployment context: `elapsed_time_v2` versus
+  one negative-free `vicreg_v1` objective, on the same anchor universe and training budget.
+- Keep the deployed preprocessing contract fixed during the objective comparison. Test
+  normalization as a separate one-factor ablation so objective and input changes are attributable.
+- Stage 1 is funded only if the direct Stage 2 comparison produces a viable arm. Stage 3 is funded
+  only after a Stage 2 arm adds forward-path or downstream economic information over vanilla.
 - Sundial is excluded from representation-stage work until non-finite hidden-state extraction is
   independently repaired; it may remain a forecast-only diagnostic.
-- Do not assume one native loss or adapter is fair across architectures. Hold data, targets,
-  exposure, gates and evaluation constant while implementing the closest valid native objective.
+- Do not extrapolate a MantisV2 result to another architecture without a new native-method audit.
 
 ## 7. Promotion and stopping rules
 
@@ -287,8 +293,12 @@ economics but neither established incremental representation value over causal f
 
 The locked diagnosis is Case A for the current ATR lane, Case C for inconsistent/damaging
 adaptation and Case D for the fractal pool. Case E is rejected on current evidence, so broad SSL
-retraining remains blocked. The author's next-leg atlas is treated as an external targeted
-hypothesis, not a result reproduced by this repository: its exact script, checkpoint, report/hash
-and corpus manifest are required before a frozen sealed evaluation. The primary execution
-sensitivity remains fee-only with zero modeled tick slippage and no added delay; one or more ticks
-remain frozen-selection stress tests.
+retraining remains blocked. The separately authorized MantisV2-only direct-Stage-2 pilot is now
+complete; see [MANTIS_V2_SSL_PILOT_RESULTS.md](MANTIS_V2_SSL_PILOT_RESULTS.md). Negative-free
+VICReg improved the representation probes and beat its shuffle control, but did not beat causal
+features on the sealed forward-path or full-history realized-R rulers. Concatenated and residual
+fusion both failed, so Stage 1, Stage 3, a second seed and other trainable families remain unfunded.
+The author's next-leg atlas is treated as an external targeted hypothesis, not a result reproduced
+by this repository: its exact script, checkpoint, report/hash and corpus manifest are required
+before a frozen sealed evaluation. The primary execution sensitivity remains fee-only with zero
+modeled tick slippage and no added delay; one or more ticks remain frozen-selection stress tests.

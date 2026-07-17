@@ -41,7 +41,10 @@ STAGES = {
                         positive_gap_fractions=(0.6, 1.0, 2.0),
                         max_positive_overlap=0.5, positive_tolerance_fraction=0.20,
                         negative_min_contexts=4.0, sync_exclusion_minutes=60.0,
-                        min_valid_negatives=1, vol_weight=0.0),
+                        min_valid_negatives=1, vol_weight=0.0,
+                        vicreg_invariance_weight=25.0, vicreg_variance_weight=25.0,
+                        vicreg_covariance_weight=1.0, vicreg_variance_target=1.0,
+                        feature_anchor_weight=0.0),
     'forecast': dict(pretext='forecast', batch=512, epochs=60, steps_per_epoch=200,
                      lr=1e-4, weight_decay=0.05, patience=8,
                      freeze_encoder_layers=3, seq=64, max_jitter=16,
@@ -193,6 +196,8 @@ def run(args):
                 'mask_ratio', 'span_mean', 'span_max', 'feature_anchor_weight',
                 'temperature', 'crop_max',
                 'aug_noise', 'aug_scale', 'aug_tmask', 'dir_weight',
+                'vicreg_invariance_weight', 'vicreg_variance_weight',
+                'vicreg_covariance_weight', 'vicreg_variance_target',
                 'freeze_encoder_layers', 'objective'):
         value = getattr(args, key)
         if value is not None:
@@ -384,7 +389,8 @@ def main():
                    default=PREPROCESSING_CHOICES[0])
     p.add_argument('--seq', type=int, choices=(64, 128, 256))
     p.add_argument('--context-lengths', help='comma-separated forecast contexts, e.g. 64,128,256')
-    p.add_argument('--contrastive-objective', choices=('elapsed_time_v2', 'bar_offset_v1'),
+    p.add_argument('--contrastive-objective',
+                   choices=('elapsed_time_v2', 'vicreg_v1', 'bar_offset_v1'),
                    help='versioned Stage-2 objective; legacy v1 is comparison-only')
     p.add_argument('--contrastive-reserve-contexts', type=float,
                    help='lock the eligible anchor universe across Stage-2 objective comparisons')
@@ -400,12 +406,16 @@ def main():
     p.add_argument('--span-max', type=int,
                    help='Stage-1 maximum contiguous masked-span length')
     p.add_argument('--feature-anchor-weight', type=float,
-                   help='Stage-1 frozen-teacher embedding anchor; zero disables it')
+                   help='Stage-1/2 frozen-teacher embedding anchor; zero disables it')
     p.add_argument('--temperature', type=float)
     p.add_argument('--crop-max', type=float)
     p.add_argument('--aug-noise', type=float)
     p.add_argument('--aug-scale', type=float)
     p.add_argument('--aug-tmask', type=float)
+    p.add_argument('--vicreg-invariance-weight', type=float)
+    p.add_argument('--vicreg-variance-weight', type=float)
+    p.add_argument('--vicreg-covariance-weight', type=float)
+    p.add_argument('--vicreg-variance-target', type=float)
     p.add_argument('--objective', choices=('candle_mse', 'candle_direction'),
                    help='Stage-3 forecast supervision objective')
     p.add_argument('--dir-weight', type=float,

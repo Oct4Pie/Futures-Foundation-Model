@@ -25,9 +25,11 @@ class ContrastiveTask(PretextTask):
                 max_gap = max(float(x) for x in
                               cfg.get('positive_gap_fractions', (0.6, 1.0, 2.0)))
                 natural = int(round(int(cfg['seq']) * (1.0 + max_gap)))
-            else:
+            elif cfg.get('contrastive_objective') == 'bar_offset_v1':
                 natural = int(cfg['seq']) + max(
                     int(d) for d in cfg.get('pos_deltas', (2, 16, 64)))
+            else:
+                natural = int(cfg['seq'])
             if common_len < natural:
                 raise ValueError('contrastive_reserve_contexts is smaller than objective reach')
             return common_len
@@ -36,5 +38,7 @@ class ContrastiveTask(PretextTask):
             # lengths. Reserve the positive context as well so no snap can cross a temporal split.
             gap = max(float(x) for x in cfg.get('positive_gap_fractions', (0.6, 1.0, 2.0)))
             return int(round(int(cfg['seq']) * (1.0 + gap)))
+        if cfg.get('contrastive_objective') == 'vicreg_v1':
+            return int(cfg['seq'])
         # Legacy bar-offset baseline.
         return int(cfg['seq']) + max(int(d) for d in cfg.get('pos_deltas', (2, 16, 64)))

@@ -393,6 +393,8 @@ def _base_cfg(**kw):
              positive_gap_fractions=(0.6, 1.0, 2.0), max_positive_overlap=0.5,
              positive_tolerance_fraction=0.20, negative_min_contexts=4.0,
              sync_exclusion_minutes=60.0, min_valid_negatives=1,
+             vicreg_invariance_weight=25.0, vicreg_variance_weight=25.0,
+             vicreg_covariance_weight=1.0, vicreg_variance_target=1.0,
              # stage-4 TURN-ELECTRA (replaced-TURN detection — the discriminative slot): spans are
              # CENTERED ON DETECTED TURNS (local swing highs/lows, neighborhood ±turn_w) with prob
              # turn_bias (0 = uniform span-ELECTRA, the placement ablation); a weak generator
@@ -468,6 +470,10 @@ def loop_ssl(data_dir=None, *, tickers=None, tfs=None, controls=('shuffle', 'ran
                               timestamps=probe_timestamps, span_ns=probe_span_ns,
                               preprocessing=cfg['preprocessing'],
                               verbose=verbose) if probe else None)
+    if probe_res is not None:
+        probe_res['calendar_excluded_streams'] = [
+            streams[int(group)]['sid']
+            for group in probe_res.get('calendar_excluded_group_ids', ())]
     ok, detail = _passes(probe_res, std, probe_margin, dir_margin, pretext)
     history = [{'source': 'default', 'best_val': float(best_ep['val_loss']), 'std': std,
                 'forecast_skill': fc_skill, 'gate_ok': bool(ok),

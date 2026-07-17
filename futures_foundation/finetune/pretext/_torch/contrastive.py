@@ -4,7 +4,9 @@
 distance is measured in wall-clock time relative to each context span, crop and mask parameters
 are sampled independently per observation, every regime has equal loss weight, and synchronized
 cross-stream observations are excluded from the negative set. ``bar_offset_v1`` is retained only
-as an explicit reproducibility baseline for existing studies.
+as an explicit reproducibility baseline for existing studies. ``vicreg_v1`` is the bounded
+negative-free comparison: two independent views of the same context are aligned while variance
+and covariance terms prevent collapse.
 
 Teaches: windows close in time / structurally similar -> nearby embeddings; different market
 structures -> far apart. The intended product is a smooth "market state geometry" in the
@@ -27,7 +29,8 @@ from .backbone import load_mantis
 
 ELAPSED_TIME_OBJECTIVE = 'elapsed_time_v2'
 LEGACY_BAR_OBJECTIVE = 'bar_offset_v1'
-CONTRASTIVE_OBJECTIVES = (ELAPSED_TIME_OBJECTIVE, LEGACY_BAR_OBJECTIVE)
+VICREG_OBJECTIVE = 'vicreg_v1'
+CONTRASTIVE_OBJECTIVES = (ELAPSED_TIME_OBJECTIVE, VICREG_OBJECTIVE, LEGACY_BAR_OBJECTIVE)
 MINUTE_NS = 60 * 1_000_000_000
 
 def _random_crop_resize(x, crop_max=0.2, *, gen=None, independent=True, return_params=False):
@@ -70,8 +73,43 @@ class ContrastiveTrendNet(nn.Module):
     def embed(self, x):                                    # [B,C,L] -> [B, new_c*hidden]
         return encode_independent(self.encoder, x)
 
+    def project(self, x):                                  # [B,C,L] -> [B, proj_dim]
+        return self.prj(self.embed(x))
+
     def forward(self, x):                                  # [B,C,L] -> [B, proj_dim] (normalized)
-        return F.normalize(self.prj(self.embed(x)), dim=1)
+        return F.normalize(self.project(x), dim=1)
+
+
+def _off_diagonal(x):
+    """Flatten off-diagonal entries of a square matrix without a device transfer."""
+    n, m = x.shape
+    if n != m:
+        raise ValueError('covariance matrix must be square')
+    return x.flatten()[:-1].view(n - 1, n + 1)[:, 1:].flatten()
+
+
+def _vicreg_loss(z1, z2, *, invariance_weight=25.0, variance_weight=25.0,
+                 covariance_weight=1.0, variance_target=1.0, eps=1e-4):
+    """VICReg loss and detached diagnostics for two unnormalized projector outputs."""
+    if z1.shape != z2.shape or z1.ndim != 2:
+        raise ValueError('VICReg views must have the same [batch, features] shape')
+    if z1.shape[0] < 2:
+        raise ValueError('VICReg requires at least two observations per batch')
+    invariance = F.mse_loss(z1, z2)
+    std1 = torch.sqrt(z1.var(dim=0, unbiased=False) + float(eps))
+    std2 = torch.sqrt(z2.var(dim=0, unbiased=False) + float(eps))
+    variance = 0.5 * (F.relu(float(variance_target) - std1).mean() +
+                      F.relu(float(variance_target) - std2).mean())
+    z1c, z2c = z1 - z1.mean(0), z2 - z2.mean(0)
+    denom = max(z1.shape[0] - 1, 1)
+    cov1, cov2 = z1c.T @ z1c / denom, z2c.T @ z2c / denom
+    covariance = (_off_diagonal(cov1).square().sum() +
+                  _off_diagonal(cov2).square().sum()) / (2.0 * z1.shape[1])
+    loss = (float(invariance_weight) * invariance + float(variance_weight) * variance +
+            float(covariance_weight) * covariance)
+    return loss, {'vicreg_invariance': float(invariance.detach()),
+                  'vicreg_variance': float(variance.detach()),
+                  'vicreg_covariance': float(covariance.detach())}
 
 
 def _snap_to_starts(starts, target):
@@ -204,6 +242,9 @@ class _ContrastiveTrainer(BaseTrainer):
                  positive_gap_fractions=(0.6, 1.0, 2.0), max_positive_overlap=0.5,
                  positive_tolerance_fraction=0.20, negative_min_contexts=4.0,
                  sync_exclusion_minutes=60.0, min_valid_negatives=1,
+                 vicreg_invariance_weight=25.0, vicreg_variance_weight=25.0,
+                 vicreg_covariance_weight=1.0, vicreg_variance_target=1.0,
+                 feature_anchor_weight=0.0,
                  train_start_times_ns=None, val_start_times_ns=None, stream_bar_ns=None,
                  model_id='paris-noah/Mantis-8M', model_version=None, backbone_ckpt=None,
                  clamp=10.0, preprocessing=None, **base):
@@ -215,6 +256,7 @@ class _ContrastiveTrainer(BaseTrainer):
         self.contrastive_objective = str(contrastive_objective)
         if self.contrastive_objective not in CONTRASTIVE_OBJECTIVES:
             raise ValueError(f'unknown contrastive objective: {self.contrastive_objective}')
+        self.uses_elapsed_geometry = self.contrastive_objective != LEGACY_BAR_OBJECTIVE
         self.positive_gap_fractions = tuple(float(x) for x in positive_gap_fractions)
         if (not self.positive_gap_fractions or any(x <= 0 for x in self.positive_gap_fractions)
                 or tuple(sorted(self.positive_gap_fractions)) != self.positive_gap_fractions):
@@ -237,13 +279,22 @@ class _ContrastiveTrainer(BaseTrainer):
         self.new_channels, self.proj_dim = new_channels, proj_dim
         self.temperature, self.crop_max, self.clamp = temperature, crop_max, clamp
         self.aug_noise, self.aug_scale, self.aug_tmask = aug_noise, aug_scale, aug_tmask
-        default_vol_weight = 0.0 if self.contrastive_objective == ELAPSED_TIME_OBJECTIVE else 1.0
+        default_vol_weight = 0.0 if self.uses_elapsed_geometry else 1.0
         self.vol_weight = float(default_vol_weight if vol_weight is None else vol_weight)
         self.w_clip = float(w_clip)
         self.metrics_n = int(metrics_n)
         self.model_id = model_id
         self.model_version = model_version
         self.backbone_ckpt = backbone_ckpt
+        self.vicreg_invariance_weight = float(vicreg_invariance_weight)
+        self.vicreg_variance_weight = float(vicreg_variance_weight)
+        self.vicreg_covariance_weight = float(vicreg_covariance_weight)
+        self.vicreg_variance_target = float(vicreg_variance_target)
+        self.feature_anchor_weight = float(feature_anchor_weight)
+        if min(self.vicreg_invariance_weight, self.vicreg_variance_weight,
+               self.vicreg_covariance_weight, self.vicreg_variance_target,
+               self.feature_anchor_weight) < 0:
+            raise ValueError('VICReg and feature-anchor weights must be nonnegative')
         self.preprocessing = resolve_preprocessing(preprocessing, backbone_ckpt)
         self.C = int(self.big_t.shape[1])
         if (len(self.tr) > 1 and not bool(torch.all(self.tr[1:] >= self.tr[:-1]))) or \
@@ -286,6 +337,11 @@ class _ContrastiveTrainer(BaseTrainer):
             'min_valid_negatives': self.min_valid_negatives,
             'pos_deltas': tuple(self.pos_deltas), 'far_min': self.far_min,
             'vol_weight': self.vol_weight,
+            'vicreg_invariance_weight': self.vicreg_invariance_weight,
+            'vicreg_variance_weight': self.vicreg_variance_weight,
+            'vicreg_covariance_weight': self.vicreg_covariance_weight,
+            'vicreg_variance_target': self.vicreg_variance_target,
+            'feature_anchor_weight': self.feature_anchor_weight,
         })
         return sig
 
@@ -297,6 +353,14 @@ class _ContrastiveTrainer(BaseTrainer):
             load_encoder_checkpoint(net.encoder, self.backbone_ckpt, model_id=self.model_id,
                                     model_version=self.model_version, expected_channels=self.C)
         self.net = net
+        self.teacher = None
+        if self.feature_anchor_weight > 0:
+            self.teacher = load_mantis(
+                self.model_id, model_version=self.model_version, device='cpu')
+            self.teacher.load_state_dict(net.encoder.state_dict())
+            self.teacher = self.teacher.to(self.dev).eval()
+            for parameter in self.teacher.parameters():
+                parameter.requires_grad = False
 
     # ------------------------------------------------------------------ batch construction
     def _windows_at(self, pos):
@@ -348,7 +412,13 @@ class _ContrastiveTrainer(BaseTrainer):
         pos_times = []
         anchor_times = self.tr_times[b_idx] if starts is self.tr else self.va_times[b_idx]
         context_ns = self.stream_bar_ns[stream_groups] * max(self.seq - 1, 1)
-        if self.contrastive_objective == ELAPSED_TIME_OBJECTIVE:
+        if self.contrastive_objective == VICREG_OBJECTIVE:
+            # Negative-free view matching needs no temporal neighbor. Empty tensors keep the
+            # common batch contract without sampling unused future contexts.
+            pos_s = torch.empty((0, len(s)), dtype=torch.long, device=self.dev)
+            pos_times = torch.empty((0, len(s)), dtype=torch.long, device=self.dev)
+            pos_ok = torch.empty((0, len(s)), dtype=torch.bool, device=self.dev)
+        elif self.contrastive_objective == ELAPSED_TIME_OBJECTIVE:
             all_times = self.tr_times if starts is self.tr else self.va_times
             for fraction in self.positive_gap_fractions:
                 gap_ns = torch.round(context_ns.float() * fraction).long()
@@ -368,17 +438,21 @@ class _ContrastiveTrainer(BaseTrainer):
                 pos_s.append(ps); pos_times.append(anchor_times + d * self.stream_bar_ns[stream_groups])
                 pos_ok.append(dist <= tol)
         anchors = _zscore_clamp(raw_a, self.clamp, self.preprocessing)
-        positives = [_zscore_clamp(self._windows_at(p), self.clamp, self.preprocessing) for p in pos_s]
+        positives = [_zscore_clamp(self._windows_at(p), self.clamp, self.preprocessing)
+                     for p in pos_s]
         # corrupt ONLY the input (controls destroy the temporal structure the loss feeds on)
         anchors = _apply_control(anchors, self.control)
         positives = [_apply_control(p, self.control) for p in positives]
-        return (anchors, positives, torch.stack(pos_ok), torch.stack(pos_s), s, sigma,
-                stream_groups, anchor_times, torch.stack(pos_times), context_ns)
+        if self.contrastive_objective != VICREG_OBJECTIVE:
+            pos_ok, pos_s, pos_times = (torch.stack(pos_ok), torch.stack(pos_s),
+                                        torch.stack(pos_times))
+        return (anchors, positives, pos_ok, pos_s, s, sigma,
+                stream_groups, anchor_times, pos_times, context_ns)
 
     def _sigma_weights(self, sigma):
         """σ_t -> per-anchor weight: high-vol DOWN-weighted (w = (med/σ)^vol_weight, mean-1
         normalized, clipped). vol_weight=0 disables (all-equal)."""
-        if self.contrastive_objective == ELAPSED_TIME_OBJECTIVE or self.vol_weight <= 0:
+        if self.uses_elapsed_geometry or self.vol_weight <= 0:
             return torch.ones_like(sigma)
         med = sigma.median().clamp_min(1e-9)
         w = (med / sigma.clamp_min(1e-9)) ** self.vol_weight
@@ -390,11 +464,33 @@ class _ContrastiveTrainer(BaseTrainer):
          anchor_times, pos_times, context_ns) = batch
         B = anchors.shape[0]
         g = self.gen
-        independent = self.contrastive_objective == ELAPSED_TIME_OBJECTIVE
+        independent = self.uses_elapsed_geometry
         v1 = _augment(anchors, g, self.aug_noise, self.aug_scale, self.aug_tmask, self.crop_max,
                       independent=independent)
         v2 = _augment(anchors, g, self.aug_noise, self.aug_scale, self.aug_tmask, self.crop_max,
                       independent=independent)
+        if self.contrastive_objective == VICREG_OBJECTIVE:
+            z1, z2 = self.net.project(v1), self.net.project(v2)
+            loss, diag = _vicreg_loss(
+                z1, z2, invariance_weight=self.vicreg_invariance_weight,
+                variance_weight=self.vicreg_variance_weight,
+                covariance_weight=self.vicreg_covariance_weight,
+                variance_target=self.vicreg_variance_target)
+            diag.update({'positive_valid_fraction': 1.0, 'valid_rows_fraction': 1.0,
+                         'valid_negatives_mean': 0.0, 'valid_negatives_min': 0,
+                         'sync_excluded_fraction': 0.0, 'positive_gap_minutes_mean': 0.0,
+                         'positive_overlap_max': 0.0, 'weight_min': 1.0, 'weight_max': 1.0,
+                         'vol_weight_sigma_corr': 0.0})
+            if self.teacher is not None:
+                with torch.no_grad():
+                    target = encode_independent(self.teacher, anchors)
+                student = self.net.embed(anchors)
+                anchor_loss = (1.0 - F.cosine_similarity(student, target, dim=1)).mean()
+                loss = loss + self.feature_anchor_weight * anchor_loss
+                diag['feature_anchor_loss'] = float(anchor_loss.detach())
+            self._last_loss_diagnostics = diag
+            return loss
+
         X = torch.cat([v1, v2] + positives, 0)                  # [(2+K)B, C, seq]
         z = self.net(X)                                         # L2-normalized projections
         ids = torch.arange(B, device=self.dev)
@@ -417,6 +513,13 @@ class _ContrastiveTrainer(BaseTrainer):
             min_valid_negatives=(self.min_valid_negatives if independent else 1),
             return_diagnostics=True)
         loss, diag = result
+        if self.teacher is not None:
+            with torch.no_grad():
+                target = encode_independent(self.teacher, anchors)
+            student = self.net.embed(anchors)
+            anchor_loss = (1.0 - F.cosine_similarity(student, target, dim=1)).mean()
+            loss = loss + self.feature_anchor_weight * anchor_loss
+            diag['feature_anchor_loss'] = float(anchor_loss.detach())
         actual_gap = (pos_times - anchor_times[None, :]).abs().float() / MINUTE_NS
         overlap = (1.0 - actual_gap * MINUTE_NS /
                    context_ns[None, :].float().clamp_min(1)).clamp(0, 1)
@@ -459,7 +562,7 @@ class _ContrastiveTrainer(BaseTrainer):
         z = F.normalize(self.net.embed(_zscore_clamp(
             self._windows_at(s), self.clamp, self.preprocessing)), dim=1)
         # A: nearest valid neighbor vs random pair
-        if self.contrastive_objective == ELAPSED_TIME_OBJECTIVE:
+        if self.uses_elapsed_geometry:
             s1, _, d1 = self._snap_times_within_groups(
                 ss, self.va_times, sample_times + self.stream_bar_ns[stream_groups], stream_groups)
             okA = d1 <= self.stream_bar_ns[stream_groups]
@@ -472,10 +575,10 @@ class _ContrastiveTrainer(BaseTrainer):
         smooth = float((z[okA] * z1[okA]).sum(1).mean() - (z * z[perm]).sum(1).mean())
         # C: similarity across the positive scales (short/medium/long)
         sims = []
-        scales = (self.positive_gap_fractions if self.contrastive_objective == ELAPSED_TIME_OBJECTIVE
+        scales = (self.positive_gap_fractions if self.uses_elapsed_geometry
                   else self.pos_deltas)
         for i, scale in enumerate(scales):
-            if self.contrastive_objective == ELAPSED_TIME_OBJECTIVE:
+            if self.uses_elapsed_geometry:
                 target_gap = torch.round(context_ns.float() * float(scale)).long()
                 pd, pt, dd = self._snap_times_within_groups(
                     ss, self.va_times, sample_times + target_gap, stream_groups)
@@ -545,6 +648,11 @@ class _ContrastiveTrainer(BaseTrainer):
                 values = [float(d[key]) for d in pair_diags if key in d]
                 if values:
                     mx[key] = min(values) if key in ('valid_negatives_min',) else sum(values) / len(values)
+            for key in ('vicreg_invariance', 'vicreg_variance', 'vicreg_covariance',
+                        'feature_anchor_loss'):
+                values = [float(d[key]) for d in pair_diags if key in d]
+                if values:
+                    mx[key] = sum(values) / len(values)
             for key in sorted({k for d in pair_diags for k in d
                                if k.startswith('positive_valid_fraction_scale_') or
                                k.startswith('positive_gap_minutes_scale_')}):
@@ -561,12 +669,15 @@ class _ContrastiveTrainer(BaseTrainer):
 
     def log_line(self, ep, tr_loss, vloss, extra, improved):
         if self.verbose:
+            objective_diag = (f"vic_inv={extra.get('vicreg_invariance', 0):.3f}"
+                              if self.contrastive_objective == VICREG_OBJECTIVE else
+                              f"pos={extra.get('positive_valid_fraction', 0):.2f} "
+                              f"neg={extra.get('valid_negatives_mean', 0):.1f}")
             print(f"  ep{ep:>3} train={tr_loss:.4f} val={vloss:.4f} "
                   f"A.smooth={extra['smooth']:+.3f} B.sil={extra['sil']:+.3f} "
                   f"C.span={extra['scale_span']:+.3f}{'✓' if extra['scale_mono'] else '✗'} "
                   f"D.vol={extra['vol_ratio']:.2f} E.drift={extra['drift']:.2f} "
-                  f"pos={extra.get('positive_valid_fraction', 0):.2f} "
-                  f"neg={extra.get('valid_negatives_mean', 0):.1f} "
+                  f"{objective_diag} "
                   f"std={extra['std']:.3f}{'  *' if improved else ''}", flush=True)
 
 
@@ -596,6 +707,9 @@ def train_ssl_contrastive(big, train_starts, val_starts, *, seq=64, pos_deltas=(
                           positive_gap_fractions=(0.6, 1.0, 2.0), max_positive_overlap=0.5,
                           positive_tolerance_fraction=0.20, negative_min_contexts=4.0,
                           sync_exclusion_minutes=60.0, min_valid_negatives=1,
+                          vicreg_invariance_weight=25.0, vicreg_variance_weight=25.0,
+                          vicreg_covariance_weight=1.0, vicreg_variance_target=1.0,
+                          feature_anchor_weight=0.0,
                           steps_per_epoch=200, batch=256, lr=2e-4, weight_decay=0.05,
                           patience=8, device=None, model_id='paris-noah/Mantis-8M',
                           model_version=None, backbone_ckpt=None, control='real', seed=0,
@@ -618,6 +732,11 @@ def train_ssl_contrastive(big, train_starts, val_starts, *, seq=64, pos_deltas=(
         negative_min_contexts=negative_min_contexts,
         sync_exclusion_minutes=sync_exclusion_minutes,
         min_valid_negatives=min_valid_negatives,
+        vicreg_invariance_weight=vicreg_invariance_weight,
+        vicreg_variance_weight=vicreg_variance_weight,
+        vicreg_covariance_weight=vicreg_covariance_weight,
+        vicreg_variance_target=vicreg_variance_target,
+        feature_anchor_weight=feature_anchor_weight,
         train_start_times_ns=_ignore.get('train_start_times_ns'),
         val_start_times_ns=_ignore.get('val_start_times_ns'),
         stream_bar_ns=_ignore.get('stream_bar_ns'),

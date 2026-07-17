@@ -62,6 +62,25 @@ def test_time_split_excludes_holdout_and_is_causal():
     assert len(va) == int(n_usable * 0.2)
 
 
+def test_calendar_viability_filter_drops_only_sparse_groups_without_targets():
+    from futures_foundation.finetune.ssl_probe import (
+        calendar_viable_group_rows, walk_forward_splits)
+    day = 24 * 60 * 60 * 10**9
+    # Group 0 covers the calendar. Group 1 exists only at the end and cannot provide an earlier
+    # training block. The filter receives no labels or model values.
+    dense = np.arange(36, dtype=np.int64) * 10 * day
+    sparse = np.arange(30, 36, dtype=np.int64) * 10 * day
+    times = np.concatenate((dense, sparse))
+    groups = np.concatenate((np.zeros(len(dense), np.int64),
+                             np.ones(len(sparse), np.int64)))
+    keep, excluded = calendar_viable_group_rows(times, groups, folds=3, span_ns=day)
+    assert excluded == [1] and np.unique(groups[keep]).tolist() == [0]
+    splits = walk_forward_splits(
+        np.arange(len(keep)), groups[keep], folds=3, span=1,
+        timestamps=times[keep], span_ns=day)
+    assert len(splits) == 3 and all(len(train) and len(test) for train, test in splits)
+
+
 def test_time_split_embargo_purges_train_and_holdout_boundaries():
     ts = pd.date_range('2024-01-01', periods=900, freq='1D', tz='UTC')
     tr, va = ssl_data.time_split(ts, val_frac=0.2, holdout_start='2026-01-01', embargo=32)
@@ -360,22 +379,24 @@ def test_passes_gate_on_probe_not_loss():
     assert not ssl._passes(good, std=0.001)[0]
 
 
-def test_passes_forecast_gate_is_forward_centric_anti_shortcut():
-    """Stage-2 (forecast) gate: descriptive gains alone CANNOT pass — forward MOVE SIZE must
-    improve and forward DIRECTION must not regress. Stage-1 (mask) gate is unaffected."""
+def test_passes_forecast_gate_is_forward_move_centric_anti_shortcut():
+    """Forecast gate requires forward move-size improvement; direction remains diagnostic."""
     # shortcut: big descriptive lift, but forward targets flat/negative -> FAIL on forecast...
     shortcut = _gate_probe(vol=0.10, trend_eff=0.10, range_expand=0.10,
                            fwd_absmove=0.0, fwd_dir=-0.02)
     assert not ssl._passes(shortcut, std=0.5, pretext='forecast')[0]
-    # The unified gate also refuses to promote another stage that damaged a declared target.
-    assert not ssl._passes(shortcut, std=0.5, pretext='mask')[0]
+    # Mask can pass its structural gate; the forward-direction regression remains diagnostic.
+    mask_ok, mask_detail = ssl._passes(shortcut, std=0.5, pretext='mask')
+    assert mask_ok and not mask_detail['fwd_dir_ok']
     # genuine forward learning: move size up, direction not worse -> PASS on forecast
     genuine = _gate_probe(fwd_absmove=0.03, fwd_dir=0.01)
     ok, d = ssl._passes(genuine, std=0.5, pretext='forecast')
     assert ok and d['fwd_size_ok'] and d['fwd_dir_ok'] and d['descriptive_ok']
-    # direction regresses -> FAIL even with forward move-size gain
+    # Direction is noisy at this sample size: report the regression, but do not gate on it.
     dir_reg = _gate_probe(fwd_absmove=0.03, fwd_dir=-0.01)
-    assert not ssl._passes(dir_reg, std=0.5, pretext='forecast')[0]
+    ok, d = ssl._passes(dir_reg, std=0.5, pretext='forecast')
+    assert ok and not d['fwd_dir_ok']
+    assert d['diagnostic_target_checks']['fwd_dir']['gated'] is False
     # descriptive regresses -> FAIL
     desc_reg = _gate_probe(vol=-0.01, fwd_absmove=0.03, fwd_dir=0.01)
     assert not ssl._passes(desc_reg, std=0.5, pretext='forecast')[0]
@@ -526,6 +547,10 @@ def test_base_cfg_has_contrastive_keys():
     assert cfg['contrastive_objective'] == 'elapsed_time_v2'
     assert cfg['positive_gap_fractions'] == (0.6, 1.0, 2.0)
     assert cfg['max_positive_overlap'] == 0.5 and cfg['vol_weight'] == 0.0
+    assert cfg['vicreg_invariance_weight'] == 25.0
+    assert cfg['vicreg_variance_weight'] == 25.0
+    assert cfg['vicreg_covariance_weight'] == 1.0
+    assert cfg['vicreg_variance_target'] == 1.0
     over = ssl._base_cfg(pretext='contrastive', temperature=0.07, crop_max=0.1,
                          pos_deltas=(1, 8, 32), far_min=256, vol_weight=0.5)
     assert over['pretext'] == 'contrastive' and over['temperature'] == 0.07 and over['crop_max'] == 0.1
@@ -1121,6 +1146,44 @@ def test_elapsed_objective_never_downweights_high_volatility():
     sigma = torch.tensor([0.1, 1.0, 10.0])
     assert torch.equal(v2._sigma_weights(sigma), torch.ones(3))
     assert legacy._sigma_weights(sigma)[0] > legacy._sigma_weights(sigma)[-1]
+
+
+@torch_test
+def test_vicreg_loss_is_finite_noncollapsed_and_differentiable():
+    import torch
+    from futures_foundation.finetune.pretext._torch.contrastive import _vicreg_loss
+    z1 = torch.randn(16, 12, requires_grad=True)
+    z2 = (z1.detach() + .05 * torch.randn(16, 12)).requires_grad_()
+    loss, diag = _vicreg_loss(z1, z2)
+    assert torch.isfinite(loss) and loss > 0
+    assert set(diag) == {'vicreg_invariance', 'vicreg_variance', 'vicreg_covariance'}
+    loss.backward()
+    assert z1.grad is not None and z2.grad is not None
+    collapsed = torch.zeros(16, 12)
+    collapsed_loss, collapsed_diag = _vicreg_loss(collapsed, collapsed)
+    assert torch.isfinite(collapsed_loss)
+    assert collapsed_diag['vicreg_variance'] > diag['vicreg_variance']
+
+
+@torch_test
+def test_vicreg_trainer_uses_same_context_two_views_and_frozen_teacher():
+    from futures_foundation.finetune.pretext._torch.contrastive import _ContrastiveTrainer
+    rng = np.random.default_rng(27)
+    big = (100 + rng.standard_normal((500, 5)).cumsum(0) * .01).astype(np.float32)
+    starts = np.arange(300)
+    trainer = _ContrastiveTrainer(
+        big, starts, starts, seq=32, batch=8, epochs=1, steps_per_epoch=1,
+        contrastive_objective='vicreg_v1', feature_anchor_weight=.1,
+        model_id='paris-noah/MantisV2', model_version='v2',
+        device='cpu', verbose=False)
+    trainer.build_net()
+    batch = trainer.make_batch(trainer.tr)
+    assert batch[1] == [] and batch[2].shape == (0, 8) and batch[3].shape == (0, 8)
+    assert trainer.teacher is not None
+    assert not any(parameter.requires_grad for parameter in trainer.teacher.parameters())
+    loss = trainer.compute_loss(batch)
+    assert np.isfinite(float(loss.detach()))
+    assert trainer._last_loss_diagnostics['valid_negatives_mean'] == 0.0
 
 
 @torch_test

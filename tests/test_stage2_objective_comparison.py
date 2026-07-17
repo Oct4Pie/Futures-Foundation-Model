@@ -23,8 +23,16 @@ def test_common_reserve_holds_anchor_universe_fixed():
     base = ssl._base_cfg(pretext='contrastive', seq=64, contrastive_reserve_contexts=3.0)
     legacy = {**base, 'contrastive_objective': 'bar_offset_v1'}
     elapsed = {**base, 'contrastive_objective': 'elapsed_time_v2'}
+    vicreg = {**base, 'contrastive_objective': 'vicreg_v1'}
     assert ssl.get_pretext('contrastive').reserve(legacy) == 192
     assert ssl.get_pretext('contrastive').reserve(elapsed) == 192
+    assert ssl.get_pretext('contrastive').reserve(vicreg) == 192
+
+
+def test_vicreg_natural_reserve_has_no_future_neighbor():
+    cfg = ssl._base_cfg(pretext='contrastive', seq=256,
+                        contrastive_objective='vicreg_v1')
+    assert ssl.get_pretext('contrastive').reserve(cfg) == 256
 
 
 def _probe(delta):

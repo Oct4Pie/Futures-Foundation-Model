@@ -122,6 +122,42 @@ def walk_forward_splits(starts, group_ids, folds=5, span=80, *, timestamps=None,
     return splits
 
 
+def calendar_viable_group_rows(timestamps, group_ids, *, folds, span_ns):
+    """Target-blind filter for streams that can support every shared calendar fold.
+
+    Coarse futures streams can have too few roll-safe, non-overlapping contexts for a five-fold
+    ruler. They must not be force-fit or allowed to crash the pooled probe. This function applies
+    the exact calendar/embargo availability condition used by ``walk_forward_splits`` and returns
+    rows belonging to viable groups plus the excluded group ids. It never reads a target or model
+    output.
+    """
+    times = np.asarray(timestamps, np.int64)
+    groups = np.asarray(group_ids, np.int64)
+    if len(times) != len(groups) or len(times) == 0:
+        raise ValueError('timestamps/group_ids must be non-empty and aligned')
+    folds, span_ns = int(folds), int(span_ns)
+    if folds < 1 or span_ns < 1:
+        raise ValueError('folds and span_ns must be positive')
+    lo, hi = int(times.min()), int(times.max()) + 1
+    edges = np.linspace(lo, hi, folds + 2).astype(np.int64)
+    viable, excluded = [], []
+    for group in np.unique(groups):
+        rows = groups == group
+        ok = True
+        for fold in range(1, folds + 1):
+            test_lo, test_hi = int(edges[fold]), int(edges[fold + 1])
+            has_train = np.any(rows & (times + 2 * span_ns <= test_lo))
+            has_test = np.any(rows & (times >= test_lo) & (times < test_hi))
+            if not (has_train and has_test):
+                ok = False
+                break
+        (viable if ok else excluded).append(int(group))
+    if not viable:
+        raise ValueError('no probe stream can support the requested calendar folds and embargo')
+    keep = np.flatnonzero(np.isin(groups, np.asarray(viable, np.int64)))
+    return keep, excluded
+
+
 def targets_from_windows(big, starts, seq, fwd_k=16):
     """Compute the probe targets for each window [start, start+seq). big: [T, 5]
     (O,H,L,C,V). Descriptive targets come from the window; FORWARD targets (buy/sell-
@@ -278,6 +314,12 @@ def run_probe(big, starts, seq, ssl_ckpt, *, model_id='paris-noah/Mantis-8M', mo
     emb_ssl, used = emb_ssl[keep], np.asarray(used)[keep]
     used_groups = group_ids[keep]
     used_timestamps = timestamps[keep]
+    excluded_groups = []
+    if not legacy_probe:
+        viable, excluded_groups = calendar_viable_group_rows(
+            used_timestamps, used_groups, folds=folds, span_ns=span_ns)
+        emb_ssl, used = emb_ssl[viable], used[viable]
+        used_groups, used_timestamps = used_groups[viable], used_timestamps[viable]
     emb_van, _ = _ssl_torch.embed_encoder(big, used, seq, ckpt=None, model_id=model_id,
                                           model_version=model_version, device=device, batch=batch,
                                           max_windows=len(used), seed=seed,
@@ -287,6 +329,8 @@ def run_probe(big, starts, seq, ssl_ckpt, *, model_id='paris-noah/Mantis-8M', mo
         used, used_groups, folds=folds, span=seq + fwd_k,
         timestamps=used_timestamps, span_ns=span_ns))
     out = compare(emb_ssl, emb_van, tgt, seed=seed, folds=folds, splits=splits)
+    out['calendar_excluded_group_ids'] = [int(group) for group in excluded_groups]
+    out['calendar_viable_group_count'] = int(len(np.unique(used_groups)))
     if legacy_probe:
         out['probe_protocol'] = 'legacy_random_diagnostic_only'
         out['strict_attestation_required'] = True
