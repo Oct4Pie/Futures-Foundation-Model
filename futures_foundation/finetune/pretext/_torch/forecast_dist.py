@@ -219,7 +219,8 @@ class _DistForecastTrainer(_ForecastTrainer):
 def train_ssl_forecast_dist(big, train_starts, val_starts, *, horizons=(5, 10, 20, 25),
                             context_lengths=(64, 100, 150, 200), new_channels=8, epochs=60,
                             steps_per_epoch=200, batch=512, lr=1e-4, weight_decay=0.05, patience=8,
-                            device=None, model_id='paris-noah/Mantis-8M', backbone_ckpt=None,
+                            device=None, model_id='paris-noah/Mantis-8M', model_version=None,
+                            backbone_ckpt=None,
                             compile_model=False, control='real', seed=0, amp_dtype='fp16',
                             grad_clip=1.0, clamp=10.0, verbose=True,
                             ckpt_path=None, resume=False, freeze_encoder_layers=0,
@@ -235,7 +236,8 @@ def train_ssl_forecast_dist(big, train_starts, val_starts, *, horizons=(5, 10, 2
     read off the candle head)."""
     return _DistForecastTrainer(big, train_starts, val_starts, horizons=horizons,
                                 context_lengths=context_lengths, new_channels=new_channels,
-                                model_id=model_id, backbone_ckpt=backbone_ckpt,
+                                model_id=model_id, model_version=model_version,
+                                backbone_ckpt=backbone_ckpt,
                                 compile_model=compile_model, clamp=clamp, epochs=epochs,
                                 steps_per_epoch=steps_per_epoch, batch=batch, lr=lr,
                                 weight_decay=weight_decay, patience=patience, device=device,
@@ -244,4 +246,8 @@ def train_ssl_forecast_dist(big, train_starts, val_starts, *, horizons=(5, 10, 2
                                 resume=resume, freeze_encoder_layers=freeze_encoder_layers,
                                 objective=objective, dir_weight=dir_weight,
                                 dir_close_ch=dir_close_ch, mse_weight=mse_weight,
-                                quantile_taus=quantile_taus, bins_k=bins_k).fit()
+                                quantile_taus=quantile_taus, bins_k=bins_k,
+                                preprocessing=_ignore.get('preprocessing'),
+                                train_group_bounds=_ignore.get('train_group_bounds'),
+                                val_group_bounds=_ignore.get('val_group_bounds'),
+                                val_batches=_ignore.get('val_batches')).fit()

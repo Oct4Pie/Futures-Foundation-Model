@@ -82,14 +82,18 @@ def test_baked_platt_identity_when_neutral(tmp_path):
     assert np.abs(clf.predict_proba(X)[:, 1] - _onnx_proba(p, X)[:, 1]).max() < 1e-4
 
 
+@pytest.mark.parametrize('preprocessing', [
+    'per_window_per_channel_zscore_v1', 'per_window_shared_ohlc_zscore_v1',
+    'per_window_log_price_rel_volume_zscore_v1'])
 @torch_test
-def test_encoder_onnx_parity(tmp_path):
+def test_encoder_onnx_parity(tmp_path, preprocessing):
     """export_encoder_onnx reproduces embed_windows numerically (vanilla Mantis, no ckpt)."""
     from futures_foundation.finetune._ssl_torch import embed_windows, export_encoder_onnx
     rng = np.random.default_rng(0)
     W = (rng.standard_normal((6, 5, 64)).astype(np.float32) * 3 + 100)
-    ref = embed_windows(W, ckpt=None, device='cpu')
-    p = export_encoder_onnx(str(tmp_path / 'enc.onnx'), ckpt=None, C=5, seq=64, device='cpu')
+    ref = embed_windows(W, ckpt=None, device='cpu', preprocessing=preprocessing)
+    p = export_encoder_onnx(str(tmp_path / 'enc.onnx'), ckpt=None, C=5, seq=64, device='cpu',
+                            preprocessing=preprocessing)
     import onnxruntime as ort
     sess = ort.InferenceSession(p, providers=['CPUExecutionProvider'])
     onnx_emb = sess.run(['embedding'], {'window': W})[0]

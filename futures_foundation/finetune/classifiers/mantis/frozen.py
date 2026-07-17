@@ -23,7 +23,7 @@ import numpy as np
 
 from ...classifier import Classifier, register_classifier
 
-_EMBED_KEYS = ('model_id', 'device', 'batch')
+_EMBED_KEYS = ('model_id', 'model_version', 'device', 'batch')
 
 _CKPT_FP_CACHE: dict = {}
 
@@ -261,7 +261,8 @@ def _export_encoder_onnx(cfg, enc_path):
     subprocess worker (parent stays torch-free). Shared by the single-head and ladder bundles."""
     ecfg = dict(_export_encoder=enc_path, ckpt=cfg.get('backbone_ckpt'),
                 C=int(cfg.get('raw_C', 5)), seq=int(cfg.get('raw_seq', 64)),
-                model_id=cfg.get('model_id', 'paris-noah/Mantis-8M'))
+                model_id=cfg.get('model_id', 'paris-noah/Mantis-8M'),
+                model_version=cfg.get('model_version'), preprocessing=cfg.get('preprocessing'))
     cmd = [sys.executable, '-u', '-m', 'futures_foundation.finetune.classifiers.mantis._embed_worker']
     with tempfile.TemporaryDirectory() as d:
         d = Path(d); (d / 'cfg.json').write_text(json.dumps(ecfg))

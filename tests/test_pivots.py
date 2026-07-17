@@ -82,6 +82,23 @@ def test_causal_htf_dir_matches_prefix_terminal_values():
     np.testing.assert_array_equal(batch[endpoints], live)
 
 
+def test_causal_htf_dir_prefix_invariant():
+    """Appending bars must never revise any direction already emitted at a prefix."""
+    n = 3000
+    ts = pd.date_range('2024-01-01', periods=n, freq='1min', tz='UTC').values
+    rng = np.random.default_rng(7)
+    c = 100 + np.cumsum(rng.normal(0, .2, n))
+    o = np.r_[c[0], c[:-1]]
+    h = np.maximum(o, c) + rng.uniform(0, .1, n)
+    l = np.minimum(o, c) - rng.uniform(0, .1, n)
+    bars = dict(ts=ts, o=o, h=h, l=l, c=c)
+    full = P.causal_htf_dir(bars, '1min', ts, atr_p=20)
+    for end in range(1000, n, 200):
+        prefix = {key: value[:end] for key, value in bars.items()}
+        observed = P.causal_htf_dir(prefix, '1min', ts[:end], atr_p=20)
+        np.testing.assert_array_equal(observed, full[:end])
+
+
 def test_pivot_names_match_width():
     B = _series()
     X = P.pivot_features(B)

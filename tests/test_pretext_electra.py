@@ -38,14 +38,21 @@ def test_trainer_importable_from_ssl_torch_shim():
 
 def test_gate_passes_and_fails_like_mask():
     t = get_pretext('electra')
-    probe = {'mean_core_delta': 0.05, 'descriptive_delta': 0.0, 'fwd_absmove_delta': 0.0,
-             'fwd_dir_delta': 0.0, 'forward_score': 0.0, 'learns_regime_vol_structure': True}
+    deltas = {'vol': 0.01, 'trend_eff': 0.03, 'range_expand': 0.02,
+              'fwd_absmove': 0.01, 'direction': 0.0, 'fwd_dir': 0.001}
+    per = {name: {'delta': delta, 'fold_delta': [delta] * 5}
+           for name, delta in deltas.items()}
+    probe = {'per_target': per, 'mean_core_delta': 0.02, 'descriptive_delta': 0.02,
+             'fwd_absmove_delta': 0.01, 'fwd_dir_delta': 0.001,
+             'forward_score': 0.011, 'learns_regime_vol_structure': True}
     ok, detail = t.gate(probe, std=0.5, margin=0.0, dir_margin=0.0)
     assert ok and detail['no_collapse']
     ok_c, _ = t.gate(probe, std=0.0, margin=0.0, dir_margin=0.0)      # collapsed embedding
     assert not ok_c
-    ok_m, _ = t.gate({**probe, 'mean_core_delta': -0.01}, std=0.5, margin=0.0, dir_margin=0.0)
-    assert not ok_m                                       # probe below margin -> fail
+    regressed = {**probe, 'per_target': {**per, 'vol': {'delta': -0.01,
+                                                         'fold_delta': [-0.01] * 5}}}
+    ok_m, _ = t.gate(regressed, std=0.5, margin=0.0, dir_margin=0.0)
+    assert not ok_m                                       # one target regression -> fail
 
 
 def test_finalize_verdict_notes_the_specific_metric():
@@ -262,8 +269,9 @@ def test_network_heads_shapes_and_encoder_anchor_gradient():
     net.zero_grad()
     torch.nn.functional.mse_loss(rec, x).backward()       # enc_recon anchor only (no RTD)
     enc_grad = sum(float(p.grad.abs().sum()) for p in net.encoder.parameters() if p.grad is not None)
-    adapt_grad = sum(float(p.grad.abs().sum()) for p in net.adapter.parameters() if p.grad is not None)
-    assert enc_grad > 0 and adapt_grad > 0                # encoder IS anchored by the recon head
+    recon_grad = sum(float(p.grad.abs().sum()) for p in net.recon.parameters() if p.grad is not None)
+    assert not hasattr(net, 'adapter')
+    assert enc_grad > 0 and recon_grad > 0                # encoder IS anchored by the recon head
 
 
 @torch_test

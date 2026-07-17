@@ -1,31 +1,40 @@
-"""Stage-3 pretext: TEMPORAL-NEIGHBORHOOD CONTRASTIVE (regime geometry, label-free).
+"""Stage-2 pretext: TEMPORAL-NEIGHBORHOOD CONTRASTIVE (regime geometry, label-free).
 
-Positives = temporally-nearby windows at multiple scales + augmented views; negatives =
-far-in-time windows; per-anchor volatility DOWN-weighting (data-driven, not a label). Teaches
+The current objective uses elapsed-time neighborhoods, independently augmented observations,
+equal anchor weighting, and synchronized-negative exclusion. The original bar-offset / volatility-
+weighted objective remains available only as ``bar_offset_v1`` for controlled comparisons. Teaches
 the encoder a smooth "market state geometry": nearby-in-time / structurally-similar windows
 cluster, different structures separate — the regime representation the FFM vision wants the
 foundation to own.
 
-Replaces the outcome-keyed contrastive (v1-v3, dropped 2026-07-02 — ~90 trials, no arm beat
-stage-2): the key here is TIME PROXIMITY, never a future path statistic — a fundamentally
-different supervision source.
-
-GATE (this stage) = the requirement doc's structural metrics A-E on the embedding space
-(temporal consistency, emergent clusters, multi-scale ordering, noise robustness, temporal
-stability — `regime_gate` in the torch module). The SHIP gate is unchanged: stage-2 seq2seq
-stays the shipped base; a stage-3 checkpoint must beat it on the one-shot 2026 WR@3R benchmark
-before promotion (feedback_holdout_offlimits discipline)."""
+In the canonical V2 lineage it warm-starts from masked checkpoint 1 and emits checkpoint 2;
+seq2seq then warm-starts from this encoder. The key is TIME PROXIMITY, never a future outcome."""
 from .base import PretextTask
 
 
 class ContrastiveTask(PretextTask):
     name, trainer = 'contrastive', 'train_ssl_contrastive'
+    primary_targets = ('trend_eff', 'range_expand')
 
     def reserve(self, cfg):
-        # positives live at anchor+delta: reserve the largest delta so every positive window fits
-        return max(int(d) for d in cfg.get('pos_deltas', (2, 16, 64)))
-
-    def _decide(self, probe_res, no_collapse, margin, dir_margin, detail):
-        desc_ok = bool(probe_res.get('descriptive_delta', probe_res['mean_core_delta']) >= -1e-9)
-        detail.update({'descriptive_ok': desc_ok})
-        return bool(no_collapse and desc_ok), detail
+        common = cfg.get('contrastive_reserve_contexts')
+        if common is not None:
+            # Comparison mode holds the eligible anchor universe fixed across objective versions.
+            common_len = int(round(int(cfg['seq']) * float(common)))
+            if cfg.get('contrastive_objective', 'elapsed_time_v2') == 'elapsed_time_v2':
+                max_gap = max(float(x) for x in
+                              cfg.get('positive_gap_fractions', (0.6, 1.0, 2.0)))
+                natural = int(round(int(cfg['seq']) * (1.0 + max_gap)))
+            else:
+                natural = int(cfg['seq']) + max(
+                    int(d) for d in cfg.get('pos_deltas', (2, 16, 64)))
+            if common_len < natural:
+                raise ValueError('contrastive_reserve_contexts is smaller than objective reach')
+            return common_len
+        if cfg.get('contrastive_objective', 'elapsed_time_v2') == 'elapsed_time_v2':
+            # Context-relative elapsed-time gaps are equivalent to this many nominal context
+            # lengths. Reserve the positive context as well so no snap can cross a temporal split.
+            gap = max(float(x) for x in cfg.get('positive_gap_fractions', (0.6, 1.0, 2.0)))
+            return int(round(int(cfg['seq']) * (1.0 + gap)))
+        # Legacy bar-offset baseline.
+        return int(cfg['seq']) + max(int(d) for d in cfg.get('pos_deltas', (2, 16, 64)))

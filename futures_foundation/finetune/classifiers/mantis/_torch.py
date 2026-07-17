@@ -45,19 +45,22 @@ class _InterpNet(nn.Module):
 
 
 def build_model(C, *, new_channels=10, ft_mode='partial', unfreeze_blocks=2,
-                device='cpu', model_id='paris-noah/Mantis-8M', backbone_ckpt=None):
+                device='cpu', model_id='paris-noah/Mantis-8M', model_version=None,
+                backbone_ckpt=None):
     """Mantis backbone + channel adapter + head with the freeze policy applied:
     'full' = all trainable; 'partial' = last `unfreeze_blocks` blocks + adapter + head;
     'head' = adapter + head only. backbone_ckpt = a contrastive-SSL-adapted encoder
     state_dict (from finetune.ssl) to initialize the backbone from instead of the
     vanilla pretrained weights. Returns (model, new_c)."""
-    from mantis.architecture import Mantis8M
     from mantis.adapters import LinearChannelCombiner
     from mantis.trainer.trainer_utils.architecture import FineTuningNetwork
+    from futures_foundation.finetune.pretext._torch.backbone import load_mantis
+    from futures_foundation.finetune.pretext._torch.common import load_encoder_checkpoint
     new_c = min(new_channels, C)
-    net = Mantis8M.from_pretrained(model_id)
+    net = load_mantis(model_id, model_version=model_version, device='cpu')
     if backbone_ckpt:                                   # start from SSL-adapted encoder
-        net.load_state_dict(torch.load(backbone_ckpt, map_location='cpu'))
+        load_encoder_checkpoint(net, backbone_ckpt, model_id=model_id,
+                                model_version=model_version, expected_channels=C)
     adapter = LinearChannelCombiner(num_channels=C, new_num_channels=new_c)
     head = nn.Sequential(nn.LayerNorm(net.hidden_dim * new_c),
                          nn.Linear(net.hidden_dim * new_c, 2))
@@ -66,7 +69,8 @@ def build_model(C, *, new_channels=10, ft_mode='partial', unfreeze_blocks=2,
         for p in net.parameters():
             p.requires_grad = False
     if ft_mode == 'partial':
-        for blk in net.vit_unit.transformer.layers[-unfreeze_blocks:]:
+        unit = getattr(net, 'transf_unit', None) or getattr(net, 'vit_unit', None)
+        for blk in unit.transformer.layers[-unfreeze_blocks:]:
             for p in blk.parameters():
                 p.requires_grad = True
     return model, new_c
@@ -115,7 +119,8 @@ def _chunk_iter(X, rows, chunk_rows, mu, sd):
 def fit_predict_torch(Xtr, ytr, Xval, yval, Xeval, *, new_channels=10, ft_mode='partial',
                       unfreeze_blocks=2, epochs=40, batch=64, chunk_rows=65536, amp=False,
                       amp_dtype='fp16', lr=3e-4, weight_decay=0.05, patience=10, threads=2,
-                      device=None, model_id='paris-noah/Mantis-8M', backbone_ckpt=None,
+                      device=None, model_id='paris-noah/Mantis-8M', model_version=None,
+                      backbone_ckpt=None,
                       max_train=None, standardize_mu=None, standardize_sd=None,
                       export_onnx_path=None, seed=0, verbose=True):
     """Returns (p_val, p_eval, best_val_auc, best_epoch). Xtr/Xval/Xeval: arrays or
@@ -142,7 +147,8 @@ def fit_predict_torch(Xtr, ytr, Xval, yval, Xeval, *, new_channels=10, ft_mode='
 
     model, new_c = build_model(C, new_channels=new_channels, ft_mode=ft_mode,
                                unfreeze_blocks=unfreeze_blocks, device=dev,
-                               model_id=model_id, backbone_ckpt=backbone_ckpt)
+                               model_id=model_id, model_version=model_version,
+                               backbone_ckpt=backbone_ckpt)
     params = [p for p in model.parameters() if p.requires_grad]
     opt = torch.optim.AdamW(params, lr=lr, weight_decay=weight_decay)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs)

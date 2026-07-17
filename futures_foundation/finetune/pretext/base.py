@@ -10,9 +10,14 @@ unknown kwargs (**_ignore), so the shared cfg is safe to pass to any task.
 class PretextTask:
     name = 'base'
     trainer = None                                        # _ssl_torch trainer fn name
+    # One promotion schema for every stage. Subclasses declare which targets must improve;
+    # every listed target must at least be non-inferior to vanilla independently.
+    noninferiority_targets = ('vol', 'trend_eff', 'range_expand', 'fwd_absmove', 'fwd_dir')
+    primary_targets = ()
+    min_consistent_fold_fraction = 0.6
 
     def reserve(self, cfg):
-        """Extra bars reserved per window beyond `seq` (0 = none)."""
+        """Total parent-window length required by the task (0 = use seq+max_jitter)."""
         return 0
 
     def train(self, big, tr, va, cfg, control):
@@ -22,22 +27,59 @@ class PretextTask:
         return getattr(_ssl_torch, self.trainer)(big, tr, va, control=control, **kw)
 
     def gate(self, probe_res, std, margin, dir_margin):
-        """Report-only gate on the PROBE (representation content), NOT the loss. Builds the shared
-        detail dict, then defers the pass/fail to `_decide`."""
+        """Single promotion gate: per-target means + fold consistency, never mixed-metric sums."""
         no_collapse = bool(std > 0.01)
-        detail = {'no_collapse': no_collapse}
+        detail = {'gate_schema': 'ffm_ssl_promotion_v2', 'no_collapse': no_collapse,
+                  'primary_targets': list(self.primary_targets),
+                  'noninferiority_targets': list(self.noninferiority_targets),
+                  'min_consistent_fold_fraction': self.min_consistent_fold_fraction}
         if probe_res is None:
-            return no_collapse, {**detail, 'probe': None}
+            return False, {**detail, 'probe': None, 'reason': 'strict probe required'}
         detail.update({'mean_core_delta': float(probe_res['mean_core_delta']),
                        'descriptive_delta': float(probe_res.get('descriptive_delta', 0.0)),
                        'fwd_absmove_delta': float(probe_res.get('fwd_absmove_delta', 0.0)),
                        'fwd_dir_delta': float(probe_res.get('fwd_dir_delta', 0.0)),
                        'forward_score': float(probe_res.get('forward_score', 0.0)),
                        'learns_regime_vol_structure': bool(probe_res['learns_regime_vol_structure'])})
-        return self._decide(probe_res, no_collapse, margin, dir_margin, detail)
-
-    def _decide(self, probe_res, no_collapse, margin, dir_margin, detail):
-        raise NotImplementedError
+        per_target = probe_res.get('per_target') or {}
+        missing = [name for name in self.noninferiority_targets if name not in per_target]
+        if missing:
+            return False, {**detail, 'missing_targets': missing}
+        checks = {}
+        for name in self.noninferiority_targets:
+            result = per_target[name]
+            limit = float(dir_margin if name == 'fwd_dir' else 0.0)
+            fold_delta = result.get('fold_delta') or [float(result['delta'])]
+            fraction = sum(float(x) >= limit for x in fold_delta) / len(fold_delta)
+            checks[name] = {
+                'delta': float(result['delta']), 'noninferiority_limit': limit,
+                'mean_noninferior': bool(float(result['delta']) >= limit),
+                'consistent_fold_fraction': float(fraction),
+                'fold_consistent': bool(fraction >= self.min_consistent_fold_fraction),
+            }
+        primary_checks = {}
+        for name in self.primary_targets:
+            gain = float(dir_margin if name == 'fwd_dir' else margin)
+            result = per_target[name]
+            fold_delta = result.get('fold_delta') or [float(result['delta'])]
+            fraction = sum(float(x) > gain for x in fold_delta) / len(fold_delta)
+            primary_checks[name] = {
+                'gain_margin': gain, 'mean_gain': bool(float(result['delta']) > gain),
+                'consistent_gain_fraction': float(fraction),
+                'fold_consistent': bool(fraction >= self.min_consistent_fold_fraction),
+            }
+        noninferior = all(x['mean_noninferior'] and x['fold_consistent'] for x in checks.values())
+        primary = all(x['mean_gain'] and x['fold_consistent'] for x in primary_checks.values())
+        detail.update({
+            'per_target_checks': checks, 'primary_checks': primary_checks,
+            'per_target_noninferior': bool(noninferior), 'primary_gains': bool(primary),
+            # Backward-compatible report fields; these are now derived from per-target checks.
+            'descriptive_ok': all(checks[x]['mean_noninferior'] for x in
+                                  ('vol', 'trend_eff', 'range_expand')),
+            'fwd_size_ok': checks['fwd_absmove']['mean_noninferior'],
+            'fwd_dir_ok': checks['fwd_dir']['mean_noninferior'],
+        })
+        return bool(no_collapse and noninferior and primary), detail
 
     def finalize_verdict(self, verdict, fc_skill, probe_res):
         """Add any pretext-specific fields to the saved verdict (default: none)."""

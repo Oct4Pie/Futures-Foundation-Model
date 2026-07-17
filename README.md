@@ -8,6 +8,11 @@
 
 ---
 
+> **Active research plan:** use
+> [FUTURES_TRADING_FOUNDATION_PLAN.md](FUTURES_TRADING_FOUNDATION_PLAN.md) and its dependency-ordered
+> [FUTURES_TRADING_TASKS.md](FUTURES_TRADING_TASKS.md). Older tournament TODOs are historical
+> evidence, not authorization to skip the frozen downstream decision gate.
+
 ## Quick Start
 
 ```bash
@@ -57,41 +62,60 @@ The flow is a self-supervised pretraining pipeline over one shared backbone, the
 ```
 raw OHLCV (multi-ticker × multi-timeframe)
         │
-        ▼  SELF-SUPERVISED PRETRAINING — 2 progressive stages  (finetune/ssl.py, GPU/Colab)
+        ▼  SELF-SUPERVISED PRETRAINING — gated experimental stages  (finetune/ssl.py, GPU/Colab)
    1) masked modeling      →  regime / structure / volatility
-   2) candle forecasting   →  forward price-action dynamics       ──►  refined backbone checkpoint
-        │   each stage WARM-STARTS from the previous; anti-forgetting + crash-safe resume
+   2) contrastive learning →  market-state geometry
+   3) candle forecasting   →  forward price-action dynamics       ──►  promoted backbone bundle
+        │   a stage advances only when its per-target promotion gate passes
         ▼  DOWNSTREAM FINETUNE  (finetune/wf.py → produce.py)
    strategy labeler + light classifier head  ──►  ONNX bundle the bot loads
 ```
 
 - **Honest by construction.** Every result passes the honest ruler: walk-forward × {REAL, SHUFFLE, RANDOM} with an **overfit→Optuna** loop and a pre-registered PASS/FAIL auto-verdict. A number is believed only if REAL clearly beats every control, fold after fold.
-- **2026 is a reserved out-of-sample year** — excluded from *both* pretraining and the rolling walk-forward, so the final OOS is never contaminated.
+- **Historical 2026 results are development evidence, not untouched OOS.** They have already been examined. Final confirmation requires subsequently arriving data that has not influenced model or threshold choices.
 - **Causal by contract.** Every feature/window is strictly causal (streaming == batch, per bar); the leak audit is mandatory.
 - **Bar data only, for now.** The backbone consumes fixed-interval OHLCV bars (any timeframe) — not raw tick/quote streams. Tick data must be aggregated into bars first (see [Data](#data)); FFM has no tick-level input path today. Tick and order-book data are on the roadmap, not yet supported.
 
 ---
 
-## Self-Supervised Pretraining — 2 progressive stages
+## Self-Supervised Pretraining — gated experimental stages
 
-**`futures_foundation/finetune/ssl.py` orchestrates a 2-stage self-supervised pipeline that progressively refines the backbone on raw OHLCV.** Each stage **warm-starts from the previous checkpoint**, so the foundation compounds — regime understanding → forward dynamics — before any strategy sees it. Pretext tasks are **pluggable** (`finetune/pretext/`): a new pretraining objective is one module (its own reserve / train / gate); the orchestrator never changes.
+**`futures_foundation/finetune/ssl.py` orchestrates self-supervised experiments on raw OHLCV.** The canonical runner can warm-start a stage from its predecessor, but the chain is not assumed to be beneficial: direct-from-vanilla and skip-stage ablations are required before promotion. Pretext tasks are **pluggable** (`finetune/pretext/`).
 
 **Stage 1 — Masked modeling (learn regime / structure / volatility).** A random fraction of bars in each window is **masked**, and the encoder **reconstructs them from context** (MSE on masked positions only). To fill a gap it must know what normally comes next given the local regime → it learns volatility, structure, and compression→expansion. (Masked bars are noise-filled, not zeroed, so the backbone's per-patch instance-norm never divides by zero.)
 
-**Stage 2 — Candle forecasting (learn forward price-action dynamics).** Warm-started from stage 1, the encoder predicts the **future candle (OHLCV) at multiple horizons** from variable-length context, expressed as a **move from "now"** (so "copy the last bar" = predict-zero, and is punished). Predicting where price goes across near *and* far horizons forces **multi-scale forward dynamics** into the embedding — the raw material for telling a developing move from noise. Reported per-horizon so the far horizons are visibly learning.
+**Stage 2 — Contrastive learning.** Learns representation geometry from augmented and temporally related views. Its current positive/negative construction is an experiment and must pass the same strict promotion gate as every other stage.
+
+**Stage 3 — Candle forecasting.** Predicts future OHLCV moves at multiple horizons. Forecast loss is a task diagnostic, not sufficient evidence that the exported representation improved.
 
 Shared discipline across every stage:
 
 | Guardrail | What it does |
 |---|---|
-| **Warm-start chain** | stage 2 starts from stage 1 — the foundation compounds rather than restarts |
+| **Explicit lineage** | warm starts are recorded, but direct-from-vanilla and skip-stage branches remain valid required ablations |
 | **Anti-forgetting** | later refines can **freeze the tokenizer + early backbone layers** and use a **gentle LR**, so a new objective sharpens the representation without erasing earlier stages (the same layer-freeze technique used for downstream partial-finetuning) |
-| **Crash-safe save + resume** | the best checkpoint is written progressively (atomic, every val improvement) with a resume path — a disconnected GPU run never loses progress |
-| **Time-split val early-stop** | generalizes forward in time; **2026 is excluded from every stage** (inputs and targets) so the downstream OOS is never contaminated |
+| **Crash-safe exact resume** | `<run>.train.pt` stores the full epoch-boundary model/optimizer/scheduler/scaler/RNG state; `<run>.pt` and `<run>.bundle.pt` are separate deployment artifacts |
+| **Time-split val early-stop** | generalizes forward in time; rows at and after the configured holdout boundary are physically excluded from training and validation |
 | **Apples-to-apples controls** *(opt-in)* | REAL vs time-SHUFFLE vs RANDOM **input** with the target held fixed — REAL must beat both, certifying the stage learned from genuine temporal order, not a shortcut |
-| **Linear probe** *(soft)* | reads regime / vol / structure off the frozen embedding — informative but non-discriminating alone (generic domain-adaptation can pass it); the **downstream walk-forward A/B is the decisive judge** |
+| **Per-target promotion probe** | every declared target must satisfy its own non-inferiority and fold-consistency rule; unlike R²/AUC deltas are never averaged into a promotion decision |
 
-Runs GPU-maximized (data resident on GPU, large batch, AMP where applicable). Every stage outputs an adapted backbone checkpoint consumed downstream via `backbone_ckpt`.
+New runs archive their exact source and dependency environment. SSL and frozen inference both use channel-independent Mantis encoding; objective-specific cross-channel processing occurs only after concatenated channel embeddings.
+
+### Equal-history foundation-model tournament
+
+The cross-family tournament uses one locked calendar and exposure budget:
+
+- train: `[2019-07-01, 2024-07-01)`
+- validation/Optuna: `[2024-07-01, 2025-07-01)`
+- tournament OOS exclusion: rows `>= 2025-07-01` are not loaded by training, tuning, or the shared validation scorecard
+- universe: 9 futures × `1/3/5/15/30/60min` = 54 streams
+- budget: 262,144 sampled causal anchors per Optuna trial
+
+Native losses select hyperparameters only within one family; they are never put on a cross-model leaderboard. Forecast models are compared on the same immutable 512-bar contexts and 16-bar futures. Representation models are compared with the same purged expanding walk-forward linear probes. Joint-OHLCV and channel-independent arms are labeled separately.
+
+`scripts/audit_foundation_tournament.py` fails on date, exposure, stream, checkpoint, or source-attestation drift. `scripts/build_foundation_validation_windows.py` creates the immutable validation artifact; model adapters emit fingerprint-bound predictions; `scripts/score_foundation_forecasts.py` scores them against persistence. Toto-2 and Sundial are zero-shot controls because their released versions do not provide supported fine-tuning; they are not presented as trained arms.
+
+The exclusion is valid for this tournament's code path, but it does not make previously examined 2025–2026 project history globally untouched again. A final deployment claim still requires subsequently arriving data that has never influenced model or experiment selection.
 
 ---
 

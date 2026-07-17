@@ -5,6 +5,4 @@ from .base import PretextTask
 
 class MaskTask(PretextTask):
     name, trainer = 'mask', 'train_ssl_mask'
-
-    def _decide(self, probe_res, no_collapse, margin, dir_margin, detail):
-        return bool(probe_res['mean_core_delta'] > margin and no_collapse), detail
+    primary_targets = ('trend_eff', 'range_expand')

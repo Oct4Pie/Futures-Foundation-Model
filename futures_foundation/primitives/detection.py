@@ -37,6 +37,72 @@ def detect_pivots(highs, lows, period):
     return np.where(is_ph)[0] + period, np.where(is_pl)[0] + period
 
 
+def detect_atr_zigzag_pivots_v2(o, h, l, c, atr_period=20, rev_atr=1.25):
+    """Prefix-invariant online ATR-reversal pivots for new research artifacts.
+
+    This version emits a pivot only on the bar that *currently* confirms a reversal.  It never
+    walks completed future legs and backfills their earlier origin-confirm times.  A confirmed
+    swing low emits ``direction=+1``; a confirmed swing high emits ``direction=-1``.  ``R`` is the
+    observed reversal distance in ATR units at confirmation, not a future leg outcome.
+
+    The removed legacy detector walked completed future legs and exposed backfilled fields. New
+    causal datasets must use this function and record the detector version explicitly.
+    """
+    from futures_foundation.pipeline._primitives import compute_atr
+
+    o = np.asarray(o, float)
+    h = np.asarray(h, float)
+    l = np.asarray(l, float)
+    c = np.asarray(c, float)
+    if not (len(o) == len(h) == len(l) == len(c)):
+        raise ValueError("OHLC arrays must align")
+    if atr_period < 1 or rev_atr <= 0:
+        raise ValueError("atr_period and rev_atr must be positive")
+    n = len(c)
+    atr = compute_atr(h, l, c, int(atr_period))
+    first = next((i for i in range(n) if np.isfinite(atr[i]) and atr[i] > 0), None)
+    if first is None:
+        return []
+
+    direction = 0
+    extreme_idx = int(first)
+    extreme_price = float(c[first])
+    out = []
+    for j in range(first + 1, n):
+        if direction >= 0 and float(h[j]) > extreme_price:
+            direction = 1
+            extreme_idx = int(j)
+            extreme_price = float(h[j])
+        elif direction <= 0 and float(l[j]) < extreme_price:
+            direction = -1
+            extreme_idx = int(j)
+            extreme_price = float(l[j])
+
+        scale = float(atr[extreme_idx])
+        if not (np.isfinite(scale) and scale > 0):
+            continue
+        reversal = float(rev_atr) * scale
+        if direction == 1 and extreme_price - float(l[j]) >= reversal:
+            observed_r = (extreme_price - float(l[j])) / scale
+            out.append({
+                "confirm": int(j), "direction": -1, "origin": extreme_idx,
+                "leg_end": extreme_idx, "R": float(observed_r), "is_trend": False,
+            })
+            direction = -1
+            extreme_idx = int(j)
+            extreme_price = float(l[j])
+        elif direction == -1 and float(h[j]) - extreme_price >= reversal:
+            observed_r = (float(h[j]) - extreme_price) / scale
+            out.append({
+                "confirm": int(j), "direction": 1, "origin": extreme_idx,
+                "leg_end": extreme_idx, "R": float(observed_r), "is_trend": False,
+            })
+            direction = 1
+            extreme_idx = int(j)
+            extreme_price = float(h[j])
+    return out
+
+
 def detect_fractal_pivots(h, l, k=2, min_bars_apart=0, live_edge=False):
     """WILLIAMS-FRACTAL pivots — TIME-based confirmation (the trigger-scan winner, 2026-07-09).
 

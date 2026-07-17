@@ -55,9 +55,7 @@ class TurnElectraTask(PretextTask):
     encoder still encodes regime/vol/structure better than vanilla (mean_core_delta > margin) and
     hasn't collapsed — a refine must not destroy the reconstruction lineage it warms from."""
     name, trainer = 'electra', 'train_ssl_electra'
-
-    def _decide(self, probe_res, no_collapse, margin, dir_margin, detail):
-        return bool(probe_res['mean_core_delta'] > margin and no_collapse), detail
+    primary_targets = ('trend_eff', 'range_expand')
 
     def finalize_verdict(self, verdict, fc_skill, probe_res):
         verdict['pretext_note'] = ('turn-electra (replaced-TURN detection): judge DOWNSTREAM on '

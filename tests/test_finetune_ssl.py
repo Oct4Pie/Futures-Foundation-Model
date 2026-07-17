@@ -38,6 +38,18 @@ def test_load_ohlcv(tmp_path):
     assert len(es['ts']) == 500
 
 
+def test_load_ohlcv_physically_reads_only_requested_dates(tmp_path):
+    _write_csv(tmp_path / 'ES_1D.csv', 1200, start='2018-01-01', freq='1D')
+    streams = ssl_data.load_ohlcv(
+        str(tmp_path), tickers=['ES'], tfs=['1D'], verbose=False,
+        start='2019-07-01', end='2020-07-01', chunksize=73,
+    )
+    ts = pd.DatetimeIndex(streams[0]['ts'])
+    assert ts.min() == pd.Timestamp('2019-07-01', tz='UTC')
+    assert ts.max() == pd.Timestamp('2020-06-30', tz='UTC')
+    assert len(ts) == 366
+
+
 def test_time_split_excludes_holdout_and_is_causal():
     ts = pd.date_range('2024-01-01', periods=1000, freq='1D', tz='UTC')   # into 2026
     tr, va = ssl_data.time_split(ts, val_frac=0.2, holdout_start='2026-01-01')
@@ -49,6 +61,45 @@ def test_time_split_excludes_holdout_and_is_causal():
     assert len(va) == int(n_usable * 0.2)
 
 
+def test_time_split_embargo_purges_train_and_holdout_boundaries():
+    ts = pd.date_range('2024-01-01', periods=900, freq='1D', tz='UTC')
+    tr, va = ssl_data.time_split(ts, val_frac=0.2, holdout_start='2026-01-01', embargo=32)
+    usable = int((ts < pd.Timestamp('2026-01-01', tz='UTC')).sum())
+    split = usable - int(usable * 0.2)
+    assert tr[-1] == split - 33                       # 32 purged rows before val
+    assert va[0] == split and va[-1] == usable - 33  # 32 purged rows before holdout
+    assert va[-1] < usable <= 900
+
+
+def test_time_split_explicit_v2_development_and_oos_dates():
+    ts = pd.date_range('2023-01-01', '2025-08-01', freq='1D', tz='UTC')
+    tr, va = ssl_data.time_split(ts, val_start='2024-01-01',
+                                 holdout_start='2025-07-01', embargo=8)
+    tsi = pd.DatetimeIndex(ts)
+    assert (tsi[tr] < pd.Timestamp('2024-01-01', tz='UTC')).all()
+    assert (tsi[va] >= pd.Timestamp('2024-01-01', tz='UTC')).all()
+    assert (tsi[va] < pd.Timestamp('2025-07-01', tz='UTC')).all()
+    assert tsi[tr[-1]] == pd.Timestamp('2023-12-23', tz='UTC')  # eight-row train/val purge
+    assert tsi[va[-1]] == pd.Timestamp('2025-06-22', tz='UTC')  # eight-row val/OOS purge
+    with pytest.raises(ValueError):
+        ssl_data.time_split(ts, val_start='2025-07-01', holdout_start='2025-07-01')
+
+
+def test_time_split_enforces_equal_history_lower_bound():
+    ts = pd.date_range('2018-01-01', '2026-07-01', freq='1D', tz='UTC')
+    tr, va = ssl_data.time_split(
+        ts, train_start='2019-07-01', val_start='2024-07-01',
+        holdout_start='2025-07-01', embargo=8,
+    )
+    tsi = pd.DatetimeIndex(ts)
+    assert tsi[tr].min() == pd.Timestamp('2019-07-01', tz='UTC')
+    assert tsi[tr].max() == pd.Timestamp('2024-06-22', tz='UTC')
+    assert tsi[va].min() == pd.Timestamp('2024-07-01', tz='UTC')
+    assert tsi[va].max() == pd.Timestamp('2025-06-22', tz='UTC')
+    with pytest.raises(ValueError, match='train_start must precede'):
+        ssl_data.time_split(ts, train_start='2024-07-01', val_start='2024-07-01')
+
+
 def test_window_starts_contiguous():
     idx = np.arange(100)
     s = ssl_data.window_starts(idx, seq_total=10)
@@ -57,6 +108,32 @@ def test_window_starts_contiguous():
     sg = ssl_data.window_starts(gapped, seq_total=10)
     assert (((sg + 9 < 20) | (sg >= 50))).all()                      # no window spans the hole
     assert 11 not in sg and 60 in sg                                  # 11..19 can't fit; 50..60 can
+
+
+def test_window_starts_rejects_time_gaps_and_contract_rolls():
+    idx = np.arange(30)
+    base_ts = pd.date_range('2024-01-01', periods=30, freq='3min', tz='UTC')
+    ts = base_ts[:15].append(base_ts[15:] + pd.Timedelta('1h'))  # hole between rows 14/15
+    contracts = np.array(['H24'] * 24 + ['M24'] * 6)  # roll between rows 23/24
+    starts = ssl_data.window_starts(idx, 8, timestamps=ts, expected_delta='3min',
+                                    segment_ids=contracts)
+    assert 8 not in starts and 14 not in starts        # windows crossing the time gap rejected
+    assert 17 not in starts and 23 not in starts       # windows touching the roll rejected
+    assert 7 in starts and 15 in starts and 16 in starts  # windows ending before breaks stay usable
+
+
+def test_window_starts_can_allow_only_bounded_aligned_session_gap():
+    # Bridge a normal one-hour maintenance closure for 60m bars (observed delta=120m), but not
+    # a weekend-sized hole. This exception is opt-in; exact cadence remains the default.
+    ts = pd.DatetimeIndex([
+        '2024-01-01 20:00Z', '2024-01-01 22:00Z', '2024-01-01 23:00Z',
+        '2024-01-02 00:00Z', '2024-01-05 00:00Z', '2024-01-05 01:00Z',
+    ])
+    exact = ssl_data.window_starts(np.arange(6), 3, timestamps=ts, expected_delta='60min')
+    allowed = ssl_data.window_starts(np.arange(6), 3, timestamps=ts, expected_delta='60min',
+                                     max_gap='120min')
+    assert 0 not in exact and 0 in allowed
+    assert 2 not in allowed and 3 not in allowed
 
 
 def test_assemble_windows_stay_within_stream(tmp_path):
@@ -74,6 +151,58 @@ def test_assemble_windows_stay_within_stream(tmp_path):
         assert bounds[seg] <= s and s + parent <= bounds[seg + 1]
 
 
+def test_assemble_returns_contiguous_stream_group_bounds(tmp_path):
+    _write_csv(tmp_path / 'ES_1D.csv', 700, start='2023-01-01', freq='1D')
+    _write_csv(tmp_path / 'NQ_1D.csv', 700, start='2023-01-01', freq='1D')
+    streams = ssl_data.load_ohlcv(str(tmp_path), ['ES', 'NQ'], ['1D'], verbose=False)
+    _, tr, va, groups = ssl.assemble(
+        streams, seq=16, max_jitter=4, val_frac=0.1, val_start='2024-01-01',
+        holdout_start='2024-10-01', return_groups=True, verbose=False)
+    for name, starts in [('train', tr), ('val', va)]:
+        bounds = groups[f'{name}_bounds']
+        assert bounds[0, 0] == 0 and bounds[-1, 1] == len(starts)
+        assert np.array_equal(bounds[1:, 0], bounds[:-1, 1])
+        assert tuple(groups[f'{name}_labels']) == ('ES@1D', 'NQ@1D')
+
+
+def test_assemble_returns_start_aligned_elapsed_time_metadata(tmp_path):
+    _write_csv(tmp_path / 'ES_3min.csv', 900, start='2023-01-01', freq='3min')
+    _write_csv(tmp_path / 'NQ_60min.csv', 900, start='2023-01-01', freq='60min')
+    streams = ssl_data.load_ohlcv(str(tmp_path), ['ES', 'NQ'], ['3min', '60min'], verbose=False)
+    _, tr, va, groups = ssl.assemble(
+        streams, seq=16, max_jitter=4, val_frac=0.2, holdout_start=None,
+        return_groups=True, verbose=False)
+    assert len(groups['train_start_times_ns']) == len(tr)
+    assert len(groups['val_start_times_ns']) == len(va)
+    assert groups['stream_bar_ns'].tolist() == [3 * 60 * 10**9, 60 * 60 * 10**9]
+    for split in ('train', 'val'):
+        times = groups[f'{split}_start_times_ns']
+        for lo, hi in groups[f'{split}_bounds']:
+            assert (np.diff(times[lo:hi]) > 0).all()
+
+
+def test_assemble_physically_excludes_oos_rows(tmp_path):
+    _write_csv(tmp_path / 'ES_1D.csv', 1000, start='2023-01-01', freq='1D')
+    streams = ssl_data.load_ohlcv(str(tmp_path), ['ES'], ['1D'], verbose=False)
+    big, tr, va = ssl.assemble(
+        streams, seq=8, max_jitter=2, val_frac=0.1, val_start='2024-01-01',
+        holdout_start='2025-01-01', verbose=False)
+    expected = int((pd.DatetimeIndex(streams[0]['ts']) <
+                    pd.Timestamp('2025-01-01', tz='UTC')).sum())
+    assert len(big) == expected
+    assert (tr + 10 <= len(big)).all() and (va + 10 <= len(big)).all()
+
+
+def test_balanced_probe_sample_caps_each_stream_equally():
+    starts = np.arange(1010)
+    bounds = np.array([[0, 1000], [1000, 1010]])
+    out, group_ids = ssl._balanced_group_sample(
+        starts, bounds, max_windows=100, seed=0, return_group_ids=True)
+    assert (out < 1000).sum() == 50
+    assert (out >= 1000).sum() == 10  # never duplicates a short stream merely to hit a quota
+    assert (group_ids == 0).sum() == 50 and (group_ids == 1).sum() == 10
+
+
 # ---------------------------------------------------------------- probe + gate (torch-free)
 def test_targets_from_windows():
     seq = 8
@@ -89,6 +218,47 @@ def test_targets_from_windows():
     assert set(t) == {'vol', 'trend_eff', 'range_expand', 'fwd_absmove',
                       'direction', 'fwd_dir'}                     # + forward buy/sell targets
     assert (t['fwd_absmove'] >= 0).all()
+
+
+def test_probe_rows_never_share_context_or_forward_bars():
+    starts = np.array([0, 1, 79, 80, 81, 160, 1000, 1001])
+    rows = ssl_probe.non_overlapping_rows(starts, span=80)  # seq64 + fwd16
+    used = starts[rows]
+    assert np.array_equal(used, [0, 80, 160, 1000])
+    assert (np.diff(used) >= 80).all()
+
+
+def test_probe_walk_forward_is_stream_local_past_only_with_full_embargo():
+    span = 80
+    starts = np.concatenate([np.arange(24) * span,
+                             100_000 + np.arange(24) * span]).astype(np.int64)
+    groups = np.repeat([0, 1], 24)
+    splits = ssl_probe.walk_forward_splits(starts, groups, folds=3, span=span)
+    assert len(splits) == 3
+    for tr, te in splits:
+        assert not np.intersect1d(tr, te).size
+        for group in (0, 1):
+            gtr = tr[groups[tr] == group]
+            gte = te[groups[te] == group]
+            assert len(gtr) and len(gte)
+            # Complete train span plus one full-span embargo precedes every test span.
+            assert starts[gtr].max() + 2 * span <= starts[gte].min()
+
+
+def test_probe_walk_forward_uses_shared_calendar_cutoffs_across_timeframes():
+    hour = 3_600_000_000_000
+    starts = np.arange(80, dtype=np.int64)
+    groups = np.repeat([0, 1], 40)
+    # Both streams cover the same wall-clock interval but have unrelated tensor offsets.
+    times = np.concatenate([np.arange(40) * 24 * hour,
+                            np.arange(40) * 24 * hour]).astype(np.int64)
+    span_ns = 2 * hour
+    splits = ssl_probe.walk_forward_splits(
+        starts, groups, folds=3, span=1, timestamps=times, span_ns=span_ns)
+    for tr, te in splits:
+        first_test = times[te].min()
+        assert (times[tr] + 2 * span_ns <= first_test).all()
+        assert set(groups[tr]) == {0, 1} and set(groups[te]) == {0, 1}
 
 
 def test_probe_embedding_recovers_signal():
@@ -118,13 +288,30 @@ def test_probe_compare_flags_ssl_better():
     assert out['learns_regime_vol_structure'] and out['mean_core_delta'] > 0
 
 
+def _gate_probe(**overrides):
+    deltas = {'vol': 0.02, 'trend_eff': 0.03, 'range_expand': 0.04,
+              'fwd_absmove': 0.01, 'direction': 0.0, 'fwd_dir': 0.005}
+    deltas.update(overrides)
+    per = {name: {'ssl': 0.5 + delta, 'vanilla': 0.5, 'delta': delta,
+                  'kind': ('bin' if name in ('direction', 'fwd_dir') else 'reg'),
+                  'fold_delta': [delta] * 5}
+           for name, delta in deltas.items()}
+    core = np.mean([deltas[x] for x in ('vol', 'trend_eff', 'range_expand', 'fwd_absmove')])
+    return {'per_target': per, 'mean_core_delta': float(core),
+            'descriptive_delta': float(np.mean([deltas[x] for x in
+                                                ('vol', 'trend_eff', 'range_expand')])),
+            'fwd_absmove_delta': deltas['fwd_absmove'], 'fwd_dir_delta': deltas['fwd_dir'],
+            'forward_score': deltas['fwd_absmove'] + deltas['fwd_dir'],
+            'learns_regime_vol_structure': bool(core > 0)}
+
+
 def test_passes_gate_on_probe_not_loss():
-    # GATE = probe (representation content) vs vanilla, NOT contrastive loss. ORIGINAL mask gate.
-    good = {'mean_core_delta': 0.05, 'learns_regime_vol_structure': True}
-    ok, d = ssl._passes(good, std=0.5)                    # default pretext='mask' (stage 1, unchanged)
+    # GATE = per-target probe content vs vanilla, not pretext loss or a mixed-metric average.
+    good = _gate_probe()
+    ok, d = ssl._passes(good, std=0.5)
     assert ok and d['learns_regime_vol_structure']
-    # probe ties/loses vanilla -> fail even though training "looked fine"
-    bad = {'mean_core_delta': -0.01, 'learns_regime_vol_structure': False}
+    # One material target regression fails even when the aggregate remains positive.
+    bad = _gate_probe(vol=-0.01)
     assert not ssl._passes(bad, std=0.5)[0]
     # collapse -> fail regardless of probe
     assert not ssl._passes(good, std=0.001)[0]
@@ -133,23 +320,21 @@ def test_passes_gate_on_probe_not_loss():
 def test_passes_forecast_gate_is_forward_centric_anti_shortcut():
     """Stage-2 (forecast) gate: descriptive gains alone CANNOT pass — forward MOVE SIZE must
     improve and forward DIRECTION must not regress. Stage-1 (mask) gate is unaffected."""
-    base = dict(mean_core_delta=0.05, learns_regime_vol_structure=True)
     # shortcut: big descriptive lift, but forward targets flat/negative -> FAIL on forecast...
-    shortcut = dict(base, descriptive_delta=0.10, fwd_absmove_delta=0.0, fwd_dir_delta=-0.02,
-                    forward_score=-0.02)
+    shortcut = _gate_probe(vol=0.10, trend_eff=0.10, range_expand=0.10,
+                           fwd_absmove=0.0, fwd_dir=-0.02)
     assert not ssl._passes(shortcut, std=0.5, pretext='forecast')[0]
-    # ...yet the SAME probe passes the ORIGINAL mask gate (mean_core_delta>0) -> stage 1 intact
-    assert ssl._passes(shortcut, std=0.5, pretext='mask')[0]
+    # The unified gate also refuses to promote another stage that damaged a declared target.
+    assert not ssl._passes(shortcut, std=0.5, pretext='mask')[0]
     # genuine forward learning: move size up, direction not worse -> PASS on forecast
-    genuine = dict(base, descriptive_delta=0.02, fwd_absmove_delta=0.03, fwd_dir_delta=0.01,
-                   forward_score=0.04)
+    genuine = _gate_probe(fwd_absmove=0.03, fwd_dir=0.01)
     ok, d = ssl._passes(genuine, std=0.5, pretext='forecast')
     assert ok and d['fwd_size_ok'] and d['fwd_dir_ok'] and d['descriptive_ok']
     # direction regresses -> FAIL even with forward move-size gain
-    dir_reg = dict(genuine, fwd_dir_delta=-0.01)
+    dir_reg = _gate_probe(fwd_absmove=0.03, fwd_dir=-0.01)
     assert not ssl._passes(dir_reg, std=0.5, pretext='forecast')[0]
     # descriptive regresses -> FAIL
-    desc_reg = dict(genuine, descriptive_delta=-0.01)
+    desc_reg = _gate_probe(vol=-0.01, fwd_absmove=0.03, fwd_dir=0.01)
     assert not ssl._passes(desc_reg, std=0.5, pretext='forecast')[0]
 
 
@@ -261,14 +446,43 @@ def test_pretext_reserve_per_task():
     cfg = ssl._base_cfg(context_lengths=(64, 200), horizons=(5, 25))
     assert ssl.get_pretext('mask').reserve(cfg) == 0                 # stage-1: none
     assert ssl.get_pretext('forecast').reserve(cfg) == 200 + 25      # stage-2: ctx + horizon
-    # stage-3 v2: ctx + the FUTURE key horizon (the key reads the next contrast_horizon bars)
-    assert ssl.get_pretext('contrastive').reserve(cfg) == max(cfg['pos_deltas'])
+    # Stage 2 v2 reserves its furthest elapsed-time context plus the positive context itself.
+    assert ssl.get_pretext('contrastive').reserve(cfg) == 3 * cfg['seq']
+    legacy = {**cfg, 'contrastive_objective': 'bar_offset_v1'}
+    assert ssl.get_pretext('contrastive').reserve(legacy) == cfg['seq'] + max(cfg['pos_deltas'])
+
+
+def test_contrastive_shifted_windows_stay_inside_split_and_stream(tmp_path):
+    """Every anchor and its furthest positive must remain in the same temporal partition and
+    stream. This locks the v2 context-relative reservation that prevents train->val and
+    val->holdout contamination."""
+    _write_csv(tmp_path / 'ES_3min.csv', 1000)
+    _write_csv(tmp_path / 'NQ_3min.csv', 1000)
+    streams = ssl_data.load_ohlcv(str(tmp_path), ['ES', 'NQ'], ['3min'], verbose=False)
+    cfg = ssl._base_cfg(pretext='contrastive', seq=64, max_jitter=16,
+                        pos_deltas=(2, 16, 64))
+    parent = ssl.get_pretext('contrastive').reserve(cfg)
+    assert parent == 192
+    _, tr, va = ssl.assemble(streams, seq=cfg['seq'], max_jitter=cfg['max_jitter'],
+                             forecast_parent=parent, val_frac=0.2,
+                             holdout_start=None, verbose=False)
+    # Per 1000-row stream: train=[0,800), val=[800,1000). Global second-stream offsets +1000.
+    for starts, lo0, hi0, lo1, hi1 in (
+        (tr, 0, 800, 1000, 1800),
+        (va, 800, 1000, 1800, 2000),
+    ):
+        for s in starts:
+            lo, hi = (lo0, hi0) if s < 1000 else (lo1, hi1)
+            assert lo <= s and s + parent <= hi
 
 
 def test_base_cfg_has_contrastive_keys():
     cfg = ssl._base_cfg()
     assert cfg['temperature'] == 0.1 and cfg['crop_max'] == 0.2 and cfg['proj_dim'] == 128
     assert cfg['pos_deltas'] == (2, 16, 64) and cfg['far_min'] == 512   # temporal knobs
+    assert cfg['contrastive_objective'] == 'elapsed_time_v2'
+    assert cfg['positive_gap_fractions'] == (0.6, 1.0, 2.0)
+    assert cfg['max_positive_overlap'] == 0.5 and cfg['vol_weight'] == 0.0
     over = ssl._base_cfg(pretext='contrastive', temperature=0.07, crop_max=0.1,
                          pos_deltas=(1, 8, 32), far_min=256, vol_weight=0.5)
     assert over['pretext'] == 'contrastive' and over['temperature'] == 0.07 and over['crop_max'] == 0.1
@@ -276,13 +490,12 @@ def test_base_cfg_has_contrastive_keys():
 
 
 def test_passes_contrastive_gate_report_only():
-    """Stage-3 gate is report-only: no-collapse + descriptive content doesn't regress (the REAL
-    gate = trend-AUC + WR@3R offline). Stage-1/2 gates are unaffected."""
-    good = dict(mean_core_delta=0.03, descriptive_delta=0.02, learns_regime_vol_structure=True)
+    """Contrastive uses the same per-target promotion schema as every other stage."""
+    good = _gate_probe()
     ok, d = ssl._passes(good, std=0.5, pretext='contrastive')
     assert ok and d['descriptive_ok'] and d['no_collapse']
     assert not ssl._passes(good, std=0.001, pretext='contrastive')[0]        # collapse -> fail
-    desc_reg = dict(good, descriptive_delta=-0.01)
+    desc_reg = _gate_probe(vol=-0.01)
     assert not ssl._passes(desc_reg, std=0.5, pretext='contrastive')[0]      # regress -> fail
 
 
@@ -336,6 +549,116 @@ def test_embed_windows_frozen():
     W = _np.random.default_rng(0).standard_normal((6, 5, 64)).astype(_np.float32)
     emb = S.embed_windows(W, ckpt=None, device='cpu')               # vanilla, encoder-only
     assert emb.shape[0] == 6 and emb.shape[1] > 0 and _np.isfinite(emb).all()
+
+
+@pytest.mark.parametrize('seq', [64, 256])
+@pytest.mark.parametrize('preprocessing', [
+    'per_window_per_channel_zscore_v1', 'per_window_shared_ohlc_zscore_v1',
+    'per_window_log_price_rel_volume_zscore_v1'])
+@torch_test
+def test_ssl_clean_embedding_matches_legacy_and_bundle_deployment(tmp_path, seq, preprocessing):
+    import torch
+    from futures_foundation.finetune import _ssl_torch as S
+    from futures_foundation.finetune.pretext._torch.common import (
+        preprocess_windows, make_deployment_bundle)
+    rng = np.random.default_rng(seq)
+    windows = rng.standard_normal((3, 5, seq)).astype(np.float32)
+    net = S.MaskNetwork(C=5, new_channels=8, seq=seq).eval()
+    with torch.no_grad():
+        training_clean = net.embed(preprocess_windows(
+            torch.from_numpy(windows), preprocessing)).numpy()
+    state_path = tmp_path / f'legacy-{seq}.pt'
+    bundle_path = tmp_path / f'bundle-{seq}.pt'
+    torch.save(net.encoder.state_dict(), state_path)
+    torch.save(make_deployment_bundle(
+        net.encoder.state_dict(), model_id='paris-noah/Mantis-8M', model_version=None,
+        channels=5, train_context_lengths=[seq], preprocessing=preprocessing), bundle_path)
+    legacy = S.embed_windows(windows, ckpt=state_path, device='cpu',
+                             preprocessing=preprocessing)
+    bundled = S.embed_windows(windows, ckpt=bundle_path, device='cpu')
+    assert np.allclose(training_clean, legacy, atol=1e-6, rtol=1e-6)
+    assert np.allclose(training_clean, bundled, atol=1e-6, rtol=1e-6)
+
+
+@torch_test
+def test_shared_ohlc_preprocessing_preserves_candle_geometry():
+    import torch
+    from futures_foundation.finetune.pretext._torch.common import preprocess_windows
+    raw = torch.tensor([[[10., 11., 12.], [13., 14., 15.], [8., 9., 10.],
+                         [11., 12., 13.], [100., 150., 200.]]])
+    z = preprocess_windows(raw, 'per_window_shared_ohlc_zscore_v1')
+    # A shared affine transform preserves every within-candle price difference ratio.
+    raw_ratio = (raw[:, 1] - raw[:, 0]) / (raw[:, 3] - raw[:, 0])
+    z_ratio = (z[:, 1] - z[:, 0]) / (z[:, 3] - z[:, 0])
+    assert torch.allclose(raw_ratio, z_ratio)
+    assert torch.allclose(z[:, 4].mean(1), torch.zeros(1), atol=1e-6)
+
+
+@torch_test
+def test_log_price_preprocessing_preserves_return_amplitude_and_candle_geometry():
+    import torch
+    from futures_foundation.finetune.pretext._torch.common import preprocess_windows
+    contract = 'per_window_log_price_rel_volume_zscore_v1'
+    low_close = torch.tensor([100., 100.1, 100.2, 100.3])
+    high_close = torch.tensor([100., 101., 102., 103.])
+    windows = []
+    for close in (low_close, high_close):
+        windows.append(torch.stack((close - .05, close + .15, close - .15, close,
+                                    torch.tensor([100., 120., 90., 150.]))))
+    raw = torch.stack(windows)
+    out = preprocess_windows(raw, contract)
+    assert out[1, 3].diff().std() > 5 * out[0, 3].diff().std()
+    # A common log reference retains exact log candle spreads and absolute price-level invariance.
+    assert torch.allclose(out[:, 1] - out[:, 0],
+                          torch.log(raw[:, 1] / raw[:, 0]), atol=1e-6)
+    scaled = raw.clone(); scaled[:, :4] *= 7
+    assert torch.allclose(out, preprocess_windows(scaled, contract), atol=1e-6)
+    assert torch.allclose(out[:, 4].mean(1), torch.zeros(2), atol=1e-6)
+
+
+@torch_test
+def test_log_price_context_future_uses_context_only_volume_stats():
+    import torch
+    from futures_foundation.finetune.pretext._torch.common import preprocess_context_and_future
+    contract = 'per_window_log_price_rel_volume_zscore_v1'
+    ctx = torch.tensor([[[100., 101.], [101., 102.], [99., 100.], [100., 101.], [10., 20.]]])
+    fut = torch.tensor([[[102.], [103.], [101.], [102.], [40.]]])
+    cs, fs = preprocess_context_and_future(ctx, fut, contract)
+    expected_close = torch.log(torch.tensor(102. / 100.))
+    assert torch.allclose(fs[0, 3, 0], expected_close)
+    cv = torch.log1p(ctx[:, 4:])
+    expected_volume = ((torch.log1p(fut[:, 4:]) - cv.mean(2, keepdim=True)) /
+                       cv.std(2, keepdim=True))
+    assert torch.allclose(fs[:, 4:], expected_volume)
+
+
+@torch_test
+def test_bundle_preprocessing_cannot_be_overridden(tmp_path):
+    import torch
+    from futures_foundation.finetune import _ssl_torch as S
+    from futures_foundation.finetune.pretext._torch.common import make_deployment_bundle
+    net = S.MaskNetwork(C=5, seq=64)
+    path = tmp_path / 'shared.bundle.pt'
+    torch.save(make_deployment_bundle(
+        net.encoder.state_dict(), model_id='paris-noah/Mantis-8M', model_version=None,
+        channels=5, preprocessing='per_window_shared_ohlc_zscore_v1'), path)
+    windows = np.random.default_rng(1).normal(size=(2, 5, 64)).astype(np.float32)
+    with pytest.raises(ValueError, match='conflicts'):
+        S.embed_windows(windows, ckpt=path, device='cpu',
+                        preprocessing='per_window_per_channel_zscore_v1')
+
+
+@torch_test
+def test_deployment_loader_rejects_full_training_state(tmp_path):
+    import torch
+    from futures_foundation.finetune.pretext._torch.common import (
+        TRAINING_STATE_SCHEMA, encoder_state_from_checkpoint)
+    path = tmp_path / 'run.train.pt'
+    torch.save({'schema_version': TRAINING_STATE_SCHEMA, 'model_state': {}}, path)
+    with pytest.raises(ValueError, match='cannot be used for deployment'):
+        encoder_state_from_checkpoint(path)
+
+
 @torch_test
 def test_mask_network_and_trainer(tmp_path):
     import torch
@@ -352,9 +675,78 @@ def test_mask_network_and_trainer(tmp_path):
                                    mask_ratio=0.4, epochs=2, steps_per_epoch=3, batch=16,
                                    device='cpu', control='real', verbose=False)
     assert len(hist) >= 1 and np.isfinite(hist[-1]['val_loss']) and 'std' in hist[-1]
+    anchored_state, anchored_hist = S.train_ssl_mask(
+        big, starts, starts[-50:], seq=32, new_channels=4, mask_ratio=0.4,
+        feature_anchor_weight=0.05, epochs=1, steps_per_epoch=1, batch=8,
+        device='cpu', control='real', verbose=False)
+    assert anchored_state and np.isfinite(anchored_hist[-1]['val_loss'])
     ckpt = str(tmp_path / 'enc.pt'); torch.save(state, ckpt)        # encoder ckpt round-trips
     _, new_c = build_model(5, new_channels=4, device='cpu', backbone_ckpt=ckpt)
     assert new_c == 4
+
+
+@torch_test
+def test_mantis_v2_mask_network_loads_matching_architecture():
+    import torch
+    from futures_foundation.finetune import _ssl_torch as S
+    net = S.MaskNetwork(C=5, new_channels=3, seq=64,
+                        model_id='paris-noah/MantisV2', model_version='v2')
+    assert type(net.encoder).__name__ == 'MantisV2'
+    assert sum(p.numel() for p in net.encoder.parameters()) == 4_188_672
+    assert net(torch.randn(2, 5, 64)).shape == (2, 5, 64)
+
+
+@torch_test
+def test_mantis_v2_mask_teacher_anchor_builds_and_is_frozen():
+    from futures_foundation.finetune.pretext._torch.mask import _MaskTrainer
+    rng = np.random.default_rng(17)
+    big = (100 + rng.standard_normal((160, 5)).cumsum(0) * .01).astype(np.float32)
+    starts = np.arange(80)
+    trainer = _MaskTrainer(
+        big, starts, starts, seq=32, batch=2, epochs=1, steps_per_epoch=1,
+        feature_anchor_weight=.05, model_id='paris-noah/MantisV2', model_version='v2',
+        device='cpu', verbose=False)
+    trainer.build_net()
+    assert trainer.teacher is not None
+    assert not any(parameter.requires_grad for parameter in trainer.teacher.parameters())
+    assert np.isfinite(float(trainer.compute_loss(trainer.make_batch(trainer.tr)).detach()))
+
+
+@torch_test
+def test_group_sampler_balances_dense_and_sparse_streams():
+    from futures_foundation.finetune.pretext._torch.mask import _MaskTrainer
+    rng = np.random.default_rng(3)
+    big = rng.standard_normal((200, 5)).astype(np.float32)
+    starts = np.arange(110)
+    # Stream 0 has 100 candidate windows, stream 1 only 10. Sampling must be ~50/50, not 91/9.
+    trainer = _MaskTrainer(big, starts, starts, seq=16, new_channels=2, batch=20000,
+                           epochs=1, steps_per_epoch=1, device='cpu', verbose=False,
+                           train_group_bounds=np.array([[0, 100], [100, 110]]),
+                           val_group_bounds=np.array([[0, 100], [100, 110]]))
+    _, group = trainer.sample_start_indices(trainer.tr, return_groups=True)
+    frac = float((group == 0).float().mean())
+    assert 0.48 < frac < 0.52
+
+
+@torch_test
+def test_mask_validation_reuses_identical_windows_and_corruption():
+    """Checkpoint selection must compare one fixed validation experiment across epochs."""
+    import torch
+    from futures_foundation.finetune.pretext._torch.mask import _MaskTrainer
+    rng = np.random.default_rng(7)
+    big = rng.standard_normal((1200, 5)).astype(np.float32)
+    starts = np.arange(0, 1100)
+    trainer = _MaskTrainer(big, starts[:800], starts[800:], seq=32, new_channels=3,
+                           mask_ratio=0.4, epochs=1, steps_per_epoch=1, batch=16,
+                           device='cpu', seed=11, verbose=False)
+    trainer.build_net()
+    gen_before = trainer.gen.get_state().clone()
+    torch_before = torch.random.get_rng_state().clone()
+    first_loss, first_extra = trainer.val_eval()
+    second_loss, second_extra = trainer.val_eval()
+    assert first_loss == second_loss and first_extra == second_extra
+    assert torch.equal(trainer.gen.get_state(), gen_before)         # validation does not move train RNG
+    assert torch.equal(torch.random.get_rng_state(), torch_before)
 
 
 # --------------------------- multi-horizon / variable-context candle seq2seq trainer (gated)
@@ -424,6 +816,29 @@ def test_train_multihorizon_runs_variable_context_and_warmstart(tmp_path):
                                          new_channels=4, epochs=1, steps_per_epoch=2, batch=16,
                                          device='cpu', control='real', backbone_ckpt=ckpt, verbose=False)
     assert set(state2.keys()) == set(state.keys()) and np.isfinite(hist2[-1]['val_loss'])
+
+
+@torch_test
+def test_forecast_validation_reuses_identical_windows_and_context_lengths():
+    """Forecast skill and checkpoint selection use fixed windows/contexts at every epoch."""
+    import torch
+    from futures_foundation.finetune.pretext._torch.forecast import _ForecastTrainer
+    rng = np.random.default_rng(9)
+    big = (100 + np.cumsum(rng.standard_normal((1800, 5)) * 0.1, axis=0)).astype(np.float32)
+    big[:, 4] = np.abs(big[:, 4]) * 100 + 500
+    starts = np.arange(0, 1700)
+    trainer = _ForecastTrainer(big, starts[:1200], starts[1200:], horizons=(5, 10),
+                               context_lengths=(32, 48), new_channels=3, epochs=1,
+                               steps_per_epoch=1, batch=16, device='cpu', seed=13,
+                               verbose=False)
+    trainer.build_net()
+    gen_before = trainer.gen.get_state().clone()
+    torch_before = torch.random.get_rng_state().clone()
+    first_loss, first_extra = trainer.val_eval()
+    second_loss, second_extra = trainer.val_eval()
+    assert first_loss == second_loss and first_extra == second_extra
+    assert torch.equal(trainer.gen.get_state(), gen_before)
+    assert torch.equal(torch.random.get_rng_state(), torch_before)
 
 
 
@@ -608,6 +1023,106 @@ def test_contrastive_snap_and_sigma():
 
 
 @torch_test
+def test_elapsed_time_pairs_scale_by_stream_clock_and_enforce_overlap():
+    from futures_foundation.finetune.pretext._torch.contrastive import _ContrastiveTrainer
+    minute = 60 * 10**9
+    rng = np.random.default_rng(22)
+    big = rng.standard_normal((1300, 5)).astype(np.float32)
+    starts = np.concatenate([np.arange(0, 220), np.arange(1000, 1220)])
+    bounds = np.array([[0, 220], [220, 440]])
+    times = np.concatenate([np.arange(220) * minute, np.arange(220) * 60 * minute])
+    trainer = _ContrastiveTrainer(
+        big, starts, starts, seq=16, positive_gap_fractions=(0.6, 1.0, 2.0),
+        max_positive_overlap=0.5, new_channels=2, proj_dim=8, batch=512,
+        epochs=1, steps_per_epoch=1, device='cpu', verbose=False,
+        train_group_bounds=bounds, val_group_bounds=bounds,
+        train_start_times_ns=times, val_start_times_ns=times,
+        stream_bar_ns=np.array([minute, 60 * minute]))
+    batch = trainer.make_batch(trainer.tr)
+    ok, anchor_times, positive_times, context_ns = batch[2], batch[7], batch[8], batch[9]
+    actual = (positive_times - anchor_times[None, :]).abs().float()
+    overlap = (1.0 - actual / context_ns[None, :].float()).clamp(0, 1)
+    assert ok.any() and float(overlap[ok].max()) <= 0.5 + 1e-6
+    # The same relative scale maps to different real elapsed gaps for 1m and 60m streams.
+    groups = batch[6]
+    assert float(actual[1, groups == 1].median()) > 50 * float(actual[1, groups == 0].median())
+
+
+@torch_test
+def test_contrastive_augmentation_is_per_observation_in_v2():
+    import torch
+    from futures_foundation.finetune.pretext._torch.contrastive import _augment
+    x = torch.ones(32, 5, 64)
+    gen = torch.Generator().manual_seed(3)
+    _, params = _augment(x, gen, noise=0, scale=0, tmask=0.15, crop_max=0.2,
+                         independent=True, return_params=True)
+    assert params['crop_start'].unique().numel() > 1
+    assert params['mask_start'].unique().numel() > 1
+    _, legacy = _augment(x, gen, noise=0, scale=0, tmask=0.15, crop_max=0.2,
+                         independent=False, return_params=True)
+    assert legacy['crop_start'].unique().numel() == 1
+    assert legacy['mask_start'].unique().numel() == 1
+
+
+@torch_test
+def test_elapsed_objective_never_downweights_high_volatility():
+    import torch
+    from futures_foundation.finetune.pretext._torch.contrastive import _ContrastiveTrainer
+    big = np.random.default_rng(23).standard_normal((300, 5)).astype(np.float32)
+    starts = np.arange(200)
+    v2 = _ContrastiveTrainer(big, starts, starts, seq=16, batch=8, epochs=1,
+                             steps_per_epoch=1, device='cpu', verbose=False, vol_weight=1.0)
+    legacy = _ContrastiveTrainer(
+        big, starts, starts, seq=16, batch=8, epochs=1, steps_per_epoch=1,
+        device='cpu', verbose=False, contrastive_objective='bar_offset_v1', vol_weight=1.0)
+    sigma = torch.tensor([0.1, 1.0, 10.0])
+    assert torch.equal(v2._sigma_weights(sigma), torch.ones(3))
+    assert legacy._sigma_weights(sigma)[0] > legacy._sigma_weights(sigma)[-1]
+
+
+@torch_test
+def test_synchronized_cross_stream_rows_are_not_false_negatives():
+    import torch
+    import torch.nn.functional as F
+    from futures_foundation.finetune.pretext._torch.contrastive import _weighted_supcon
+    minute = 60 * 10**9
+    z = F.normalize(torch.tensor([[1., 0], [1., 0], [0., 1], [0., 1]]), dim=1)
+    group = torch.tensor([0, 0, 1, 1]); ok = torch.ones(4, dtype=torch.bool)
+    positions = torch.arange(4); weights = torch.ones(4)
+    streams = torch.tensor([0, 0, 1, 1]); contexts = torch.full((4,), 10 * minute)
+    synced = torch.tensor([0, 0, 30 * minute, 30 * minute])
+    loss, diag = _weighted_supcon(
+        z, group, ok, positions, weights, 0.1, 64, stream_ids=streams,
+        timestamps_ns=synced, context_ns=contexts, negative_min_contexts=4,
+        sync_exclusion_ns=60 * minute, return_diagnostics=True)
+    assert float(loss) == 0.0 and diag['valid_rows_fraction'] == 0.0
+    assert diag['sync_excluded_fraction'] == 1.0
+    far = torch.tensor([0, 0, 120 * minute, 120 * minute])
+    loss, diag = _weighted_supcon(
+        z, group, ok, positions, weights, 0.1, 64, stream_ids=streams,
+        timestamps_ns=far, context_ns=contexts, negative_min_contexts=4,
+        sync_exclusion_ns=60 * minute, return_diagnostics=True)
+    assert torch.isfinite(loss) and diag['valid_rows_fraction'] == 1.0
+
+
+@torch_test
+def test_contrastive_positives_never_snap_across_stream_groups():
+    from futures_foundation.finetune.pretext._torch.contrastive import _ContrastiveTrainer
+    rng = np.random.default_rng(21)
+    big = rng.standard_normal((1200, 5)).astype(np.float32)
+    starts = np.concatenate([np.arange(0, 100), np.arange(1000, 1100)])
+    bounds = np.array([[0, 100], [100, 200]])
+    trainer = _ContrastiveTrainer(
+        big, starts, starts, seq=16, pos_deltas=(4, 16, 64), new_channels=2,
+        proj_dim=8, batch=512, epochs=1, steps_per_epoch=1, device='cpu', verbose=False,
+        train_group_bounds=bounds, val_group_bounds=bounds)
+    batch = trainer.make_batch(trainer.tr)
+    pos_s, stream_groups = batch[3], batch[6]
+    for positives in pos_s:
+        assert bool(((stream_groups == 0) == (positives < 1000)).all())
+
+
+@torch_test
 def test_weighted_supcon_prefers_temporal_grouping():
     """The sigma-weighted SupCon gives LOWER loss when same-group (anchor views + temporal
     positives) embeddings are aligned than anti-aligned, and EXCLUDES near-but-not-positive
@@ -672,7 +1187,7 @@ def test_base_cfg_has_ckpt_resume_freeze_keys():
 
 
 @torch_test
-def test_freeze_encoder_layers_anchors_early_leaves_adapter_trainable():
+def test_freeze_encoder_layers_anchors_early_leaves_objective_head_trainable():
     from futures_foundation.finetune.pretext._torch.common import _freeze_encoder
     from futures_foundation.finetune.pretext._torch.contrastive import ContrastiveTrendNet
     net = ContrastiveTrendNet(C=5, new_channels=4, proj_dim=32).to('cpu')
@@ -680,7 +1195,7 @@ def test_freeze_encoder_layers_anchors_early_leaves_adapter_trainable():
     n = _freeze_encoder(net.encoder, 4)
     after = sum(p.requires_grad for p in net.parameters())
     assert n == 4 and after < before                          # froze tokenizer + first 4 blocks
-    assert any(p.requires_grad for p in net.adapter.parameters())   # embedding can still adapt
+    assert not hasattr(net, 'adapter')                              # no train/deploy skew
     assert any(p.requires_grad for p in net.prj.parameters())
     assert _freeze_encoder(net.encoder, 0) == 0               # n<=0 -> no-op
 
@@ -688,26 +1203,91 @@ def test_freeze_encoder_layers_anchors_early_leaves_adapter_trainable():
 @torch_test
 def test_contrastive_save_resume_and_control_guard(tmp_path):
     import os
+    import torch
     from futures_foundation.finetune import _ssl_torch as S
     rng = np.random.default_rng(0)
     big = (100 + np.cumsum(rng.standard_normal((3000, 5)) * 0.1, 0)).astype(np.float32)
     big[:, 4] = np.abs(big[:, 4]) * 100 + 500
-    cl, h = (32, 48), 8                                                # parent = ctx + FUTURE horizon
-    starts = np.arange(0, 3000 - (48 + 8) - 1, 4); ck = str(tmp_path / 'enc.pt')
-    st, _ = S.train_ssl_contrastive(big, starts, starts[-50:], context_lengths=cl, contrast_horizon=h,
+    # The furthest positive starts at anchor+64 and consumes seq=64 more bars. Keep train/val
+    # disjoint and leave enough tail for every shifted positive in both partitions.
+    train_starts = np.arange(0, 2200, 4)
+    val_starts = np.arange(2400, 3000 - (64 + 64) + 1, 4)
+    ck = str(tmp_path / 'enc.pt')
+    st, _ = S.train_ssl_contrastive(big, train_starts, val_starts,
                                     new_channels=4, proj_dim=32, epochs=2, steps_per_epoch=3,
                                     batch=16, device='cpu', control='real', ckpt_path=ck, verbose=False)
-    assert os.path.exists(ck) and os.path.exists(ck + '.meta.json')     # progressively saved
-    st2, _ = S.train_ssl_contrastive(big, starts, starts[-50:], context_lengths=cl, contrast_horizon=h,
-                                     new_channels=4, proj_dim=32, epochs=1, steps_per_epoch=2,
+    assert os.path.exists(ck) and os.path.exists(ck + '.meta.json')
+    assert os.path.exists(ck + '.train.pt')                             # full exact-resume state
+    st2, _ = S.train_ssl_contrastive(big, train_starts, val_starts,
+                                     new_channels=4, proj_dim=32, epochs=2, steps_per_epoch=3,
                                      batch=16, device='cpu', control='real', ckpt_path=ck,
                                      resume=True, verbose=False)
-    assert set(st2.keys()) == set(st.keys())                            # resumed + returned encoder
+    assert all(torch.equal(st2[k], st[k]) for k in st)                  # exact completed restore
+    with pytest.raises(ValueError, match='resume configuration differs'):
+        S.train_ssl_contrastive(
+            big, train_starts, val_starts, new_channels=4, proj_dim=32, epochs=2,
+            steps_per_epoch=3, batch=16, device='cpu', control='real', ckpt_path=ck,
+            resume=True, contrastive_objective='bar_offset_v1', verbose=False)
     before = os.path.getmtime(ck)                                       # controls must NOT touch ckpt
-    S.train_ssl_contrastive(big, starts, starts[-50:], context_lengths=cl, contrast_horizon=h,
+    S.train_ssl_contrastive(big, train_starts, val_starts,
                             new_channels=4, proj_dim=32, epochs=1, steps_per_epoch=2, batch=16,
                             device='cpu', control='shuffle', ckpt_path=ck, verbose=False)
     assert os.path.getmtime(ck) == before                              # shuffle control didn't save
+
+
+@torch_test
+def test_exact_resume_matches_uninterrupted_trajectory(tmp_path):
+    import torch
+    import torch.nn as nn
+    from futures_foundation.finetune.pretext._torch.common import BaseTrainer
+
+    class Net(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.encoder = nn.Linear(3, 4)
+            self.head = nn.Linear(4, 1)
+
+        def forward(self, x):
+            return self.head(torch.tanh(self.encoder(x)))
+
+    class Trainer(BaseTrainer):
+        def build_net(self):
+            self.net = Net().to(self.dev)
+
+        def make_batch(self, starts):
+            idx = self.sample_start_indices(starts)
+            return self.big_t[starts[idx]]
+
+        def compute_loss(self, batch):
+            return self.net(batch).square().mean()
+
+        @torch.no_grad()
+        def val_eval(self):
+            self.net.eval()
+            with self.fixed_validation_rng():
+                loss = float(self.compute_loss(self.make_batch(self.va)))
+            self.net.train()
+            return loss, {'std': 1.0}
+
+    big = np.random.default_rng(9).standard_normal((128, 3)).astype(np.float32)
+    starts = np.arange(len(big))
+    common = dict(epochs=4, steps_per_epoch=3, batch=16, lr=2e-3, patience=10,
+                  device='cpu', seed=17, verbose=False)
+    full_path = str(tmp_path / 'full.pt')
+    resumed_path = str(tmp_path / 'resumed.pt')
+    full_best, full_hist = Trainer(big, starts[:96], starts[96:], ckpt_path=full_path,
+                                   **common).fit()
+    Trainer(big, starts[:96], starts[96:], ckpt_path=resumed_path,
+            stop_after_epoch=1, **common).fit()
+    resumed_best, resumed_hist = Trainer(big, starts[:96], starts[96:], ckpt_path=resumed_path,
+                                         resume=True, **common).fit()
+    full_state = torch.load(full_path + '.train.pt', weights_only=False)
+    resumed_state = torch.load(resumed_path + '.train.pt', weights_only=False)
+    assert full_hist == resumed_hist
+    assert all(torch.equal(full_best[k], resumed_best[k]) for k in full_best)
+    assert all(torch.equal(full_state['model_state'][k], resumed_state['model_state'][k])
+               for k in full_state['model_state'])
+    assert full_state['scheduler_state'] == resumed_state['scheduler_state']
 
 
 # ---------------------------------------------- stage-2 forecast: optional DIRECTION-head squeeze

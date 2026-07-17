@@ -164,6 +164,11 @@ class _WFStreamLabeler:
         K = [(self.sid, int(j), 2.0 if self.y[j] == 1 else -1.0) for j in i]
         return [None] * len(i), self.y[i], K
 
+    def label_end_times(self, keys):
+        # Synthetic labels are contemporaneous; real strategies return the final
+        # bar consumed by their forward triple-barrier outcome.
+        return [self.ts[k[1]] for k in keys]
+
     def mv_contexts(self, keys):
         return (np.stack([self.W[k[1]] for k in keys]) if keys
                 else np.zeros((0, self.C, self.seq)))
@@ -210,6 +215,73 @@ def test_rolling_folds_excludes_holdout():
     for tr, va, te in folds:                        # 2026 NEVER in any fold (reserved OOS)
         for rows in (tr, va, te):
             assert (ts[rows] < cutoff).all()
+
+
+def test_rolling_folds_purges_forward_labels_at_every_boundary():
+    """A streamed fold is keyed by signal time, but its label may finish later.
+
+    Train labels must finish before validation, validation labels before test, and
+    the last pre-holdout test labels before the untouched holdout.
+    """
+    from futures_foundation.finetune.wf import _rolling_folds
+    ts = pd.DatetimeIndex(pd.date_range('2024-01-01', '2025-06-30', freq='1D', tz='UTC'))
+    label_end = ts + pd.Timedelta(days=10)
+    folds = _rolling_folds(ts, 3, 1, 1, holdout_start='2025-07-01',
+                           label_end_ts=label_end)
+    assert folds
+    cutoff = pd.Timestamp('2025-07-01', tz='UTC')
+    for tr, va, te in folds:
+        val_start = ts[va].min()
+        test_start = ts[te].min()
+        assert (label_end[tr] < val_start).all()
+        assert (label_end[va] < test_start).all()
+        assert (label_end[te] < cutoff).all()
+
+
+def test_run_folds_standardizes_from_each_fold_train_only(tmp_path):
+    """Future/holdout rows must not contribute normalization statistics."""
+    from futures_foundation.finetune import wf
+    from futures_foundation.finetune.classifier import register_classifier, Classifier
+
+    seen = []
+
+    @register_classifier('_capture_fold_std')
+    class _CaptureFoldStd(Classifier):
+        needs_standardize = True
+
+        def __init__(self, **kw):
+            self.kw = kw
+
+        def featurize(self, labeler, keys):
+            raise NotImplementedError
+
+        def fit_predict(self, Xtr, ytr, Xval, yval, Xeval, seed=0,
+                        keys_tr=None, keys_val=None):
+            seen.append(np.asarray(self.kw['standardize_mu'], float))
+            nv = len(np.load(Xval, mmap_mode='r'))
+            ne = len(np.load(Xeval, mmap_mode='r'))
+            return np.linspace(0, 1, nv), np.linspace(0, 1, ne), 0.5
+
+    class _Eval:
+        def evaluate(self, keys, preds):
+            return np.array([k[2] for k, p in zip(keys, preds) if p == 1])
+
+    # Fold 0 train mean=0; fold 1 train mean=10. All later rows are 1000 and
+    # would visibly contaminate either statistic if the full memmap were used.
+    X = np.full((60, 1, 2), 1000.0, np.float32)
+    X[:10] = 0.0
+    X[10:20] = 10.0
+    path = str(tmp_path / 'X.npy')
+    np.save(path, X)
+    Y = (np.arange(60) % 2).astype(int)
+    keys = [('S@1', int(i), 2.0 if Y[i] else -1.0) for i in range(60)]
+    folds = [(np.arange(0, 10), np.arange(20, 30), np.arange(30, 40)),
+             (np.arange(10, 20), np.arange(30, 40), np.arange(40, 50))]
+    wf._run_folds('_capture_fold_std', {}, path, Y, keys, _Eval(), tmp_path,
+                  folds, seed=0, verbose=False, monitor=None)
+    assert len(seen) == 4                       # REAL + SHUFFLE for two folds
+    assert np.allclose(seen[0], 0.0) and np.allclose(seen[1], 0.0)
+    assert np.allclose(seen[2], 10.0) and np.allclose(seen[3], 10.0)
 
 
 def test_featurize_fp16_halves_disk_and_flows_end_to_end(tmp_path, monkeypatch):

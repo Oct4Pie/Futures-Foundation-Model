@@ -213,16 +213,35 @@ def _verdict(classifier, pool, auc_real, val_meanR, test_meanR, n_folds, verbose
     return verdict
 
 
-def _rolling_folds(ts, train_m=3, val_m=1, test_m=1, max_folds=None, holdout_start=None):
+def _rolling_folds(ts, train_m=3, val_m=1, test_m=1, max_folds=None, holdout_start=None,
+                   label_end_ts=None):
     """Rolling month windows -> list of (tr_rows, va_rows, te_rows) row-index arrays
     into the featurize-once full set. Stride = test_m (default 1).
 
     holdout_start (e.g. '2026-01-01'): months >= this are EXCLUDED from the rolling
     folds entirely — the WF never sees the holdout, which stays the untouched final
-    OOS for produce."""
-    per = pd.DatetimeIndex(ts)
-    per = per.tz_localize(None) if per.tz is not None else per
+    OOS for produce.
+
+    label_end_ts is the timestamp of the final bar consumed by each forward label.
+    When supplied, every arm is purged so its labels finish before the next temporal
+    boundary. Signal timestamps alone are insufficient for forward-outcome labels."""
+    ts_idx = pd.DatetimeIndex(ts)
+    per = ts_idx.tz_localize(None) if ts_idx.tz is not None else ts_idx
     perM = per.to_period('M')
+    end_idx = None
+    if label_end_ts is not None:
+        end_idx = pd.DatetimeIndex(label_end_ts)
+        if len(end_idx) != len(ts_idx):
+            raise ValueError(f'label_end_ts length {len(end_idx)} != timestamps {len(ts_idx)}')
+        if ts_idx.tz is not None:
+            end_idx = (end_idx.tz_localize(ts_idx.tz) if end_idx.tz is None
+                       else end_idx.tz_convert(ts_idx.tz))
+        elif end_idx.tz is not None:
+            end_idx = end_idx.tz_localize(None)
+
+    def boundary(period):
+        out = period.to_timestamp(how='start')
+        return out.tz_localize(ts_idx.tz) if ts_idx.tz is not None else out
     months = perM.unique().sort_values()
     if holdout_start is not None:
         hs = pd.Period(pd.Timestamp(holdout_start).tz_localize(None)
@@ -241,9 +260,47 @@ def _rolling_folds(ts, train_m=3, val_m=1, test_m=1, max_folds=None, holdout_sta
         tr = np.flatnonzero(perM.isin(months[s:s + train_m]))
         va = np.flatnonzero(perM.isin(months[s + train_m:s + train_m + val_m]))
         te = np.flatnonzero(perM.isin(months[s + train_m + val_m:s + span]))
+        if end_idx is not None:
+            val_start = boundary(months[s + train_m])
+            test_start = boundary(months[s + train_m + val_m])
+            test_end = boundary(months[s + span - 1] + 1)
+            tr = tr[np.asarray(end_idx[tr] < val_start)]
+            va = va[np.asarray(end_idx[va] < test_start)]
+            te = te[np.asarray(end_idx[te] < test_end)]
         if len(tr) >= 50 and len(va) >= 10 and len(te) >= 10:
             folds.append((tr, va, te))
     return folds
+
+
+def _label_end_times(labeler, keys):
+    """Return the final timestamp consumed by every candidate's forward label.
+
+    A labeler may expose ``label_end_times(keys)``. The common Mantis strategy
+    contract is also supported directly via ``VERT`` and ``_b``. Anything else
+    fails closed: streamed WF cannot honestly purge an unknown label horizon.
+    """
+    fn = getattr(labeler, 'label_end_times', None)
+    if callable(fn):
+        out = pd.DatetimeIndex(fn(list(keys)))
+        if len(out) != len(keys):
+            raise ValueError('label_end_times returned the wrong number of timestamps')
+        return out
+    vert = getattr(labeler, 'VERT', None)
+    bars = getattr(labeler, '_b', None)
+    if vert is None or not isinstance(bars, dict):
+        raise ValueError(
+            'streamed walk-forward requires label_end_times(keys), or a Mantis-style '
+            'labeler with VERT and _b, so forward labels can be purged')
+    out = []
+    for key in keys:
+        sid, i = key[0], int(key[1])
+        tk, tf = sid.split('@')
+        bts = bars[(tk, tf)]['ts']
+        end_i = i + 1 + int(vert)
+        if end_i >= len(bts):
+            raise ValueError(f'label horizon exceeds bars for {sid} candidate {i}')
+        out.append(bts[end_i])
+    return pd.DatetimeIndex(out)
 
 
 def featurize_all_streams(make_labeler, streams, clf, rundir, chunk=2000, verbose=True):
@@ -253,7 +310,7 @@ def featurize_all_streams(make_labeler, streams, clf, rundir, chunk=2000, verbos
     from ._memmap import featurize_to_memmap, concat_memmaps
     from pathlib import Path
     rundir = Path(rundir)
-    parts, all_keys, all_y, all_ts = [], [], [], []
+    parts, all_keys, all_y, all_ts, all_label_end_ts = [], [], [], [], []
     channel_names = C = seq = eval_lab = None
     for i, (tk, tf) in enumerate(streams):
         lab = make_labeler(tk, tf)
@@ -264,10 +321,11 @@ def featurize_all_streams(make_labeler, streams, clf, rundir, chunk=2000, verbos
             channel_names = lab.mv_feature_names()
         if len(K):
             ts = [lab._b[tuple(k[0].split('@'))]['ts'][int(k[1])] for k in K]
+            label_end_ts = _label_end_times(lab, K)
             p = str(rundir / f'_all{i}.npy')
             _, sh = featurize_to_memmap(clf, lab, list(K), p, chunk)
             parts.append((p, len(K))); all_keys += list(K); all_y += list(Y)
-            all_ts += list(ts); C, seq = sh[1], sh[2]
+            all_ts += list(ts); all_label_end_ts += list(label_end_ts); C, seq = sh[1], sh[2]
         if verbose:
             print(f"  [featurize {tk}@{tf}] pivots={len(K)}", flush=True)
         for attr in ('_b', '_labels'):
@@ -280,6 +338,7 @@ def featurize_all_streams(make_labeler, streams, clf, rundir, chunk=2000, verbos
         gc.collect()
     Xpath, _ = concat_memmaps(parts, str(rundir / '_Xall.npy'))
     return (Xpath, np.array(all_y), all_keys, pd.DatetimeIndex(all_ts),
+            pd.DatetimeIndex(all_label_end_ts),
             channel_names, eval_lab, C, seq)
 
 
@@ -308,12 +367,17 @@ def _run_folds(classifier, ck, Xall, Y, keys, eval_lab, rundir, folds, seed, ver
     except Exception:
         pass
     clf_run = get_classifier(classifier, **ck)
+    needs_standardize = bool(clf_run.needs_standardize)
     cfg = {k: v for k, v in (ck or {}).items() if not str(k).startswith('standardize_')}
-    if 'standardize_mu' in (ck or {}):
-        cfg['_fit_std'] = 1      # heads now FIT on standardized features -> invalidate any
-        #                          partial fold-ckpt written under the old raw-fit regime
+    cfg['_wf_preprocess_version'] = 2
+    cfg['_fold_train_standardize'] = needs_standardize
+    import hashlib as _hashlib
+    def _rowsig(rows):
+        a = np.asarray(rows, np.int64)
+        return [len(a), _hashlib.sha1(a.tobytes()).hexdigest()[:16]]
     ckpt = KeyedCheckpoint(fold_ckpt, config_signature(
-        classifier, cfg, int(seed), [[len(a), len(b), len(c)] for a, b, c in folds]))
+        classifier, cfg, int(seed),
+        [[_rowsig(a), _rowsig(b), _rowsig(c)] for a, b, c in folds]))
     res = ckpt.load(dict(real=[], shuf=[], rand=[], yte=[], pte=[], valm=[], testm=[]))
     if verbose and res['real']:
         print(f"  [fold-ckpt] resumed {len(res['real'])}/{len(folds)} folds from {fold_ckpt}",
@@ -338,11 +402,19 @@ def _run_folds(classifier, ck, Xall, Y, keys, eval_lab, rundir, folds, seed, ver
         ftr, fva, fte = (str(rundir / '_ftr.npy'), str(rundir / '_fva.npy'),
                          str(rundir / '_fte.npy'))
         slice_memmap(Xall, tr, ftr); slice_memmap(Xall, va, fva); slice_memmap(Xall, te, fte)
+        fold_clf = clf_run
+        if needs_standardize:
+            from ._memmap import memmap_standardize_stats
+            mu, sd = memmap_standardize_stats(ftr)
+            fold_ck = dict(ck)
+            fold_ck['standardize_mu'] = mu.tolist()
+            fold_ck['standardize_sd'] = sd.tolist()
+            fold_clf = get_classifier(classifier, **fold_ck)
         Ytr, Yva, Yte = Y[tr], Y[va], Y[te]
         Kte = [keys[i] for i in te]; Kva = [keys[i] for i in va]
         Ktr = [keys[i] for i in tr] if dist else None     # ladder labels (distributional only)
-        p_val, p_te, ba = clf_run.fit_predict(ftr, Ytr, fva, Yva, fte, seed,
-                                              keys_tr=Ktr, keys_val=Kva)
+        p_val, p_te, ba = fold_clf.fit_predict(ftr, Ytr, fva, Yva, fte, seed,
+                                               keys_tr=Ktr, keys_val=Kva)
         thr = _pct_threshold(p_val, OP_PERCENTILE)
         R_te = _arm_R(eval_lab, Kte, p_te, thr)
         res['real'].append(R_te); res['yte'].append(np.asarray(Yte)); res['pte'].append(np.asarray(p_te))
@@ -352,8 +424,8 @@ def _run_folds(classifier, ck, Xall, Y, keys, eval_lab, rundir, folds, seed, ver
             ysh, Ksh = Ytr[perm], [Ktr[i] for i in perm]
         else:
             ysh = Ytr.copy(); rng.shuffle(ysh); Ksh = None
-        psv, ps, _ = clf_run.fit_predict(ftr, ysh, fva, Yva, fte, seed,
-                                         keys_tr=Ksh, keys_val=Kva)
+        psv, ps, _ = fold_clf.fit_predict(ftr, ysh, fva, Yva, fte, seed,
+                                          keys_tr=Ksh, keys_val=Kva)
         res['shuf'].append(_arm_R(eval_lab, Kte, ps, _pct_threshold(psv, OP_PERCENTILE)))
         pr = rng.random(len(Kte))                        # val-sized threshold draw: same forward
         res['rand'].append(_arm_R(eval_lab, Kte, pr,     # protocol as the REAL/SHUFFLE arms
@@ -387,19 +459,16 @@ def _run_folds(classifier, ck, Xall, Y, keys, eval_lab, rundir, folds, seed, ver
 def _featurize_and_folds(make_labeler, streams, clf, clf_kwargs, train_m, val_m, test_m,
                          max_folds, output_path, chunk, verbose, holdout_start='2026-01-01'):
     from pathlib import Path
-    from ._memmap import memmap_standardize_stats
     rundir = (Path(output_path).parent if output_path else Path('.'))
     rundir.mkdir(parents=True, exist_ok=True)
     if verbose:
         print(f"[wf-stream] featurize-once over {len(streams)} streams ...", flush=True)
-    Xall, Y, keys, ts, channel_names, eval_lab, C, seq = featurize_all_streams(
+    Xall, Y, keys, ts, label_end_ts, channel_names, eval_lab, C, seq = featurize_all_streams(
         make_labeler, streams, clf, rundir, chunk, verbose)
     ck = dict(clf_kwargs or {})
     mu = sd = None
-    if clf.needs_standardize:
-        mu, sd = memmap_standardize_stats(Xall)
-        ck['standardize_mu'] = mu.tolist(); ck['standardize_sd'] = sd.tolist()
-    folds = _rolling_folds(ts, train_m, val_m, test_m, max_folds, holdout_start=holdout_start)
+    folds = _rolling_folds(ts, train_m, val_m, test_m, max_folds,
+                           holdout_start=holdout_start, label_end_ts=label_end_ts)
     if verbose:
         print(f"[wf-stream] {len(folds)} folds (rolling {train_m}/{val_m}/{test_m}, stride "
               f"{test_m}); holdout {holdout_start} EXCLUDED (reserved OOS)", flush=True)
@@ -450,7 +519,9 @@ def loop_streamed(make_labeler, streams, classifier, clf_kwargs=None, train_m=3,
         slice_memmap(Xall, tr, ftr); slice_memmap(Xall, va, fva)
         Xtr = np.asarray(np.load(ftr, mmap_mode='r'), np.float32)
         Xva = np.asarray(np.load(fva, mmap_mode='r'), np.float32)
-        if mu is not None:                                   # pre-standardize for tuning
+        if clf.needs_standardize:                            # fold-0 TRAIN stats only
+            from ._memmap import memmap_standardize_stats
+            mu, sd = memmap_standardize_stats(ftr)
             Xtr = (Xtr - mu[None, :, None]) / sd[None, :, None]
             Xva = (Xva - mu[None, :, None]) / sd[None, :, None]
         base = dict(clf_kwargs or {})
@@ -464,8 +535,6 @@ def loop_streamed(make_labeler, streams, classifier, clf_kwargs=None, train_m=3,
                     print(f"  Optuna found nothing better (iter {it}); stop.", flush=True)
                 break
             ck = dict(scan['params'])
-            if mu is not None:
-                ck['standardize_mu'] = mu.tolist(); ck['standardize_sd'] = sd.tolist()
             v = _run_folds(classifier, ck, Xall, Y, keys, eval_lab, rundir, folds, seed,
                            verbose, None, fold_ckpt=fold_ckpt)
             history.append(dict(it=it, source=f'tuned{it}', generalizes=v['generalizes'],

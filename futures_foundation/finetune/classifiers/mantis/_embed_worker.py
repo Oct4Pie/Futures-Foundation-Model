@@ -19,7 +19,9 @@ def main(d):
         from futures_foundation.finetune._ssl_torch import export_encoder_onnx
         export_encoder_onnx(cfg['_export_encoder'], ckpt=cfg.get('ckpt'),
                             C=int(cfg.get('C', 5)), seq=int(cfg.get('seq', 64)),
-                            model_id=cfg.get('model_id', 'paris-noah/Mantis-8M'), device='cpu')
+                            model_id=cfg.get('model_id', 'paris-noah/Mantis-8M'),
+                            model_version=cfg.get('model_version'), device='cpu',
+                            preprocessing=cfg.get('preprocessing'))
         return
     windows = np.load(cfg.pop('_windows'), mmap_mode='r')
     from futures_foundation.finetune._ssl_torch import embed_windows

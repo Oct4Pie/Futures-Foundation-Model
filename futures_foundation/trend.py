@@ -25,7 +25,7 @@ __all__ = ['efficiency_ratio', 'kalman_velocity', 'ehlers_decycler', 'decycler_s
 
 
 def trend_aligned(bars, signal_dir, tf, atr_p=20):
-    """Causal TREND-CONFIRMATION GATE — the validated "pivot + trend = entry" rule
+    """Causal TREND-CONFIRMATION GATE — candidate "pivot + trend = entry" rule
     as a reusable FFM primitive (any strategy can apply it).
 
     Returns bool[n], True where `signal_dir` matches the higher-timeframe trend
@@ -33,10 +33,9 @@ def trend_aligned(bars, signal_dir, tf, atr_p=20):
     per pivots.HTF_MAP). Strictly causal (no future peek). A strategy computes its
     per-bar signal direction, calls this, and trades ONLY where True.
 
-    OOS-validated on the fractal pivot model: gating to aligned pivots lifts 2R-WR
-    35.8% -> ~44% at 58% volume, broad across all TFs/tickers; opposed -> 24%.
-    The edge comes from the HARD exclusion of counter-trend signals — a categorical
-    rule a soft feature can't replicate (teach/monotone capped ~37%).
+    Historical performance claims made before the prefix-invariant HTF state implementation are
+    invalid: the prior implementation retroactively backfilled completed zigzag legs.  This gate
+    must earn promotion again under the corrected matched strategy ruler.
 
     bars: dict with 'ts','o','h','l','c'. signal_dir: int[n] (+1 long / -1 short /
     0 none). tf: the signal timeframe (e.g. '3min'); its HTF is pivots.HTF_MAP[tf]."""

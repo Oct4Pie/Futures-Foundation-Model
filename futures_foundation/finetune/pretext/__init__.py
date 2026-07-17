@@ -5,12 +5,10 @@ its instance in PRETEXTS below; the orchestrator (ssl.py) stays untouched. Keepi
 its own file keeps ssl.py a clean orchestrator.
 
   mask          (stage 1)   — BERT-style masked modeling
-  forecast      (stage 2)   — multi-horizon / variable-context candle seq2seq
-  forecast_dist (stage 2.5) — DISTRIBUTIONAL forecast refine ON stage-2 (Chronos-style
-                              quantile/bin objectives; own modules, stage-2 untouched)
-  contrastive   (stage 3)   — TEMPORAL-NEIGHBORHOOD contrastive: regime geometry from
+  contrastive   (stage 2)   — TEMPORAL-NEIGHBORHOOD contrastive: regime geometry from
                               multi-scale time proximity + augmentations, sigma-weighted
-                              (replaced the outcome-keyed v1-v3, dropped 2026-07-02)
+  forecast      (stage 3)   — multi-horizon / variable-context candle seq2seq
+  forecast_dist (optional)  — distributional forecast experiment, outside the canonical 3 stages
   electra       (stage 4)   — TURN-ELECTRA (replaced-TURN detection): span-mask the regions around
                               DETECTED SWINGS (the event a pivot entry trades), a weak generator
                               fills each masked turn with a plausible alternative development (a

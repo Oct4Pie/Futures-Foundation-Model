@@ -10,13 +10,15 @@ when THIS module (or that subpackage) is imported — which is always lazy — s
 pretext task registry stay torch-free.
 """
 from .pretext._torch.common import (                      # noqa: F401  window/embedding/ONNX + base
-    _nullctx, _enc, _standardize, _time_shuffle, _apply_control, _gather_batch,
+    _nullctx, _enc, _standardize, normalization_stats, preprocess_windows,
+    preprocess_context_and_future,
+    resolve_preprocessing, _time_shuffle, _apply_control, _gather_batch,
     embed_encoder, embed_windows, _EncoderONNX, export_encoder_onnx, BaseTrainer)
 from .pretext._torch.mask import MaskNetwork, train_ssl_mask                             # noqa: F401
 from .pretext._torch.forecast import MultiHorizonForecastNet, train_ssl_forecast         # noqa: F401
 from .pretext._torch.forecast_dist import (                # noqa: F401  stage-2.5 distributional refine
     train_ssl_forecast_dist, get_dist_objective, CandleQuantile, CandleBins)
-from .pretext._torch.contrastive import (                 # noqa: F401  stage-3 temporal regime geometry
+from .pretext._torch.contrastive import (                 # noqa: F401  stage-2 temporal regime geometry
     ContrastiveTrendNet, train_ssl_contrastive, regime_gate, _random_crop_resize)
 from .pretext._torch.nextleg import NextLegNet, train_ssl_nextleg              # noqa: F401
 from .pretext._torch.electra import (                     # noqa: F401  stage-4 turn-electra (replaced-TURN)
