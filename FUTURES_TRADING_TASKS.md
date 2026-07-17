@@ -128,8 +128,10 @@ verification item is also checked.
 - [x] Reject both ATR-stop lanes, residual fusion and VICReg promotion for this task.
 - [x] Freeze raw pullback, causal barrier pullback, vanilla direct-head pullback and VICReg negative
   control as the only legacy-confirmation arms.
-- [ ] Read the 2025-07 to 2026-07 legacy interval once for those frozen arms; do not tune before or
-  after individual arm results are visible.
+- [ ] **BLOCKED — INCOMPLETE DATA:** read the 2025-07 to 2026-07 legacy interval once for the frozen
+  arms. GC/SI/CL currently end 2026-04-13; ES/RTY/YM/ZB/ZN end 2026-05-04; only NQ reaches
+  2026-07-10. Require all 54 streams through at least 2026-07-01 and do not substitute a partial
+  symbol/period test.
 
 ## Gate 5 — bounded MantisV2 revised-stage research exception
 

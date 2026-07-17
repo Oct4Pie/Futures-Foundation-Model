@@ -308,6 +308,8 @@ MantisV2 produced promising direct-head pullback results (`+0.0843R`, PF 1.124),
 interval crossed zero and the lift disappeared under barrier decomposition. VICReg trailed
 vanilla. The frozen next step is legacy confirmation of the declared pullback finalists; event,
 threshold, objective and checkpoint tuning are prohibited before that read.
+The read is blocked until every symbol/timeframe source reaches 2026-07-01. Current common coverage
+ends in April 2026; a partial interval or NQ-only result is not an acceptable confirmation.
 The author's next-leg atlas is treated as an external targeted hypothesis, not a result reproduced
 by this repository: its exact script, checkpoint, report/hash and corpus manifest are required
 before a frozen sealed evaluation. The primary execution sensitivity remains fee-only with zero

@@ -10,7 +10,9 @@ checkpoint is not promoted because it failed to beat vanilla or the causal ruler
 Do not rerun this experiment with the same rows, objectives or checkpoint. The next admissible
 step is a frozen confirmation of the declared finalists, not more development tuning.
 
-This is development evidence, not untouched OOS evidence. No row at or after 2025-07-01 was read.
+This is development evidence, not untouched OOS evidence. The experiment artifacts read no row at
+or after 2025-07-01. A later source-coverage audit inspected terminal timestamps (and printed two
+terminal ES bars) but computed no OOS event, label, trade, threshold or model prediction.
 
 ## Versioned event definitions
 
@@ -208,5 +210,9 @@ Freeze these development finalists without further threshold or event-definition
 4. VICReg direct-R pullback fusion as a negative adaptation control.
 
 The next evaluation is the legacy 2025-07 to 2026-07 confirmation interval, carrying its known
-prior-inspection caveat. A truly untouched verdict requires subsequently arriving data. Do not
-train Stage 3 or tune the pullback definition before that frozen confirmation.
+prior-inspection caveat. It is currently blocked by incomplete common source coverage: GC, SI and
+CL end on 2026-04-13; ES, RTY, YM, ZB and ZN end on 2026-05-04; only NQ reaches 2026-07-10. Do not
+run a partial-symbol or partial-period substitute. Supply hash-bound data through at least
+2026-07-01 for all nine symbols and all six timeframes, then execute the four frozen arms exactly
+once. A truly untouched verdict requires subsequently arriving data. Do not train Stage 3 or tune
+the pullback definition before that frozen confirmation.
