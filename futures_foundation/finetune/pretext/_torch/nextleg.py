@@ -45,33 +45,43 @@ def _alternating_fractals(h, l, k):
     return out
 
 
-def _leg_targets(big, k, leg_cap):
-    """Per-confirm leg targets from the alternating fractal sequence on the FULL array:
+def _leg_targets(big, k, leg_cap, objective_row_bounds=None):
+    """Per-confirm leg targets computed independently inside stream/contract segments:
     at confirm c_i -> t1 = extreme_{i+1} - c_i (bars until the newborn leg ends),
                       t2 = extreme_{i+2} - extreme_{i+1} (the counter-leg's bars).
     Returns (confirms [N], targets [N,2] log1p, ok [N] resolved mask). Stream-concat boundary
     pivots are a negligible fraction (~36 of ~2M) and mostly excluded by the resolve cap."""
-    h, l = big[:, 1], big[:, 2]
-    seq = _alternating_fractals(h, l, k)
+    big = np.asarray(big)
+    if objective_row_bounds is None:
+        objective_row_bounds = np.asarray([[0, len(big)]], np.int64)
+    bounds = np.asarray(objective_row_bounds, np.int64).reshape(-1, 2)
     confirms, tgts, oks = [], [], []
-    for i in range(len(seq) - 2):
-        o_i, c_i, _ = seq[i]
-        o_n, _, _ = seq[i + 1]
-        o_nn, _, _ = seq[i + 2]
-        t1, t2 = o_n - c_i, o_nn - o_n
-        ok = (t1 > 0) and (t2 > 0) and (t1 <= leg_cap) and (t2 <= leg_cap)
-        confirms.append(c_i)
-        tgts.append((np.log1p(max(t1, 0)), np.log1p(max(t2, 0))))
-        oks.append(ok)
-    return (np.asarray(confirms, np.int64), np.asarray(tgts, np.float32),
+    for lo, hi in bounds:
+        lo, hi = int(lo), int(hi)
+        if lo < 0 or hi > len(big) or hi <= lo:
+            raise ValueError('invalid next-leg objective segment bounds')
+        seq = _alternating_fractals(big[lo:hi, 1], big[lo:hi, 2], k)
+        for i in range(len(seq) - 2):
+            _o_i, c_i, _ = seq[i]
+            o_n, _, _ = seq[i + 1]
+            o_nn, _, _ = seq[i + 2]
+            t1, t2 = o_n - c_i, o_nn - o_n
+            ok = (t1 > 0) and (t2 > 0) and (t1 <= leg_cap) and (t2 <= leg_cap)
+            confirms.append(lo + c_i)
+            tgts.append((np.log1p(max(t1, 0)), np.log1p(max(t2, 0))))
+            oks.append(ok)
+    return (np.asarray(confirms, np.int64), np.asarray(tgts, np.float32).reshape(-1, 2),
             np.asarray(oks, bool))
 
 
 class _NextLegTrainer(_ForecastTrainer):
-    def __init__(self, big, tr, va, *, leg_cap=256, leg_w=1.0, leg_k=2, mse_weight=1.0, **fw):
+    def __init__(self, big, tr, va, *, leg_cap=256, leg_w=1.0, leg_k=2, mse_weight=1.0,
+                 objective_row_bounds=None, **fw):
         super().__init__(big, tr, va, **fw)
         self.leg_w, self.mse_weight = float(leg_w), float(mse_weight)
-        confirms, tgts, ok = _leg_targets(np.asarray(big, np.float32), int(leg_k), int(leg_cap))
+        confirms, tgts, ok = _leg_targets(
+            np.asarray(big, np.float32), int(leg_k), int(leg_cap), objective_row_bounds,
+        )
         confirms, tgts = confirms[ok], tgts[ok]            # resolved-only anchors
         starts = confirms - self.max_ctx + 1               # window start s.t. ctx ENDS at confirm
         # anchor sets = pivot-anchored starts that are LEGAL train/val window starts (leak-safe
@@ -156,13 +166,15 @@ def train_ssl_nextleg(big, train_starts, val_starts, *, horizons=(5, 10, 20, 25)
                       device=None, model_id='paris-noah/Mantis-8M', backbone_ckpt=None,
                       control='real', seed=0, clamp=10.0, grad_clip=1.0, verbose=True,
                       ckpt_path=None, resume=False, freeze_encoder_layers=0, std_guard=1.6,
-                      leg_cap=256, leg_w=1.0, leg_k=2, mse_weight=1.0, **_ignore):
+                      leg_cap=256, leg_w=1.0, leg_k=2, mse_weight=1.0,
+                      objective_row_bounds=None, **_ignore):
     """NEXT-LEG SSL -> (best_encoder_state, history) with 'val_loss', 'skill' (candle anchor),
     'leg_corr1/2' (bars-to-leg-end / counter-leg correlation — the learning diagnostics), 'std'."""
     t = _NextLegTrainer(big, train_starts, val_starts,
                         horizons=horizons, context_lengths=context_lengths,
                         new_channels=new_channels, model_id=model_id, backbone_ckpt=backbone_ckpt,
                         clamp=clamp, leg_cap=leg_cap, leg_w=leg_w, leg_k=leg_k,
+                        objective_row_bounds=objective_row_bounds,
                         mse_weight=mse_weight, epochs=epochs, steps_per_epoch=steps_per_epoch,
                         batch=batch, lr=lr, weight_decay=weight_decay, patience=patience,
                         device=device, seed=seed, grad_clip=grad_clip, verbose=verbose,

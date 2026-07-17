@@ -385,9 +385,63 @@ def purged_calendar_splits(
     return splits, contract
 
 
+def purged_interval_splits(
+    decision_time_ns: np.ndarray,
+    label_end_time_ns: np.ndarray,
+    group_ids: np.ndarray,
+    *,
+    eval_start_ns: int,
+    eval_end_ns: int,
+    folds: int = 5,
+    embargo_ns: int,
+) -> tuple[list[tuple[np.ndarray, np.ndarray]], dict[str, object]]:
+    """Expanding splits whose tests are confined to one declared evaluation interval."""
+    decision = np.asarray(decision_time_ns, np.int64)
+    label_end = np.asarray(label_end_time_ns, np.int64)
+    groups = np.asarray(group_ids)
+    if label_end.ndim == 2:
+        label_end = label_end.max(axis=1)
+    folds, embargo_ns = int(folds), int(embargo_ns)
+    eval_start_ns, eval_end_ns = int(eval_start_ns), int(eval_end_ns)
+    if (
+        decision.ndim != 1 or label_end.ndim != 1 or groups.ndim != 1
+        or not (len(decision) == len(label_end) == len(groups)) or len(decision) == 0
+        or folds < 1 or embargo_ns < 0 or eval_end_ns <= eval_start_ns
+        or np.any(label_end < decision)
+    ):
+        raise ValueError("invalid interval split contract")
+    unique_groups = np.unique(groups)
+    edges = np.linspace(eval_start_ns, eval_end_ns, folds + 1).astype(np.int64)
+    splits, records = [], []
+    for fold in range(folds):
+        test_lo, test_hi = int(edges[fold]), int(edges[fold + 1])
+        train = np.flatnonzero(label_end + embargo_ns <= test_lo)
+        test = np.flatnonzero((decision >= test_lo) & (decision < test_hi))
+        for group in unique_groups:
+            if not np.any(groups[train] == group) or not np.any(groups[test] == group):
+                raise ValueError(f"group {group} interval fold {fold + 1} is empty after purge")
+        if np.intersect1d(train, test).size or np.any(label_end[train] + embargo_ns > test_lo):
+            raise RuntimeError("purged interval split contract was violated")
+        splits.append((train, test))
+        records.append({
+            "fold": fold + 1, "test_start_ns": test_lo, "test_end_ns": test_hi,
+            "train_rows": int(len(train)), "test_rows": int(len(test)),
+            "train_last_label_end_ns": int(label_end[train].max()),
+        })
+    contract = {
+        "schema_version": "ffm_purged_interval_folds_v1", "folds": folds,
+        "embargo_ns": embargo_ns, "eval_start_ns": eval_start_ns,
+        "eval_end_ns": eval_end_ns, "groups": int(len(unique_groups)),
+        "rows": int(len(decision)), "records": records,
+    }
+    encoded = json.dumps(contract, sort_keys=True, separators=(",", ":")).encode()
+    contract["contract_sha256"] = hashlib.sha256(encoded).hexdigest()
+    return splits, contract
+
+
 __all__ = [
     "SCHEMA_VERSION", "FOLD_SCHEMA_VERSION", "temporally_distributed_rows",
     "build_balanced_sample", "save_balanced_sample", "load_balanced_sample",
     "build_balanced_row_selection", "save_row_selection", "load_row_selection",
-    "purged_calendar_splits",
+    "purged_calendar_splits", "purged_interval_splits",
 ]

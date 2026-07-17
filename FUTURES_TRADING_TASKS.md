@@ -96,14 +96,16 @@ verification item is also checked.
 
 - [x] Score trend continuation/termination within active-trend contexts.
 - [x] Score trend birth after compression and tagged trigger subsets.
-- [ ] Replace the bounded screen's raw zero threshold with fully nested, earlier-fold-only monotonic
+- [x] Replace the bounded screen's raw zero threshold with fully nested, earlier-fold-only monotonic
   calibration and a predeclared coverage/stability rule.
 - [x] Apply identical cost, fill, ambiguity and concurrency rules to every arm.
 - [x] Default to one active position per symbol/strategy stream.
 - [x] Report realized R, WR, PF, coverage, drawdown, breadth and calendar stability.
 - [x] Report paired lift over causal features and the same family's vanilla backbone for the bounded
   screen.
-- [ ] Build the full-history 2019-2024 downstream fitting artifact for the predeclared finalists.
+- [x] Build the full-history 2019-2024 downstream fitting artifact for the predeclared finalists.
+  The fixed outer development interval is 2024-07 to 2025-07; see
+  [DOWNSTREAM_FULL_HISTORY_RESULTS.md](DOWNSTREAM_FULL_HISTORY_RESULTS.md).
 - [ ] Test residual embedding fusion and decomposed barrier outcomes under the corrected ruler.
 - [ ] Record the Case A-E diagnosis and training-funding decision.
 
@@ -123,6 +125,9 @@ verification item is also checked.
 ### Gate 5 verification
 
 - [x] Full training-state resume matches uninterrupted training on the verified exact-resume test.
+- [x] Audit the historical next-leg objective. Its one-cap reserve and concatenated-stream target
+  construction were unsafe; the code now reserves both legs and segments targets by stream and
+  contract. Historical checkpoints remain non-promotable under the corrected contract.
 - [ ] Parent hashes and backbone changes are verified at every transition.
 - [ ] Per-target non-inferiority and downstream paired gates pass.
 - [ ] At least two seeds pass for any promoted pilot.

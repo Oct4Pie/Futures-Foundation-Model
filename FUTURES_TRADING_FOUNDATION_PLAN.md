@@ -271,17 +271,18 @@ constrained-XGBoost heads, three negative-control types, 6,550,592 saved row pre
 weekly-block uncertainty. The sealed cross-family screen contains 48 representations from 12
 trainable encoder arms; see [FOUNDATION_MODEL_RESULTS.md](FOUNDATION_MODEL_RESULTS.md).
 
-The first cost-aware trading screen is also complete across 54 policy cells, but it is diagnostic,
-not a final downstream ruler: its head used only part of the development year and selected at a raw
-`predicted net R > 0` threshold. No selected arm achieved positive mean net R with profit factor
-above one after declared costs. Cached finalist embeddings have since been re-scored on the expanded
-direction-relative MFE/MAE, barrier-state, reversal and policy-R target contract without reading the
-reserved interval. The evidence currently indicates a mixture of Cases B and D: small, inconsistent
-embedding lift plus unresolved head calibration/sample-history and event-pool economics. It does
-not establish Case E.
+The first 54-policy cost-aware screen remains diagnostic because it fit heads on only part of the
+development year and used a raw zero threshold. The corrected full-history ruler is now complete;
+see [DOWNSTREAM_FULL_HISTORY_RESULTS.md](DOWNSTREAM_FULL_HISTORY_RESULTS.md). It fits eligible
+history from 2019 onward, confines outer tests to 2024-07 through 2025-07, uses nested train-only
+isotonic calibration and applies a predeclared coverage/stability rule. No 2025-07 onward data was
+read.
 
-Immediate work therefore remains GPU-light: analyze the expanded finalist fusion results, implement
-fully nested train-only calibration, and build a 2019-2024 full-history downstream ruler for the
-predeclared finalists. The primary execution sensitivity is fee-only with zero modeled tick
-slippage and no delay beyond the causal next-bar-open fill; one or more ticks remain stress tests.
+The ATR-zigzag structural pool produced positive fee-only aggregate results for causal XGBoost and
+Chronos Bolt Stage 1 fusion, but Chronos did not add significant paired utility over causal-only and
+the result was concentrated in one 30-minute fold. The fractal pool remained negative. Evidence is
+therefore a mixture of Cases A, C and D; Case B remains possible but unproven, and Case E is not
+established. Immediate work remains GPU-light: test residual embedding fusion and decomposed barrier
+outcomes on the predeclared ATR pool. The primary execution sensitivity is fee-only with zero
+modeled tick slippage and no added delay; one or more ticks remain frozen-selection stress tests.
 This completion does not authorize broad SSL retraining.

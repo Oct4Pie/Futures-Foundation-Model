@@ -23,8 +23,9 @@ class NextLegTask(ForecastTask):
     name, trainer = 'nextleg', 'train_ssl_nextleg'
 
     def reserve(self, cfg):
-        # context + enough future for the two legs to RESOLVE (unresolved -> masked, not fabricated)
-        return max(int(x) for x in cfg['context_lengths']) + int(cfg.get('leg_cap', 256))
+        # Both future legs may independently reach leg_cap. Reserving only one cap lets a training
+        # target read across the train/validation boundary when t1+t2 > leg_cap.
+        return max(int(x) for x in cfg['context_lengths']) + 2 * int(cfg.get('leg_cap', 256))
 
     def finalize_verdict(self, verdict, fc_skill, probe_res):
         verdict = super().finalize_verdict(verdict, fc_skill, probe_res)

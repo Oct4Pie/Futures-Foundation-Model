@@ -4,14 +4,22 @@ import subprocess
 import sys
 
 from futures_foundation.finetune.downstream_trading import build_policy_events
+from futures_foundation.finetune.calibration import (
+    apply_isotonic_expected_value,
+    fit_isotonic_expected_value,
+)
 from scripts.benchmark_downstream_trading import (
     apply_concurrency,
     choose_calibrated_threshold,
+    choose_stable_calibrated_threshold,
     inner_calibration_rows,
+    nested_context_splits,
+    nested_oof_predictions,
     policy_feature_matrix,
     stable_policy_seed,
     trade_metrics,
 )
+from scripts.analyze_downstream_trading import slippage_r_per_round_trip_tick
 
 
 def test_build_policy_events_expands_net_tick_costed_outcomes(tmp_path):
@@ -69,6 +77,11 @@ def test_trade_metrics_use_positive_net_r_as_win_rate():
     assert result["win_rate"] == 2 / 3
     assert result["target_hit_rate"] == 1 / 3
     assert result["profit_factor"] == 2.5
+
+
+def test_slippage_sensitivity_uses_risk_geometry_when_primary_slippage_is_zero():
+    values = slippage_r_per_round_trip_tick({"risk_ticks": np.asarray([4.0, 10.0])})
+    np.testing.assert_allclose(values, [0.25, 0.1])
 
 
 def test_policy_features_include_known_cost_burden():
@@ -145,3 +158,69 @@ def test_calibrated_threshold_never_drops_below_economic_floor():
     )
 
     assert result["threshold"] >= 0.0
+
+
+def test_isotonic_expected_value_is_monotonic_and_clipped():
+    raw = np.asarray([-2.0, -1.0, 0.0, 1.0, 2.0])
+    realized = np.asarray([-1.0, -0.5, 0.2, 0.1, 1.0])
+    calibration = fit_isotonic_expected_value(raw, realized)
+    applied = apply_isotonic_expected_value(np.asarray([-99.0, *raw, 99.0]), calibration)
+
+    assert np.all(np.diff(applied) >= 0)
+    assert applied[0] == applied[1]
+    assert applied[-1] == applied[-2]
+
+
+def test_nested_context_splits_cannot_read_outside_outer_training_rows():
+    times = np.repeat(np.arange(120, dtype=np.int64) * 100, 2)
+    groups = np.tile(np.asarray(["ES", "NQ"]), 120)
+    label_end = times + 10
+    outer = np.flatnonzero(times < 9_000)
+    first, _ = nested_context_splits(
+        times, label_end, groups, outer, folds=2, embargo_ns=20,
+    )
+    changed_end = label_end.copy()
+    changed_end[times >= 9_000] += 1_000_000
+    second, _ = nested_context_splits(
+        times, changed_end, groups, outer, folds=2, embargo_ns=20,
+    )
+
+    for (train_a, test_a), (train_b, test_b) in zip(first, second):
+        np.testing.assert_array_equal(train_a, train_b)
+        np.testing.assert_array_equal(test_a, test_b)
+        assert set(train_a).issubset(set(outer)) and set(test_a).issubset(set(outer))
+        assert label_end[train_a].max() + 20 <= times[test_a].min()
+
+
+def test_nested_oof_predictions_use_disjoint_later_rows():
+    context = np.arange(80, dtype=np.float32)[:, None]
+    splits = [(np.arange(30), np.arange(30, 45)), (np.arange(45), np.arange(45, 60))]
+    y = (0.05 * context[:, 0]).astype(np.float32)
+    rows, score, folds, records = nested_oof_predictions(
+        [context, context], splits, np.arange(80), np.ones((80, 1), np.float32),
+        y, np.asarray(["ES"] * 80), head="linear", seed=3,
+        min_train=20, min_test=10,
+    )
+
+    assert len(rows) == len(score) == 30
+    assert len(np.unique(rows)) == len(rows)
+    assert set(np.unique(folds)) == {1, 2}
+    assert all(record["status"] == "complete" for record in records)
+
+
+def test_stable_threshold_returns_no_trade_without_positive_fold_lcb():
+    n = 60
+    events = {
+        "ticker": np.asarray(["ES"] * n),
+        "signal_time_ns": np.arange(n, dtype=np.int64) * 10,
+        "exit_time_ns": np.arange(n, dtype=np.int64) * 10 + 1,
+        "realized_r": -np.ones(n),
+    }
+    result = choose_stable_calibrated_threshold(
+        events, np.arange(n), np.arange(n), np.linspace(0.0, 1.0, n),
+        np.repeat(np.arange(1, 4), 20), quantiles=(0.5, 0.8),
+        min_executed=5, min_coverage=0.05,
+    )
+
+    assert result["no_trade"] is True
+    assert result["threshold"] > 1.0

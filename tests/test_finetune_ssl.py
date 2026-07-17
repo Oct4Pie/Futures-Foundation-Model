@@ -10,6 +10,7 @@ import pandas as pd
 import pytest
 
 from futures_foundation.finetune import ssl, ssl_data, ssl_probe
+from futures_foundation.finetune.pretext.nextleg import NextLegTask
 
 torch_test = pytest.mark.skipif(
     os.environ.get('CHRONOS_TORCH_TESTS') != '1',
@@ -163,6 +164,48 @@ def test_assemble_returns_contiguous_stream_group_bounds(tmp_path):
         assert bounds[0, 0] == 0 and bounds[-1, 1] == len(starts)
         assert np.array_equal(bounds[1:, 0], bounds[:-1, 1])
         assert tuple(groups[f'{name}_labels']) == ('ES@1D', 'NQ@1D')
+
+
+def test_assemble_exposes_stream_and_contract_objective_segments():
+    ts = pd.date_range('2023-01-01', periods=20, freq='1h', tz='UTC')
+    streams = [
+        {
+            'sid': 'ES@1h', 'ticker': 'ES', 'tf': '1h', 'ts': ts,
+            'ohlcv': np.ones((20, 5), np.float32),
+            'contract_id': np.asarray(['ESH3'] * 12 + ['ESM3'] * 8),
+        },
+        {
+            'sid': 'NQ@1h', 'ticker': 'NQ', 'tf': '1h', 'ts': ts,
+            'ohlcv': np.ones((20, 5), np.float32), 'contract_id': None,
+        },
+    ]
+    _, _, _, groups = ssl.assemble(
+        streams, seq=3, max_jitter=0, val_frac=0.2, holdout_start=None,
+        return_groups=True, verbose=False,
+    )
+    assert groups['objective_row_bounds'].tolist() == [[0, 12], [12, 20], [20, 40]]
+
+
+def test_nextleg_reserve_covers_both_bounded_future_legs():
+    reserve = NextLegTask().reserve({'context_lengths': (64, 200), 'leg_cap': 256})
+    assert reserve == 200 + 2 * 256
+
+
+@torch_test
+def test_nextleg_targets_are_computed_independently_per_objective_segment(monkeypatch):
+    from futures_foundation.finetune.pretext._torch import nextleg
+
+    monkeypatch.setattr(
+        nextleg, '_alternating_fractals',
+        lambda high, low, k: [(1, 3, 1), (5, 7, -1), (8, 9, 1)],
+    )
+    big = np.ones((20, 5), np.float32)
+    confirms, targets, valid = nextleg._leg_targets(
+        big, 2, 10, np.asarray([[0, 10], [10, 20]]),
+    )
+    assert confirms.tolist() == [3, 13]
+    np.testing.assert_allclose(np.expm1(targets), [[2, 3], [2, 3]])
+    assert valid.tolist() == [True, True]
 
 
 def test_assemble_returns_start_aligned_elapsed_time_metadata(tmp_path):

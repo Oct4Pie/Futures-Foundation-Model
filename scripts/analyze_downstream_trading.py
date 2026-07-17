@@ -113,6 +113,14 @@ def fixed_cost_metrics(
     }
 
 
+def slippage_r_per_round_trip_tick(events: dict) -> np.ndarray:
+    """Convert one round-trip tick to R directly from the sealed risk geometry."""
+    risk_ticks = np.asarray(events["risk_ticks"], np.float64)
+    if risk_ticks.ndim != 1 or not len(risk_ticks) or np.any(risk_ticks <= 0):
+        raise ValueError("risk ticks must be a positive non-empty vector")
+    return 1.0 / risk_ticks
+
+
 def _load_results(path: str | Path) -> tuple[dict, dict, dict]:
     results_path = Path(path).resolve()
     report = json.loads(results_path.read_text())
@@ -168,9 +176,11 @@ def run(args) -> dict:
     if not scenarios or any(value < 0 for value in scenarios):
         raise ValueError("slippage scenarios must be nonnegative")
     primary_ticks = float(event_manifest["slippage_ticks_round_trip"])
-    if primary_ticks <= 0:
-        raise ValueError("primary policy artifact must contain positive slippage ticks")
-    slippage_per_tick = np.asarray(events["slippage_r"], np.float64) / primary_ticks
+    if primary_ticks < 0:
+        raise ValueError("primary policy artifact must contain nonnegative slippage ticks")
+    # Derive the sensitivity unit from risk geometry.  Dividing the stored slippage R by
+    # primary_ticks is undefined for the deliberate zero-slippage primary configuration.
+    slippage_per_tick = slippage_r_per_round_trip_tick(events)
 
     summary_by_key = {
         (str(row["policy"]), str(row["arm"])): row for row in benchmark["summary"]
@@ -281,7 +291,7 @@ def run(args) -> dict:
             "resampling_unit": "UTC calendar block",
             "slippage_scenarios_round_trip_ticks": list(scenarios),
             "cost_sensitivity_contract": (
-                "freeze one-tick out-of-fold selections and reprice exact executions; no refit"
+                "freeze primary-cost out-of-fold selections and reprice exact executions; no refit"
             ),
         },
         "counts": {

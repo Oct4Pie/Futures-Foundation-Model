@@ -10,6 +10,7 @@ from futures_foundation.finetune.downstream_sample import (
     load_balanced_sample,
     load_row_selection,
     purged_calendar_splits,
+    purged_interval_splits,
     save_balanced_sample,
     save_row_selection,
     temporally_distributed_rows,
@@ -127,6 +128,52 @@ def test_purged_calendar_splits_use_common_group_coverage():
     for train, test in splits:
         assert set(groups[train]) == {"ES", "ZB"}
         assert set(groups[test]) == {"ES", "ZB"}
+
+
+def test_purged_interval_splits_train_on_history_and_test_only_declared_interval():
+    timeline = np.arange(100, dtype=np.int64) * 1_000
+    decision = np.r_[timeline, timeline]
+    groups = np.repeat(["ES", "NQ"], len(timeline))
+    label_end = np.column_stack((decision + 50, decision + 100))
+    splits, contract = purged_interval_splits(
+        decision, label_end, groups,
+        eval_start_ns=50_000, eval_end_ns=90_000, folds=4, embargo_ns=200,
+    )
+    assert contract["eval_start_ns"] == 50_000
+    assert contract["eval_end_ns"] == 90_000
+    assert len(splits) == 4
+    for (train, test), record in zip(splits, contract["records"]):
+        assert decision[test].min() >= 50_000
+        assert decision[test].max() < 90_000
+        assert np.any(decision[train] < 50_000)
+        assert np.all(label_end[train].max(axis=1) + 200 <= record["test_start_ns"])
+        assert set(groups[train]) == {"ES", "NQ"}
+        assert set(groups[test]) == {"ES", "NQ"}
+
+
+def test_purged_interval_splits_ignore_post_evaluation_perturbations():
+    timeline = np.arange(100, dtype=np.int64) * 1_000
+    decision = np.r_[timeline, timeline]
+    groups = np.repeat(["ES", "NQ"], len(timeline))
+    label_end = decision + 100
+    kwargs = {
+        "eval_start_ns": 50_000, "eval_end_ns": 90_000,
+        "folds": 4, "embargo_ns": 200,
+    }
+    original, original_contract = purged_interval_splits(
+        decision, label_end, groups, **kwargs,
+    )
+    changed_decision, changed_label_end = decision.copy(), label_end.copy()
+    future = decision >= 90_000
+    changed_decision[future] += 10_000_000
+    changed_label_end[future] += 10_000_000
+    changed, changed_contract = purged_interval_splits(
+        changed_decision, changed_label_end, groups, **kwargs,
+    )
+    assert original_contract["contract_sha256"] == changed_contract["contract_sha256"]
+    for (original_train, original_test), (changed_train, changed_test) in zip(original, changed):
+        np.testing.assert_array_equal(original_train, changed_train)
+        np.testing.assert_array_equal(original_test, changed_test)
 
 
 def test_nested_row_selection_is_balanced_and_hash_bound(tmp_path):

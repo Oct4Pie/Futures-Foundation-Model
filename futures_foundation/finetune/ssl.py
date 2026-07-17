@@ -41,6 +41,7 @@ def assemble(streams, *, seq, max_jitter, val_frac, holdout_start, forecast_pare
     parent_len = max(seq + max_jitter, int(forecast_parent))
     bigs, tr_starts, va_starts, base = [], [], [], 0
     tr_bounds, va_bounds, tr_labels, va_labels, row_bounds = [], [], [], [], []
+    objective_row_bounds = []
     tr_times, va_times, stream_bar_ns = [], [], []
     tr_cursor = va_cursor = 0
     for s in streams:
@@ -74,6 +75,19 @@ def assemble(streams, *, seq, max_jitter, val_frac, holdout_start, forecast_pare
         else:
             usable_rows = len(oh)
         row_bounds.append((base, base + usable_rows))
+        contract_id = s.get('contract_id')
+        if usable_rows:
+            if contract_id is None:
+                local_edges = np.asarray([0, usable_rows], np.int64)
+            else:
+                contract_id = np.asarray(contract_id)[:usable_rows]
+                local_edges = np.r_[
+                    0, np.flatnonzero(contract_id[1:] != contract_id[:-1]) + 1, usable_rows,
+                ].astype(np.int64)
+            objective_row_bounds.extend(
+                (base + int(lo), base + int(hi))
+                for lo, hi in zip(local_edges[:-1], local_edges[1:]) if hi > lo
+            )
         if len(ts):
             tr_starts.append(ts + base)
             tr_times.append(pd.DatetimeIndex(s['ts']).asi8[ts])
@@ -100,6 +114,9 @@ def assemble(streams, *, seq, max_jitter, val_frac, holdout_start, forecast_pare
         'train_bounds': np.asarray(tr_bounds, dtype=np.int64).reshape(-1, 2),
         'val_bounds': np.asarray(va_bounds, dtype=np.int64).reshape(-1, 2),
         'row_bounds': np.asarray(row_bounds, dtype=np.int64).reshape(-1, 2),
+        # Objective labels that inspect future rows must be computed independently inside these
+        # stream/contract segments.  Concatenated-array boundaries are never valid market legs.
+        'objective_row_bounds': np.asarray(objective_row_bounds, dtype=np.int64).reshape(-1, 2),
         'train_labels': tuple(tr_labels), 'val_labels': tuple(va_labels),
         # Aligned one-to-one with train/validation starts. Stage 2 consumes these internally so
         # temporal rules are expressed in elapsed time, not in incomparable per-timeframe bars.
@@ -228,7 +245,7 @@ def _finalize(big, tr, va, state, probe_res, cfg, *, out_path, controls, val_sta
               'config': {k: cfg[k] for k in cfg if k not in
                          ('verbose', 'device', 'compile_model', 'train_group_bounds',
                           'val_group_bounds', 'train_start_times_ns', 'val_start_times_ns',
-                          'stream_bar_ns')},
+                          'stream_bar_ns', 'objective_row_bounds')},
               'val_start': val_start, 'holdout_start': holdout_start,
               'val_frac': val_frac, 'bars': int(len(big)),
               'tickers': sorted({s['ticker'] for s in streams}),
@@ -242,6 +259,7 @@ def _finalize(big, tr, va, state, probe_res, cfg, *, out_path, controls, val_sta
                       ('contexts >23h allow aligned observed-bar closures <=4D; '
                        'no fill; contract rolls and longer gaps split')),
                   'stream_order': [s['sid'] for s in streams],
+                  'objective_segments': int(len(cfg.get('objective_row_bounds', ()))),
                   'probe_sample_sha256': probe_hash.hexdigest(),
                   'train_group_windows': np.diff(np.asarray(cfg['train_group_bounds']), axis=1)
                                            .reshape(-1).tolist(),
@@ -395,6 +413,7 @@ def _base_cfg(**kw):
              ckpt_path=None, resume=False, freeze_encoder_layers=0,
              train_group_bounds=None, val_group_bounds=None,
              train_start_times_ns=None, val_start_times_ns=None, stream_bar_ns=None,
+             objective_row_bounds=None,
              val_batches=None, allow_aligned_market_gaps=False, probe_seed=None,
              probe_folds=1)                         # expanding walk-forward probe folds
     d.update({k: v for k, v in kw.items() if v is not None and k in d})
@@ -426,6 +445,7 @@ def loop_ssl(data_dir=None, *, tickers=None, tfs=None, controls=('shuffle', 'ran
     cfg['train_start_times_ns'] = groups['train_start_times_ns']
     cfg['val_start_times_ns'] = groups['val_start_times_ns']
     cfg['stream_bar_ns'] = groups['stream_bar_ns']
+    cfg['objective_row_bounds'] = groups['objective_row_bounds']
     state, hist = _train(big, tr, va, cfg, 'real')
     std = float(hist[-1]['std'])
     best_ep = min(hist, key=lambda h: h['val_loss'])
