@@ -69,8 +69,13 @@ def temporally_distributed_rows(row_count: int, sample_count: int) -> np.ndarray
     return selected
 
 
-def _selected_block_weights(stream_index: np.ndarray, block_id: np.ndarray) -> np.ndarray:
-    """Equalize streams, then prevent dense rows in one context block dominating a fit."""
+def _selected_block_weights(
+    stream_index: np.ndarray,
+    block_id: np.ndarray,
+    *,
+    equal_stream_mass: bool = False,
+) -> np.ndarray:
+    """Control dense blocks and optionally give every stream equal total fitting mass."""
     stream_index = np.asarray(stream_index, np.int32)
     block_id = np.asarray(block_id, np.int64)
     weights = np.empty(len(stream_index), dtype=np.float64)
@@ -78,7 +83,9 @@ def _selected_block_weights(stream_index: np.ndarray, block_id: np.ndarray) -> n
         rows = np.flatnonzero(stream_index == stream)
         _, inverse, counts = np.unique(block_id[rows], return_inverse=True, return_counts=True)
         local = 1.0 / counts[inverse].astype(np.float64)
-        weights[rows] = local / local.mean()
+        weights[rows] = local / local.sum() if equal_stream_mass else local / local.mean()
+    if equal_stream_mass:
+        weights *= len(weights) / weights.sum()
     return weights.astype(np.float32)
 
 
@@ -86,8 +93,14 @@ def build_balanced_sample(
     collection_manifest: str | Path,
     *,
     rows_per_stream: int = 1200,
+    event_tags: tuple[str, ...] = (),
 ) -> tuple[dict[str, np.ndarray], dict[str, object]]:
-    """Load verified context shards and build an exact, deterministic 54-stream sample."""
+    """Load verified shards and build a deterministic dense or event-stratified sample.
+
+    In event mode, ``rows_per_stream`` is a cap *per requested tag per stream*. Every rare event is
+    retained while common tags are thinned by chronological midpoint quantiles. This avoids the
+    old dense-row sampler silently discarding nearly all sparse pullback candidates.
+    """
     collection_path = Path(collection_manifest).resolve()
     collection = json.loads(collection_path.read_text())
     if (
@@ -99,6 +112,9 @@ def build_balanced_sample(
     rows_per_stream = int(rows_per_stream)
     if rows_per_stream < 1:
         raise ValueError("rows_per_stream must be positive")
+    event_tags = tuple(dict.fromkeys(str(value) for value in event_tags))
+    if any(not value for value in event_tags):
+        raise ValueError("event tag names must be non-empty")
 
     chunks: dict[str, list[np.ndarray]] = {key: [] for key in _ROW_KEYS}
     stream_ids, stream_indices, shard_rows = [], [], []
@@ -114,11 +130,32 @@ def build_balanced_sample(
         ):
             raise ValueError(f"collection/shard identity mismatch for {stream_id}")
         n = int(manifest["metadata"]["rows"])
-        if n < rows_per_stream:
+        if not event_tags and n < rows_per_stream:
             raise ValueError(
                 f"{stream_id} has {n} rows, fewer than rows_per_stream={rows_per_stream}"
             )
-        selected = temporally_distributed_rows(n, rows_per_stream)
+        if event_tags:
+            names = [str(value) for value in arrays["tag_names"]]
+            missing = sorted(set(event_tags) - set(names))
+            if missing:
+                raise ValueError(f"{stream_id} is missing requested event tags: {missing}")
+            selected_parts = []
+            selected_tag_counts = {}
+            for name in event_tags:
+                rows = np.flatnonzero(np.asarray(arrays["tags"])[:, names.index(name)])
+                if not len(rows):
+                    selected_tag_counts[name] = 0
+                    continue
+                if len(rows) > rows_per_stream:
+                    rows = rows[temporally_distributed_rows(len(rows), rows_per_stream)]
+                selected_tag_counts[name] = int(len(rows))
+                selected_parts.append(rows)
+            if not selected_parts:
+                continue
+            selected = np.unique(np.concatenate(selected_parts))
+        else:
+            selected_tag_counts = {}
+            selected = temporally_distributed_rows(n, rows_per_stream)
         if not np.all(np.diff(np.asarray(arrays["decision_time_ns"])[selected]) > 0):
             raise ValueError(f"selected decision times are not increasing for {stream_id}")
         for key in _ROW_KEYS:
@@ -131,34 +168,40 @@ def build_balanced_sample(
             if key in static and not np.array_equal(static[key], value):
                 raise ValueError(f"static array {key} differs for {stream_id}")
             static[key] = value.copy()
-        stream_ids.append(np.full(rows_per_stream, stream_id))
-        stream_indices.append(np.full(rows_per_stream, stream_i, dtype=np.int16))
+        selected_count = len(selected)
+        stream_ids.append(np.full(selected_count, stream_id))
+        stream_indices.append(np.full(selected_count, stream_i, dtype=np.int16))
         shard_rows.append(selected)
         source_shards[stream_id] = {
             "path": str(path.resolve()),
             "sha256": declared["sha256"],
             "content_fingerprint": declared["content_fingerprint"],
             "source_rows": n,
-            "selected_rows": rows_per_stream,
+            "selected_rows": selected_count,
+            "selected_event_tag_counts": selected_tag_counts,
             "first_shard_row": int(selected[0]),
             "last_shard_row": int(selected[-1]),
         }
 
+    if not source_shards:
+        raise ValueError("no requested event appears in any verified stream")
     output = {key: np.concatenate(value, axis=0) for key, value in chunks.items()}
     output.update(static)
     output["stream_id"] = np.concatenate(stream_ids)
     output["stream_index"] = np.concatenate(stream_indices)
     output["shard_row"] = np.concatenate(shard_rows)
     output["sample_weight"] = _selected_block_weights(
-        output["stream_index"], output["block_id"],
+        output["stream_index"], output["block_id"], equal_stream_mass=bool(event_tags),
     )
     metadata = {
         "schema_version": SCHEMA_VERSION,
         "status": "complete",
         "oos_read": False,
         "selection": {
-            "method": "ordered_midpoint_quantiles",
+            "method": ("event_tag_stratified_midpoint_quantiles" if event_tags
+                       else "ordered_midpoint_quantiles"),
             "rows_per_stream": rows_per_stream,
+            "event_tags": list(event_tags),
             "streams": len(source_shards),
             "rows": int(len(output["stream_id"])),
         },
@@ -224,16 +267,18 @@ def build_balanced_row_selection(
     sample: dict[str, np.ndarray],
     sample_manifest: dict[str, object],
     *,
-    rows_per_stream: int,
+    rows_per_stream: int | None,
 ) -> tuple[dict[str, np.ndarray], dict[str, object]]:
-    """Select the same chronologically distributed count from every sealed sample stream."""
-    rows_per_stream = int(rows_per_stream)
+    """Select a balanced subset, or every row from an already event-focused sealed sample."""
+    rows_per_stream = None if rows_per_stream is None else int(rows_per_stream)
+    if rows_per_stream is not None and rows_per_stream < 1:
+        raise ValueError("rows_per_stream must be positive or None")
     selected = []
     counts = {}
     for stream_id in sorted(str(value) for value in np.unique(sample["stream_id"])):
         stream_rows = np.flatnonzero(sample["stream_id"] == stream_id)
-        local = temporally_distributed_rows(len(stream_rows), rows_per_stream)
-        rows = stream_rows[local]
+        rows = (stream_rows if rows_per_stream is None else
+                stream_rows[temporally_distributed_rows(len(stream_rows), rows_per_stream)])
         if not np.all(np.diff(sample["decision_time_ns"][rows]) > 0):
             raise ValueError(f"row selection is not chronological for {stream_id}")
         selected.append(rows)
@@ -243,7 +288,8 @@ def build_balanced_row_selection(
     metadata = {
         "schema_version": SELECTION_SCHEMA_VERSION,
         "status": "complete", "oos_read": False,
-        "method": "nested_ordered_midpoint_quantiles",
+        "method": ("all_sample_rows" if rows_per_stream is None
+                   else "nested_ordered_midpoint_quantiles"),
         "rows_per_stream": rows_per_stream,
         "rows": int(len(row_index)), "streams": len(counts),
         "stream_counts": counts,

@@ -24,8 +24,16 @@ from futures_foundation.primitives.detection import (
 )
 
 
-SCHEMA_VERSION = "ffm_event_context_shard_v1"
-TAG_NAMES = ("atr_zigzag_v2", "fractal_k2", "supertrend_flip", "fractal_zigzag")
+SCHEMA_VERSION = "ffm_event_context_shard_v2"
+SUPPORTED_SCHEMA_VERSIONS = {"ffm_event_context_shard_v1", SCHEMA_VERSION}
+TAG_NAMES = (
+    "atr_zigzag_v2", "fractal_k2", "supertrend_flip", "fractal_zigzag",
+    "pullback_continuation", "compression_breakout",
+)
+POLICY_TAG_NAMES = (
+    "atr_zigzag_v2", "fractal_k2", "supertrend_flip",
+    "pullback_continuation", "compression_breakout",
+)
 BASELINE_LOOKBACKS = (4, 16, 64, 256)
 PATH_ROW_KEYS = (
     "terminal_log_return", "terminal_move_r", "forward_abs_move_r",
@@ -44,6 +52,17 @@ class EventContextConfig:
     atr_stop: float = 0.5
     structural_buffer_atr: float = 0.05
     round_trip_cost_ticks: float = 1.0
+    pullback_fast: int = 20
+    pullback_slow: int = 50
+    pullback_trend_lookback: int = 64
+    pullback_leg_bars: int = 8
+    pullback_min_efficiency: float = 0.25
+    pullback_min_trend_atr: float = 1.5
+    pullback_min_depth_atr: float = 0.25
+    pullback_max_depth_atr: float = 2.5
+    compression_lookback: int = 20
+    compression_max_range_atr: float = 4.0
+    breakout_min_range_atr: float = 0.75
     path: PathLabelConfig = field(default_factory=PathLabelConfig)
 
     def validate(self) -> None:
@@ -59,6 +78,18 @@ class EventContextConfig:
             raise ValueError("risk parameters are invalid")
         if self.round_trip_cost_ticks < 0:
             raise ValueError("round_trip_cost_ticks must be nonnegative")
+        if not (1 <= self.pullback_fast < self.pullback_slow):
+            raise ValueError("pullback EMA periods must satisfy 1 <= fast < slow")
+        if min(self.pullback_trend_lookback, self.pullback_leg_bars,
+               self.compression_lookback) < 2:
+            raise ValueError("event lookbacks must be at least two bars")
+        if not (0 <= self.pullback_min_efficiency <= 1):
+            raise ValueError("pullback_min_efficiency must be in [0, 1]")
+        if not (0 <= self.pullback_min_depth_atr < self.pullback_max_depth_atr):
+            raise ValueError("pullback depth bounds are invalid")
+        if min(self.pullback_min_trend_atr, self.compression_max_range_atr,
+               self.breakout_min_range_atr) <= 0:
+            raise ValueError("event ATR thresholds must be positive")
 
 
 def _utc(value: str) -> pd.Timestamp:
@@ -103,12 +134,114 @@ def _frame_arrays(frame: pd.DataFrame):
     return ts, o, h, l, c, v, contract, segment, source_row
 
 
+def _causal_ema(values: np.ndarray, period: int) -> np.ndarray:
+    """Recursive EMA whose value at row i consumes rows no later than i."""
+    values = np.asarray(values, np.float64)
+    if values.ndim != 1 or not len(values) or int(period) < 1:
+        raise ValueError("EMA input must be a non-empty vector and period positive")
+    alpha = 2.0 / (int(period) + 1.0)
+    output = np.empty_like(values)
+    output[0] = values[0]
+    for row in range(1, len(values)):
+        output[row] = alpha * values[row] + (1.0 - alpha) * output[row - 1]
+    return output
+
+
+def _detect_pullback_continuation(
+    o: np.ndarray,
+    h: np.ndarray,
+    l: np.ndarray,
+    c: np.ndarray,
+    atr: np.ndarray,
+    config: EventContextConfig,
+) -> list[dict[str, int]]:
+    """Past-trend, controlled-pullback and current-bar reclaim events.
+
+    The established-trend and pullback tests end at i-1. Only the reclaim decision consumes bar i.
+    The returned origin is the causal pullback extreme used by the structural-stop policy.
+    """
+    fast = _causal_ema(c, config.pullback_fast)
+    slow = _causal_ema(c, config.pullback_slow)
+    trend_n = int(config.pullback_trend_lookback)
+    leg_n = int(config.pullback_leg_bars)
+    slope_n = min(10, max(config.pullback_slow // 5, 2))
+    events: list[dict[str, int]] = []
+    first = max(trend_n + 1, config.pullback_slow + slope_n, leg_n + 1)
+    for i in range(first, len(c)):
+        scale = float(atr[i - 1])
+        if not np.isfinite(scale) or scale <= 0:
+            continue
+        net = float(c[i - 1] - c[i - 1 - trend_n])
+        path = float(np.abs(np.diff(c[i - 1 - trend_n:i])).sum())
+        efficiency = abs(net) / path if path > 0 else 0.0
+        if (efficiency < config.pullback_min_efficiency
+                or abs(net) / scale < config.pullback_min_trend_atr):
+            continue
+        leg = slice(i - leg_n, i)
+        if net > 0:
+            trend = (fast[i - 1] > slow[i - 1]
+                     and slow[i - 1] > slow[i - 1 - slope_n]
+                     and c[i - 1] >= slow[i - 1] - 0.25 * scale)
+            depth = (float(np.max(h[leg])) - float(c[i - 1])) / scale
+            reclaim = c[i - 1] <= fast[i - 1] and c[i] > fast[i] and c[i] > o[i]
+            if (trend and reclaim
+                    and config.pullback_min_depth_atr <= depth <= config.pullback_max_depth_atr):
+                origin = i - leg_n + int(np.argmin(l[leg]))
+                events.append({"confirm": i, "direction": 1, "origin": origin})
+        elif net < 0:
+            trend = (fast[i - 1] < slow[i - 1]
+                     and slow[i - 1] < slow[i - 1 - slope_n]
+                     and c[i - 1] <= slow[i - 1] + 0.25 * scale)
+            depth = (float(c[i - 1]) - float(np.min(l[leg]))) / scale
+            reclaim = c[i - 1] >= fast[i - 1] and c[i] < fast[i] and c[i] < o[i]
+            if (trend and reclaim
+                    and config.pullback_min_depth_atr <= depth <= config.pullback_max_depth_atr):
+                origin = i - leg_n + int(np.argmax(h[leg]))
+                events.append({"confirm": i, "direction": -1, "origin": origin})
+    return events
+
+
+def _detect_compression_breakout(
+    o: np.ndarray,
+    h: np.ndarray,
+    l: np.ndarray,
+    c: np.ndarray,
+    atr: np.ndarray,
+    config: EventContextConfig,
+) -> list[dict[str, int]]:
+    """Close-confirmed break of a bounded, strictly prior compression range."""
+    lookback = int(config.compression_lookback)
+    events: list[dict[str, int]] = []
+    for i in range(max(lookback, config.atr_period) + 1, len(c)):
+        scale = float(atr[i - 1])
+        if not np.isfinite(scale) or scale <= 0:
+            continue
+        prior = slice(i - lookback, i)
+        upper, lower = float(np.max(h[prior])), float(np.min(l[prior]))
+        if (upper - lower) / scale > config.compression_max_range_atr:
+            continue
+        true_range = max(float(h[i] - l[i]), abs(float(h[i] - c[i - 1])),
+                         abs(float(l[i] - c[i - 1])))
+        if true_range / scale < config.breakout_min_range_atr:
+            continue
+        if c[i] > upper and c[i] > o[i]:
+            origin = i - lookback + int(np.argmin(l[prior]))
+            events.append({"confirm": i, "direction": 1, "origin": origin})
+        elif c[i] < lower and c[i] < o[i]:
+            origin = i - lookback + int(np.argmax(h[prior]))
+            events.append({"confirm": i, "direction": -1, "origin": origin})
+    return events
+
+
 def causal_baseline_features(
     frame: pd.DataFrame,
     *,
     causal_scale: np.ndarray,
+    event_config: EventContextConfig | None = None,
 ) -> tuple[np.ndarray, tuple[str, ...]]:
     """Small context-only control using no bars before the declared 256-bar context."""
+    event_config = event_config or EventContextConfig()
+    event_config.validate()
     _, o, h, l, c, v, _, _, _ = _frame_arrays(frame)
     n = len(c)
     scale = np.asarray(causal_scale, np.float64)
@@ -140,6 +273,37 @@ def causal_baseline_features(
         "bar_range_atr", "bar_body_atr", "upper_wick_atr", "lower_wick_atr",
         "close_position", "atr_fraction", "log1p_volume",
     ]
+
+    # Event-geometry controls. These are available at the decision close and give the classical
+    # ruler the same causal setup geometry that an embedding could infer from its input window.
+    fast_n, slow_n = event_config.pullback_fast, event_config.pullback_slow
+    range_n = event_config.compression_lookback
+    ema_fast, ema_slow = _causal_ema(c, fast_n), _causal_ema(c, slow_n)
+    slow_slope = np.full(n, np.nan)
+    slow_slope[10:] = (ema_slow[10:] - ema_slow[:-10]) / safe_scale[10:]
+    prior_range = np.full(n, np.nan)
+    break_above = np.full(n, np.nan)
+    break_below = np.full(n, np.nan)
+    if n > range_n:
+        prior_high = np.lib.stride_tricks.sliding_window_view(h[:-1], range_n).max(axis=1)
+        prior_low = np.lib.stride_tricks.sliding_window_view(l[:-1], range_n).min(axis=1)
+        range_rows = np.arange(range_n, n)
+        prior_range[range_rows] = (prior_high - prior_low) / safe_scale[range_rows]
+        break_above[range_rows] = (c[range_rows] - prior_high) / safe_scale[range_rows]
+        break_below[range_rows] = (prior_low - c[range_rows]) / safe_scale[range_rows]
+    columns.extend((
+        (c - ema_fast) / safe_scale,
+        (ema_fast - ema_slow) / safe_scale,
+        slow_slope,
+        prior_range,
+        break_above,
+        break_below,
+    ))
+    names.extend((
+        f"close_minus_ema{fast_n}_atr", f"ema{fast_n}_minus_ema{slow_n}_atr",
+        f"ema{slow_n}_slope_10bar_atr", f"prior_range_{range_n}bar_atr",
+        f"break_above_{range_n}bar_atr", f"break_below_{range_n}bar_atr",
+    ))
 
     for steps in BASELINE_LOOKBACKS:
         net = np.full(n, np.nan)
@@ -184,8 +348,13 @@ def detect_context_tags(
     *,
     timeframe: str,
     atr_period: int = 20,
+    config: EventContextConfig | None = None,
 ) -> dict[str, np.ndarray]:
     """Detect every causal trigger without one-active-trade suppression."""
+    config = config or EventContextConfig(atr_period=int(atr_period))
+    if int(atr_period) != int(config.atr_period):
+        raise ValueError("atr_period and event config disagree")
+    config.validate()
     ts, o, h, l, c, _, _, segment, source_row = _frame_arrays(frame)
     n, tag_count = len(frame), len(TAG_NAMES)
     tags = np.zeros((n, tag_count), dtype=bool)
@@ -196,6 +365,7 @@ def detect_context_tags(
     for segment_value in np.unique(segment):
         rows = np.flatnonzero(segment == segment_value)
         po, ph, pl, pc = o[rows], h[rows], l[rows], c[rows]
+        local_atr = compute_atr(ph, pl, pc, config.atr_period)
         st_direction, _, _ = compute_supertrend(ph, pl, pc, 10, 3.0)
         events = {
             "atr_zigzag_v2": detect_atr_zigzag_pivots_v2(
@@ -209,6 +379,12 @@ def detect_context_tags(
             ],
             "fractal_zigzag": detect_fractal_zigzag_pivots(
                 po, ph, pl, pc, k=2, min_leg_atr=1.25, atr_period=atr_period,
+            ),
+            "pullback_continuation": _detect_pullback_continuation(
+                po, ph, pl, pc, local_atr, config,
+            ),
+            "compression_breakout": _detect_compression_breakout(
+                po, ph, pl, pc, local_atr, config,
             ),
         }
         local_ts = ts[rows].tz_convert("UTC").tz_localize(None).to_numpy()
@@ -339,6 +515,7 @@ def event_policy_labels(
     selected_tags: np.ndarray,
     selected_tag_direction: np.ndarray,
     selected_tag_origin_source_idx: np.ndarray,
+    selected_tag_names: np.ndarray | tuple[str, ...] = TAG_NAMES,
     causal_scale: np.ndarray,
     horizons_minutes: np.ndarray,
     targets_r: np.ndarray,
@@ -350,7 +527,17 @@ def event_policy_labels(
         raise ValueError(f"missing explicit tick size for {ticker}")
     _, o, h, l, c, _, _, _, source_row = _frame_arrays(frame)
     source_to_local = {int(value): i for i, value in enumerate(source_row)}
-    event_context, event_tag = np.nonzero(selected_tags[:, :3])
+    tag_names = tuple(str(value) for value in selected_tag_names)
+    if selected_tags.shape[1] != len(tag_names):
+        raise ValueError("selected tags and tag-name contract disagree")
+    policy_tag_indices = np.asarray([
+        tag_names.index(name) for name in POLICY_TAG_NAMES if name in tag_names
+    ], dtype=np.int64)
+    if not len(policy_tag_indices):
+        raise ValueError("no policy-producing tag exists in the selected tag contract")
+    local_context, local_tag = np.nonzero(selected_tags[:, policy_tag_indices])
+    event_context = local_context
+    event_tag = policy_tag_indices[local_tag]
     event_count = len(event_context)
     modes = ("atr_stop", "structural_stop")
     horizon_count, target_count = len(horizons_minutes), len(targets_r)
@@ -489,8 +676,12 @@ def materialize_context_stream(
     labels = build_dense_path_labels(
         frame, timeframe_minutes=minutes, config=config.path, causal_scale=atr,
     )
-    features, feature_names = causal_baseline_features(frame, causal_scale=atr)
-    tag_data = detect_context_tags(frame, timeframe=timeframe, atr_period=config.atr_period)
+    features, feature_names = causal_baseline_features(
+        frame, causal_scale=atr, event_config=config,
+    )
+    tag_data = detect_context_tags(
+        frame, timeframe=timeframe, atr_period=config.atr_period, config=config,
+    )
 
     n = len(frame)
     context = int(config.context_bars)
@@ -554,6 +745,7 @@ def materialize_context_stream(
         frame, ticker=ticker, selected=selected, selected_tags=arrays["tags"],
         selected_tag_direction=arrays["tag_direction"],
         selected_tag_origin_source_idx=arrays["tag_origin_source_idx"],
+        selected_tag_names=arrays["tag_names"],
         causal_scale=atr, horizons_minutes=arrays["horizons_minutes"],
         targets_r=arrays["targets_r"], timeframe_minutes=minutes, config=config,
     ))
@@ -577,6 +769,8 @@ def materialize_context_stream(
         "detectors": {
             "atr_zigzag": "prefix_invariant_v2", "fractal": "k2_confirmed",
             "supertrend": "10x3_flip", "fractal_zigzag": "k2_leg1.25_metadata",
+            "pullback_continuation": "ema20_50_reclaim_v1",
+            "compression_breakout": "prior20_atr_bounded_close_break_v1",
         },
         "context_gap_policy": "exact_cadence_or_scheduled_cme_maintenance_or_weekend",
         "future_gap_policy": "exact_cadence_only_mask_never_truncate",
@@ -636,7 +830,8 @@ def save_context_shard(
 def load_context_shard(path: str | Path) -> tuple[dict[str, np.ndarray], dict[str, object]]:
     path = Path(path)
     manifest = json.loads(Path(str(path) + ".manifest.json").read_text())
-    if manifest.get("schema_version") != SCHEMA_VERSION or manifest.get("status") != "complete":
+    if (manifest.get("schema_version") not in SUPPORTED_SCHEMA_VERSIONS
+            or manifest.get("status") != "complete"):
         raise ValueError("unsupported or incomplete event-context shard")
     if _sha256(path) != manifest.get("artifact", {}).get("sha256"):
         raise ValueError("event-context artifact hash mismatch")
@@ -648,7 +843,8 @@ def load_context_shard(path: str | Path) -> tuple[dict[str, np.ndarray], dict[st
 
 
 __all__ = [
-    "SCHEMA_VERSION", "TAG_NAMES", "BASELINE_LOOKBACKS", "EventContextConfig",
+    "SCHEMA_VERSION", "TAG_NAMES", "POLICY_TAG_NAMES", "BASELINE_LOOKBACKS",
+    "EventContextConfig",
     "causal_baseline_features", "detect_context_tags", "materialize_context_stream",
     "event_policy_labels", "context_shard_fingerprint", "save_context_shard",
     "load_context_shard",

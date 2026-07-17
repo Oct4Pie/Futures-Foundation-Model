@@ -19,9 +19,11 @@ from futures_foundation.finetune.event_contexts import SCHEMA_VERSION as CONTEXT
 from futures_foundation.finetune.event_contexts import save_context_shard
 
 
-def _shard(path: Path, ticker: str, timeframe: str, n: int = 20):
+def _shard(path: Path, ticker: str, timeframe: str, n: int = 20, event_rows=()):
     horizons = np.array([60, 180, 360], np.int32)
     decision = np.arange(n, dtype=np.int64) * 1_000 + 10_000
+    tags = np.zeros((n, 1), bool)
+    tags[np.asarray(event_rows, np.int64), 0] = True
     arrays = {
         "ticker": np.full(n, ticker), "timeframe": np.full(n, timeframe),
         "contract_id": np.full(n, f"{ticker}Z4"),
@@ -48,14 +50,15 @@ def _shard(path: Path, ticker: str, timeframe: str, n: int = 20):
         "time_to_favorable_minutes": np.zeros((n, 3, 2, 2), np.int32),
         "time_to_adverse_minutes": np.zeros((n, 3, 2, 2), np.int32),
         "policy_r_gross": np.zeros((n, 3, 2, 2), np.float32),
-        "tags": np.zeros((n, 1), bool), "tag_direction": np.zeros((n, 1), np.int8),
+        "tags": tags, "tag_direction": np.zeros((n, 1), np.int8),
         "tag_origin_source_idx": np.full((n, 1), -1, np.int64),
         "tag_htf_agreement": np.zeros((n, 1), bool), "htf_direction": np.zeros(n, np.int8),
     }
     metadata = {
         "schema_version": CONTEXT_SCHEMA, "ticker": ticker, "timeframe": timeframe,
-        "rows": n, "source_rows": n, "event_rows": 0, "policy_events": 0,
-        "config": {}, "split": {"oos_read": False}, "tag_counts": {"tag": 0},
+        "rows": n, "source_rows": n, "event_rows": int(tags.any(1).sum()),
+        "policy_events": 0, "config": {}, "split": {"oos_read": False},
+        "tag_counts": {"tag": int(tags.sum())},
     }
     return save_context_shard(path, arrays, metadata)
 
@@ -97,6 +100,41 @@ def test_balanced_sample_is_hash_bound_and_equal_per_stream(tmp_path):
         stream.write(b"tamper")
     with pytest.raises(ValueError, match="hash mismatch"):
         load_balanced_sample(output)
+
+
+def test_event_sample_retains_rare_events_and_caps_common_events_per_stream(tmp_path):
+    shards = {}
+    rows_by_ticker = {"ES": [1, 7], "NQ": list(range(12))}
+    for ticker, event_rows in rows_by_ticker.items():
+        path = tmp_path / f"{ticker}_1min.npz"
+        manifest = _shard(path, ticker, "1min", event_rows=event_rows)
+        shards[f"{ticker}@1min"] = {
+            "path": str(path), "sha256": manifest["artifact"]["sha256"],
+            "content_fingerprint": manifest["content_fingerprint"], "rows": 20,
+        }
+    collection = tmp_path / "MANIFEST.json"
+    collection.write_text(json.dumps({
+        "schema_version": "ffm_event_context_collection_v1", "status": "complete",
+        "oos_read": False, "shards": shards,
+    }))
+
+    arrays, metadata = build_balanced_sample(
+        collection, rows_per_stream=4, event_tags=("tag",),
+    )
+
+    selected = {
+        stream: arrays["shard_row"][arrays["stream_id"] == stream].tolist()
+        for stream in np.unique(arrays["stream_id"])
+    }
+    assert selected["ES@1min"] == [1, 7]
+    assert len(selected["NQ@1min"]) == 4
+    assert arrays["tags"].all()
+    assert metadata["selection"]["method"] == "event_tag_stratified_midpoint_quantiles"
+    total_weight = {
+        stream: float(arrays["sample_weight"][arrays["stream_id"] == stream].sum())
+        for stream in np.unique(arrays["stream_id"])
+    }
+    assert total_weight["ES@1min"] == pytest.approx(total_weight["NQ@1min"])
 
 
 def test_purged_calendar_splits_use_actual_label_end_and_embargo():
@@ -199,3 +237,9 @@ def test_nested_row_selection_is_balanced_and_hash_bound(tmp_path):
     loaded, loaded_manifest = load_row_selection(output, sample_manifest=sample_manifest)
     assert loaded_manifest["content_fingerprint"] == manifest["content_fingerprint"]
     np.testing.assert_array_equal(loaded["row_index"], arrays["row_index"])
+
+    all_rows, all_metadata = build_balanced_row_selection(
+        sample, sample_manifest, rows_per_stream=None,
+    )
+    np.testing.assert_array_equal(all_rows["row_index"], np.arange(40))
+    assert all_metadata["method"] == "all_sample_rows"

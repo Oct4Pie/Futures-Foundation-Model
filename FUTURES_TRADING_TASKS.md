@@ -112,6 +112,25 @@ verification item is also checked.
   ATR lane, Case C for inconsistent/damaging adaptation and Case D for the fractal pool; Case E is
   rejected, so broad SSL funding remains blocked.
 
+## Gate 4B — conditional trend-event pools
+
+- [x] Implement versioned, prefix-invariant pullback-continuation and compression-breakout
+  detectors with causal structural stops.
+- [x] Add event-stratified sampling that retains rare candidates, caps common candidates
+  chronologically and equalizes stream weight.
+- [x] Materialize the 2019-07 to 2025-07 development-only collection across all 54 streams.
+- [x] Run raw and causal-only structural/ATR-stop rulers with nested calibration, fees, zero primary
+  slippage, next-open entry and adverse-first ambiguity.
+- [x] Admit only viable structural pools to the vanilla/VICReg MantisV2 comparison.
+- [x] Run concatenated, residual and barrier-decomposed head comparisons on identical rows.
+- [x] Record canonical definitions, hashes, commands/artifacts, results and frozen decisions in
+  [CONDITIONAL_EVENT_GATE_RESULTS.md](CONDITIONAL_EVENT_GATE_RESULTS.md).
+- [x] Reject both ATR-stop lanes, residual fusion and VICReg promotion for this task.
+- [x] Freeze raw pullback, causal barrier pullback, vanilla direct-head pullback and VICReg negative
+  control as the only legacy-confirmation arms.
+- [ ] Read the 2025-07 to 2026-07 legacy interval once for those frozen arms; do not tune before or
+  after individual arm results are visible.
+
 ## Gate 5 — bounded MantisV2 revised-stage research exception
 
 - [x] Numerical Stage 0 adapter/export/context parity passed at 64/128/256 bars; ONNX maximum

@@ -25,13 +25,18 @@ def main() -> None:
         default="output/foundation_tournament/downstream_gate_v1/representation_rows.npz",
     )
     parser.add_argument("--rows-per-stream", type=int, default=400)
+    parser.add_argument(
+        "--all-rows", action="store_true",
+        help="select every row in an already event-focused sample",
+    )
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
+    rows_per_stream = None if args.all_rows else int(args.rows_per_stream)
     sample, sample_manifest = load_balanced_sample(args.sample)
     output = Path(args.output)
     if output.exists() and not args.overwrite:
         arrays, manifest = load_row_selection(output, sample_manifest=sample_manifest)
-        if manifest["metadata"]["rows_per_stream"] != args.rows_per_stream:
+        if manifest["metadata"]["rows_per_stream"] != rows_per_stream:
             raise ValueError("existing row selection uses another count; use --overwrite")
         print(json.dumps({
             "status": "verified_existing", "rows": int(len(arrays["row_index"])),
@@ -39,7 +44,7 @@ def main() -> None:
         }, indent=2))
         return
     arrays, metadata = build_balanced_row_selection(
-        sample, sample_manifest, rows_per_stream=args.rows_per_stream,
+        sample, sample_manifest, rows_per_stream=rows_per_stream,
     )
     manifest = save_row_selection(output, arrays, metadata)
     print(json.dumps({

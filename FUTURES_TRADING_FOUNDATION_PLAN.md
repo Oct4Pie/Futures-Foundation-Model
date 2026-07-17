@@ -298,6 +298,16 @@ complete; see [MANTIS_V2_SSL_PILOT_RESULTS.md](MANTIS_V2_SSL_PILOT_RESULTS.md). 
 VICReg improved the representation probes and beat its shuffle control, but did not beat causal
 features on the sealed forward-path or full-history realized-R rulers. Concatenated and residual
 fusion both failed, so Stage 1, Stage 3, a second seed and other trainable families remain unfunded.
+
+The subsequent conditional-event gate is complete; see
+[CONDITIONAL_EVENT_GATE_RESULTS.md](CONDITIONAL_EVENT_GATE_RESULTS.md). Causal, prefix-invariant
+pullback-continuation and compression-breakout detectors were evaluated across all 54 streams.
+Structural-stop pullbacks are the strongest current event pool (`+0.0511R`, PF 1.071 raw), while a
+causal selector rescued the otherwise near-break-even structural compression pool. Vanilla
+MantisV2 produced promising direct-head pullback results (`+0.0843R`, PF 1.124), but its paired
+interval crossed zero and the lift disappeared under barrier decomposition. VICReg trailed
+vanilla. The frozen next step is legacy confirmation of the declared pullback finalists; event,
+threshold, objective and checkpoint tuning are prohibited before that read.
 The author's next-leg atlas is treated as an external targeted hypothesis, not a result reproduced
 by this repository: its exact script, checkpoint, report/hash and corpus manifest are required
 before a frozen sealed evaluation. The primary execution sensitivity remains fee-only with zero

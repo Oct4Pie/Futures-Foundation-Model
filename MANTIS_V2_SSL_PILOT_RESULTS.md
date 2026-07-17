@@ -144,3 +144,8 @@ Stop this SSL branch. Do not spend a second seed or build Stage 1/3 from this ch
 highest-value work is to improve the causal event pools and conditional trading target/head, then
 reuse this frozen VICReg checkpoint only as a control. Reopen SSL only if a corrected downstream
 ruler shows representation quality is the binding constraint.
+
+That follow-up is complete. See
+[CONDITIONAL_EVENT_GATE_RESULTS.md](CONDITIONAL_EVENT_GATE_RESULTS.md). The revised pullback event
+pool is viable, but vanilla MantisV2 beat VICReg and neither embedding produced robust incremental
+lift under barrier decomposition. The decision not to fund additional SSL remains in force.
