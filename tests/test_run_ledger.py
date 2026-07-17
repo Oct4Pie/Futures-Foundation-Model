@@ -23,10 +23,12 @@ def test_ledger_appends_jsonl_with_numpy_sanitized(tmp_path, monkeypatch):
     assert back['per_ticker']['NQ'] == [0.587] and back['arr'] == [1.0, 2.0]
 
 
-def test_ledger_defaults_to_output_dir_and_never_raises(tmp_path, monkeypatch):
+def test_ledger_is_opt_in_only(tmp_path, monkeypatch):
+    """2026-07-17 (user directive): NO ledger unless RUN_LEDGER is set — the old
+    output_path fallback wrote run_ledger.jsonl on every run, unwanted by default."""
     from futures_foundation.finetune.produce import _ledger_append
     monkeypatch.delenv('RUN_LEDGER', raising=False)
     out = tmp_path / 'exp' / 'model'
-    _ledger_append({'kind': 'produce_streamed', 'oos_auc': 0.5}, str(out))
-    assert (tmp_path / 'exp' / 'run_ledger.jsonl').exists()
+    assert _ledger_append({'kind': 'produce_streamed', 'oos_auc': 0.5}, str(out)) is None
+    assert not (tmp_path / 'exp' / 'run_ledger.jsonl').exists()   # output_path alone -> NO file
     assert _ledger_append({'k': 1}, None) is None         # no path anywhere -> skip, no raise

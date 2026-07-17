@@ -135,7 +135,8 @@ def test_ladder_signal_contract_shape(tmp_path):
     import json
     out = dict(oos_auc=0.6, oos_meanR=0.63, shuffle_meanR=None, edge_shuffle=None,
                oos_trades=1000, n_train=100, n_oos=50, platt=None,
-               entry_thresholds={'top0.1pct': 4.2, 'top1pct': 3.3, 'top10pct': 2.8})
+               entry_thresholds={'top0.1pct': 4.2, 'top1pct': 3.3, 'top10pct': 2.8},
+               val_percentiles={'ES@3min': {'p50': 1.7, 'p90': 3.1, 'p99': 4.4}})
     ck = {'rank': 'expected_reach', 'reach_targets': [2.0, 3.0, 4.0, 6.0, 8.0], 'head': 'mlp'}
     lab = SyntheticLabeler(n_bars=200)
     produce._emit(out, 'mantis_frozen', ck, lab, None, None, 5, 1, ['c0'], ['ES'], ['3min'],
@@ -148,6 +149,14 @@ def test_ladder_signal_contract_shape(tmp_path):
     assert c['head_outputs'] == ['p_3r', 'expected_reach']
     assert c['reach_targets'] == [2.0, 3.0, 4.0, 6.0, 8.0]
     assert c['calibration']['baked_into_onnx'] is True
+    # STANDARDIZED 0-100 SCORE (2026-07-17): the ladder MUST carry the per-stream percentile scale
+    # too — same 0-100 axis as the single head, ranking expected_reach, so a head swap needs no bot
+    # change. Regression guard for the wiring gap where only the single head emitted it.
+    ss = c['score_scale']
+    assert ss['kind'] == 'per_stream_val_percentile' and ss['signal'] == 'expected_reach'
+    assert ss['percentiles'] == {'ES@3min': {'p50': 1.7, 'p90': 3.1, 'p99': 4.4}}
+    assert ss['p_min'] == 1.7                               # VAL-median E[R] backstop
+    assert 'expected_reach' in ss['rule']
 
 
 def test_contract_window_recipe_for_multi_tf(tmp_path):

@@ -99,7 +99,8 @@ def _emit_contract(tmp_path, platt):
     import json
     from futures_foundation.finetune.produce import _emit
     out = {'n_train': 100, 'n_oos': 50, 'oos_auc': 0.6, 'oos_meanR': 0.5, 'shuffle_meanR': 0.3,
-           'edge_shuffle': 0.2, 'oos_trades': 40, 'platt': platt}
+           'edge_shuffle': 0.2, 'oos_trades': 40, 'platt': platt,
+           'val_percentiles': {'ES@3min': {'p50': 0.15, 'p90': 0.31, 'p99': 0.44}}}
     _emit(dict(out), 'mantis_frozen', {}, None, None, None, 5, 64,
           None, ['ES'], ['3min'], '2026-01-01', True, str(tmp_path / 'model'), False)
     return json.loads((tmp_path / 'model_signal.json').read_text())
@@ -110,6 +111,18 @@ def test_contract_carries_platt(tmp_path):
     assert c['calibration']['method'] == 'platt'
     assert c['calibration']['A'] == 2.0 and c['calibration']['B'] == -0.5
     assert 'CALIBRATED' in c['proba_meaning']                 # bot knows to apply it
+
+
+def test_single_head_carries_standardized_score_scale(tmp_path):
+    # STANDARDIZED 0-100 SCORE: the single (P(x)) head emits the SAME per_stream_val_percentile
+    # block as the ladder, ranking calibrated_proba — so the bot floors on one 0-100 axis and a
+    # head swap (proba <-> ladder) needs no change. Mirror of the ladder test's score_scale guard.
+    c = _emit_contract(tmp_path, (2.0, -0.5))
+    ss = c['score_scale']
+    assert ss['kind'] == 'per_stream_val_percentile' and ss['signal'] == 'calibrated_proba'
+    assert ss['percentiles'] == {'ES@3min': {'p50': 0.15, 'p90': 0.31, 'p99': 0.44}}
+    assert ss['p_min'] == 0.15                                # VAL-median proba backstop
+    assert 'calibrated_proba' in ss['rule']
 
 
 def test_contract_uncalibrated_when_no_platt(tmp_path):
