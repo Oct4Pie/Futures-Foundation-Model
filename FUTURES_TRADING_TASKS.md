@@ -106,8 +106,11 @@ verification item is also checked.
 - [x] Build the full-history 2019-2024 downstream fitting artifact for the predeclared finalists.
   The fixed outer development interval is 2024-07 to 2025-07; see
   [DOWNSTREAM_FULL_HISTORY_RESULTS.md](DOWNSTREAM_FULL_HISTORY_RESULTS.md).
-- [ ] Test residual embedding fusion and decomposed barrier outcomes under the corrected ruler.
-- [ ] Record the Case A-E diagnosis and training-funding decision.
+- [x] Test residual embedding fusion and decomposed barrier outcomes under the corrected ruler.
+  Both are head-sensitive but fail to add stable paired utility over causal features.
+- [x] Record the Case A-E diagnosis and training-funding decision. Current decision: Case A for the
+  ATR lane, Case C for inconsistent/damaging adaptation and Case D for the fractal pool; Case E is
+  rejected, so broad SSL funding remains blocked.
 
 ## Gate 5 — bounded revised-stage pilots, blocked until Case E
 

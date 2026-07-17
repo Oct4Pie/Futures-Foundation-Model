@@ -279,10 +279,16 @@ isotonic calibration and applies a predeclared coverage/stability rule. No 2025-
 read.
 
 The ATR-zigzag structural pool produced positive fee-only aggregate results for causal XGBoost and
-Chronos Bolt Stage 1 fusion, but Chronos did not add significant paired utility over causal-only and
-the result was concentrated in one 30-minute fold. The fractal pool remained negative. Evidence is
-therefore a mixture of Cases A, C and D; Case B remains possible but unproven, and Case E is not
-established. Immediate work remains GPU-light: test residual embedding fusion and decomposed barrier
-outcomes on the predeclared ATR pool. The primary execution sensitivity is fee-only with zero
-modeled tick slippage and no added delay; one or more ticks remain frozen-selection stress tests.
-This completion does not authorize broad SSL retraining.
+some representation arms, but no embedding added significant paired utility over causal-only. The
+result was often concentrated by fold/timeframe. The fractal pool remained negative. Decomposed
+barrier outcomes and honest residual embedding fusion are also complete; both changed selected-arm
+economics but neither established incremental representation value over causal features. See
+[DOWNSTREAM_FULL_HISTORY_RESULTS.md](DOWNSTREAM_FULL_HISTORY_RESULTS.md).
+
+The locked diagnosis is Case A for the current ATR lane, Case C for inconsistent/damaging
+adaptation and Case D for the fractal pool. Case E is rejected on current evidence, so broad SSL
+retraining remains blocked. The author's next-leg atlas is treated as an external targeted
+hypothesis, not a result reproduced by this repository: its exact script, checkpoint, report/hash
+and corpus manifest are required before a frozen sealed evaluation. The primary execution
+sensitivity remains fee-only with zero modeled tick slippage and no added delay; one or more ticks
+remain frozen-selection stress tests.

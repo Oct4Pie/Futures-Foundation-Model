@@ -89,6 +89,63 @@ repriced.
 This sensitivity is informative but not a substitute for a slippage model. The requested primary
 assumption remains fees-only and zero ticks.
 
+## Outcome-decomposition ablation
+
+The v2 policy artifact adds the original four-state barrier outcome without changing any existing
+row or value. All 21 prior arrays match exactly across 1,833,912 events. The added states contain
+515,578 favorable-first, 978,295 adverse-first, 86,436 same-bar ambiguous and 253,603 neither
+outcomes.
+
+The decomposed head predicts one normalized three-class distribution:
+
+- favorable first;
+- adverse first or ambiguous, matching executable adverse-first accounting;
+- neither.
+
+A separate regressor predicts terminal gross R only for neither paths. Expected gross R is composed
+from those mutually exclusive outcomes, and known fees are subtracted afterward. Every component
+is fit inside the same purged nested folds.
+
+| ATR arm | Executed | Mean R | PF | Paired utility versus causal |
+| --- | ---: | ---: | ---: | ---: |
+| Causal XGBoost | 587 | +0.0609 | 1.1124 | baseline |
+| MantisV2 vanilla + causal | 634 | +0.0373 | 1.0707 | -0.00106 R/candidate |
+| MantisV2 Stage 2 + causal | 581 | +0.0261 | 1.0437 | -0.00181 |
+| Chronos Bolt Stage 1 + causal | 238 | +0.0147 | 1.0273 | -0.00284 |
+| Chronos Bolt vanilla + causal | 715 | -0.0018 | 0.9968 | -0.00326 |
+
+All embedding-versus-causal confidence intervals cross zero. Compared with direct regression, the
+decomposed head raises total development R for causal (`28.185` to `35.736`), MantisV2 vanilla
+(`1.764` to `23.634`) and MantisV2 Stage 2 (`-13.550` to `15.159`), but every paired
+decomposition-minus-direct interval also crosses zero. This establishes head/objective sensitivity,
+not foundation-model lift.
+
+## Residual-fusion ablation
+
+Residual fusion first fits the causal model on an earlier subfold, obtains genuinely out-of-fold
+causal errors on a later purged subfold, and trains the embedding head only on those residuals. The
+final causal model is then refit on all eligible outer-training rows and the embedding correction is
+added for the later outer test. A perturbation test confirms that changing all test and future
+outcomes leaves residual predictions exactly unchanged.
+
+| ATR arm | Executed | Mean R | PF | Paired utility versus causal |
+| --- | ---: | ---: | ---: | ---: |
+| MantisV2 Stage 2 residual | 186 | +0.1338 | 1.2145 | -0.00029 R/candidate |
+| Causal XGBoost | 255 | +0.1105 | 1.1967 | baseline |
+| Chronos Bolt vanilla residual | 661 | -0.0211 | 0.9650 | -0.00371 |
+| Chronos Bolt Stage 1 residual | 334 | -0.0793 | 0.8710 | -0.00481 |
+| MantisV2 vanilla residual | 176 | -0.1415 | 0.7894 | -0.00467 |
+
+MantisV2 Stage 2 has the highest per-trade mean, but it does not add opportunity utility over the
+causal model: 95% interval `[-0.00501, +0.00457]`. It improves over vanilla Mantis by
+`+0.00438 R/candidate` in all five folds, but its 95% interval `[-0.00031, +0.00868]` still crosses
+zero and its multiple-comparison-adjusted q-value is `0.1067`. Chronos Stage 1 residual is
+significantly worse than causal after adjustment.
+
+The residual result is the clearest example of why standalone mean R cannot be the gate. A sparse
+model can have a high mean per executed trade while contributing no paired utility across the
+opportunity set.
+
 ## Audit of the author's `mantis_ssl_nextleg.pt` claim
 
 The reported Mantis atlas log is promising on `pred_runner_6R` (AUC 0.7235),
@@ -126,13 +183,25 @@ ruler used here.
 - Analysis versus causal SHA-256: `6c7cfe961e2fa9346e9d61186d014bf5fb7ceeb7856083735dadf20151404881`
 - Analysis versus Chronos vanilla SHA-256: `77e5b12ca1a241c707fb6ebbce4b61ffc473feab57a8dcbef094c7e1ec678ebb`
 - Analysis versus Mantis vanilla SHA-256: `66ff0429e21e48177482c90dbc870d07d3b23bc37c7095dfdb8234067ad74170`
+- Policy events v2 SHA-256: `38125ab9e91f4bbe53f34eec60098830e03e9ba45bed12af825f9b9cc4f4ba35`
+- Barrier-decomposed results SHA-256: `42e368151405227b299dcbcada96ed7dd59b404d7e146843a5646db9cb482aef`
+- Barrier analysis versus causal SHA-256: `edfaf5e4cec07d43e2cfe871616fdb91faa6fff2fce82132d2e4ab84f3663e81`
+- Residual-fusion results SHA-256: `56fd0bce743c31351924c5097067d897f7549682f18bdacbe6d5368f2799f15f`
+- Residual analysis versus causal SHA-256: `3f77107f46c10ddffa98b2bc7fb8fdfd63d6783652303d0b7800f88cf1307f2a`
+- Residual analysis versus Mantis vanilla SHA-256: `0746416f2b39afbd60ecf05b78fab1f299046c7673618a045fa8a345f672095f`
 
 Canonical local report:
 `output/foundation_tournament/downstream_full_history_v1/trading_nested_isotonic_primary_seed20260716/trading_results.json`.
 
 ## Next decision
 
-Do not launch a broad Stage 1→3 sweep. The next bounded downstream experiment is decomposed barrier
-outcomes plus residual embedding fusion on the ATR-zigzag structural pool. That test asks whether
-Mantis or Chronos adds information beyond the causal head without allowing a large embedding to
-destabilize it. Only stable paired lift over causal and vanilla controls can authorize revised SSL.
+Do not launch a broad Stage 1→3 sweep. Decomposed outcomes and residual fusion are now complete and
+neither establishes incremental foundation-model value over causal features. The locked diagnosis
+is Case A for the current ATR lane, Case C for damaging/inconsistent adaptation, and Case D for the
+negative fractal pool. Case E is rejected on current evidence.
+
+The author's atlas claim is a separate, targeted hypothesis. Exact reproduction requires his atlas
+script, `mantis_ssl_nextleg.pt`, training report/config/hash and corpus/pivot manifest. If supplied,
+score that frozen checkpoint first on the sealed ruler. Only a stable paired lift may authorize one
+clean corrected next-leg pilot. Without those artifacts, inferentially recreating labels such as
+`pred_runner_6R` would not be a reproduction.

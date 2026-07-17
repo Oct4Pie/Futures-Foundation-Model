@@ -12,7 +12,10 @@ import yaml
 from futures_foundation.finetune.trend_strategy_eval import TICK_SIZES
 
 
-POLICY_SCHEMA_VERSION = "ffm_downstream_policy_events_v1"
+POLICY_SCHEMA_VERSION = "ffm_downstream_policy_events_v2"
+SUPPORTED_POLICY_SCHEMA_VERSIONS = {
+    "ffm_downstream_policy_events_v1", POLICY_SCHEMA_VERSION,
+}
 
 
 def _sha256(path: str | Path) -> str:
@@ -42,7 +45,7 @@ def build_policy_events(
     columns: dict[str, list[np.ndarray]] = {key: [] for key in (
         "context_row", "source_event_row", "tag_index", "direction", "mode_index",
         "horizon_index", "target_index", "signal_time_ns", "exit_time_ns",
-        "gross_r", "realized_r", "reached", "risk_ticks", "slippage_r", "fee_r",
+        "gross_r", "realized_r", "reached", "barrier_state", "risk_ticks", "slippage_r", "fee_r",
         "total_cost_r", "ticker", "timeframe",
         "tag", "mode", "policy_key",
     )}
@@ -64,7 +67,7 @@ def build_policy_events(
                 "policy_event_context_row", "policy_event_tag_index",
                 "policy_event_direction", "policy_valid", "policy_risk_ticks",
                 "policy_cost_r", "policy_realized_r", "policy_reached",
-                "policy_exit_time_ns",
+                "policy_barrier_state", "policy_exit_time_ns",
             )}
         ticker_name = str(sample["ticker"][global_rows[0]])
         spec = execution_costs.get(ticker_name)
@@ -146,6 +149,11 @@ def build_policy_events(
                             events, mode_index, horizon_index, target_index
                         ].astype(bool)
                     )
+                    columns["barrier_state"].append(
+                        np.asarray(source["policy_barrier_state"])[
+                            events, mode_index, horizon_index, target_index
+                        ].astype(np.int8)
+                    )
                     columns["risk_ticks"].append(risk_ticks_all[keep].astype(np.float32))
                     columns["slippage_r"].append(slippage_r[keep].astype(np.float32))
                     columns["fee_r"].append(fee_r[keep].astype(np.float32))
@@ -182,6 +190,10 @@ def build_policy_events(
         ),
         "fee_schedule": execution_costs,
         "same_bar_policy": "adverse_first",
+        "outcome_contract": (
+            "barrier_state preserves favorable/adverse/neither/ambiguous; executable realized R "
+            "maps ambiguous to adverse-first"
+        ),
     }
     return arrays, metadata
 
@@ -204,7 +216,10 @@ def save_policy_events(path: str | Path, arrays: dict, metadata: dict) -> dict:
 def load_policy_events(path: str | Path) -> tuple[dict[str, np.ndarray], dict]:
     path = Path(path).resolve()
     manifest = json.loads(Path(str(path) + ".manifest.json").read_text())
-    if manifest.get("schema_version") != POLICY_SCHEMA_VERSION or manifest.get("status") != "complete":
+    if (
+        manifest.get("schema_version") not in SUPPORTED_POLICY_SCHEMA_VERSIONS
+        or manifest.get("status") != "complete"
+    ):
         raise ValueError("unsupported or incomplete policy artifact")
     if manifest.get("oos_read") is not False or manifest.get("artifact", {}).get("sha256") != _sha256(path):
         raise ValueError("policy artifact hash/OOS guard failed")

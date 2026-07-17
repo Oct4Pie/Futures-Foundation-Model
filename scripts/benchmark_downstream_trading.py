@@ -182,23 +182,174 @@ def context_matrix_for_fold(
     return np.column_stack((reduced, causal)).astype(np.float32)
 
 
+def barrier_outcome_classes(state: np.ndarray) -> np.ndarray:
+    """Map sealed barrier states to favorable/adverse-or-ambiguous/neither classes."""
+    state = np.asarray(state, np.int8)
+    if np.any(~np.isin(state, (0, 1, 2, 3))):
+        raise ValueError("barrier state contains an unsupported value")
+    output = np.full(state.shape, 2, np.int8)  # neither
+    output[state == 1] = 0                     # favorable first
+    output[np.isin(state, (2, 3))] = 1         # adverse first or ambiguous -> executable adverse
+    return output
+
+
+def expected_net_r_from_barrier(
+    probabilities: np.ndarray,
+    terminal_neither_r: np.ndarray,
+    known_cost_r: np.ndarray,
+    *,
+    target_r: float,
+) -> np.ndarray:
+    """Compose expected executable net R from mutually exclusive path outcomes."""
+    probabilities = np.asarray(probabilities, np.float64)
+    terminal = np.asarray(terminal_neither_r, np.float64)
+    costs = np.asarray(known_cost_r, np.float64)
+    if (
+        probabilities.ndim != 2 or probabilities.shape[1] != 3
+        or terminal.shape != probabilities.shape[:1] or costs.shape != terminal.shape
+        or not np.isfinite(probabilities).all() or not np.isfinite(terminal).all()
+        or not np.isfinite(costs).all() or np.any(probabilities < 0)
+        or not np.allclose(probabilities.sum(axis=1), 1.0, atol=1e-5)
+        or float(target_r) <= 0
+    ):
+        raise ValueError("invalid barrier expected-value inputs")
+    gross = (
+        probabilities[:, 0] * float(target_r)
+        - probabilities[:, 1]
+        + probabilities[:, 2] * terminal
+    )
+    return np.asarray(gross - costs, np.float32)
+
+
+def fit_predict_policy_fold(
+    matrix: np.ndarray,
+    events: dict,
+    policy_event_rows: np.ndarray,
+    train: np.ndarray,
+    test: np.ndarray,
+    *,
+    objective: str,
+    target_r: float,
+    seed: int,
+) -> np.ndarray:
+    """Fit either direct net-R regression or a decomposed barrier-path model."""
+    matrix = np.asarray(matrix, np.float32)
+    policy_event_rows = np.asarray(policy_event_rows, np.int64)
+    train, test = np.asarray(train, np.int64), np.asarray(test, np.int64)
+    realized = np.asarray(events["realized_r"])[policy_event_rows]
+    groups = np.asarray(events["ticker"])[policy_event_rows]
+    if objective == "direct_r":
+        return fit_predict_fold(
+            matrix, realized, groups, train, test, kind="reg", head="xgb",
+            control="real", seed=int(seed),
+        )
+    if objective != "barrier_decomposed":
+        raise ValueError(f"unknown trading outcome objective: {objective}")
+    if "barrier_state" not in events:
+        raise ValueError("barrier-decomposed objective requires a v2 policy artifact")
+
+    import xgboost as xgb
+
+    state = np.asarray(events["barrier_state"])[policy_event_rows]
+    classes = barrier_outcome_classes(state)
+    if set(np.unique(classes[train]).tolist()) != {0, 1, 2}:
+        raise ValueError("barrier training fold lacks one or more outcome classes")
+    common = dict(
+        n_estimators=120, max_depth=3, learning_rate=0.04, subsample=0.8,
+        colsample_bytree=0.8, reg_lambda=10.0, min_child_weight=20.0,
+        tree_method="hist", random_state=int(seed), n_jobs=1, verbosity=0,
+    )
+    classifier = xgb.XGBClassifier(
+        objective="multi:softprob", num_class=3, eval_metric="mlogloss", **common,
+    )
+    classifier.fit(matrix[train], classes[train])
+    probabilities = np.asarray(classifier.predict_proba(matrix[test]), np.float64)
+    if classifier.classes_.tolist() != [0, 1, 2]:
+        raise RuntimeError("barrier classifier class order changed")
+
+    neither_train = train[classes[train] == 2]
+    if len(neither_train) < 20:
+        raise ValueError("too few neither outcomes for terminal-R regression")
+    gross = np.asarray(events["gross_r"])[policy_event_rows]
+    terminal_model = xgb.XGBRegressor(objective="reg:squarederror", **common)
+    terminal_model.fit(matrix[neither_train], gross[neither_train])
+    terminal = np.asarray(terminal_model.predict(matrix[test]), np.float64)
+    # A neither path did not touch -1R or +target_R, so extrapolation outside those barriers is
+    # structurally impossible and would make the decomposition incoherent.
+    terminal = np.clip(terminal, -1.0, float(target_r))
+    costs = np.asarray(events["total_cost_r"])[policy_event_rows[test]]
+    return expected_net_r_from_barrier(
+        probabilities, terminal, costs, target_r=float(target_r),
+    )
+
+
+def fit_predict_residual_fold(
+    residual_matrix: np.ndarray,
+    base_matrix: np.ndarray,
+    events: dict,
+    policy_event_rows: np.ndarray,
+    train: np.ndarray,
+    test: np.ndarray,
+    *,
+    seed: int,
+    residual_fraction: float = 0.3,
+    min_base_fit: int = 100,
+    min_residual_fit: int = 50,
+) -> np.ndarray:
+    """Predict causal expected R plus an embedding correction trained on honest residuals."""
+    residual_matrix = np.asarray(residual_matrix, np.float32)
+    base_matrix = np.asarray(base_matrix, np.float32)
+    policy_event_rows = np.asarray(policy_event_rows, np.int64)
+    train, test = np.asarray(train, np.int64), np.asarray(test, np.int64)
+    if residual_matrix.shape[0] != base_matrix.shape[0] or len(policy_event_rows) != len(base_matrix):
+        raise ValueError("residual/base/event matrices are misaligned")
+    y = np.asarray(events["realized_r"])[policy_event_rows]
+    groups = np.asarray(events["ticker"])[policy_event_rows]
+    base_fit, residual_fit, _ = inner_calibration_rows(
+        events, policy_event_rows, train, fraction=float(residual_fraction),
+        min_fit=int(min_base_fit), min_calibration=int(min_residual_fit),
+    )
+    base_oof = fit_predict_fold(
+        base_matrix, y, groups, base_fit, residual_fit, kind="reg", head="xgb",
+        control="real", seed=int(seed) + 1,
+    )
+    residual_target = np.zeros(len(y), np.float32)
+    residual_target[residual_fit] = y[residual_fit] - base_oof
+    base_test = fit_predict_fold(
+        base_matrix, y, groups, train, test, kind="reg", head="xgb",
+        control="real", seed=int(seed) + 2,
+    )
+    residual_test = fit_predict_fold(
+        residual_matrix, residual_target, groups, residual_fit, test,
+        kind="reg", head="xgb", control="real", seed=int(seed) + 3,
+    )
+    return np.asarray(base_test + residual_test, np.float32)
+
+
 def nested_oof_predictions(
     context_matrices: list[np.ndarray],
     context_splits: list[tuple[np.ndarray, np.ndarray]],
     policy_context_rows: np.ndarray,
+    policy_event_rows: np.ndarray,
     policy_features: np.ndarray,
-    y: np.ndarray,
-    groups: np.ndarray,
+    events: dict,
     *,
     head: str,
+    objective: str,
+    target_r: float,
+    residual_fusion: bool = False,
+    causal_context_dim: int = 0,
+    residual_fraction: float = 0.3,
     seed: int,
     min_train: int,
     min_test: int,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[dict]]:
     """Generate strictly earlier-fold predictions for calibrator and threshold fitting."""
     policy_context_rows = np.asarray(policy_context_rows, np.int64)
+    policy_event_rows = np.asarray(policy_event_rows, np.int64)
     policy_features = np.asarray(policy_features, np.float32)
-    y, groups = np.asarray(y), np.asarray(groups)
+    if len(policy_event_rows) != len(policy_context_rows):
+        raise ValueError("policy event/context rows are misaligned")
     if len(context_matrices) != len(context_splits):
         raise ValueError("inner matrices/splits are misaligned")
     rows_out, score_out, fold_out, records = [], [], [], []
@@ -217,13 +368,33 @@ def nested_oof_predictions(
             record["status"] = "skipped_insufficient_rows"
             records.append(record)
             continue
-        matrix = np.column_stack((context_matrix[policy_context_rows], policy_features)).astype(
-            np.float32,
-        )
-        score = fit_predict_fold(
-            matrix, y, groups, train, test, kind="reg", head=head, control="real",
-            seed=int(seed) + inner_fold,
-        )
+        if head != "xgb":
+            raise ValueError("policy outcome objectives currently require the XGBoost head")
+        if residual_fusion:
+            if objective != "direct_r" or causal_context_dim < 1:
+                raise ValueError("residual fusion requires direct-R and a declared causal dimension")
+            embedding_dim = context_matrix.shape[1] - int(causal_context_dim)
+            if embedding_dim < 1:
+                raise ValueError("residual fusion context lacks embedding columns")
+            base_matrix = np.column_stack((
+                context_matrix[policy_context_rows, embedding_dim:], policy_features,
+            )).astype(np.float32)
+            residual_matrix = np.column_stack((
+                context_matrix[policy_context_rows, :embedding_dim], policy_features,
+            )).astype(np.float32)
+            score = fit_predict_residual_fold(
+                residual_matrix, base_matrix, events, policy_event_rows, train, test,
+                seed=int(seed) + inner_fold, residual_fraction=residual_fraction,
+                min_base_fit=min_train, min_residual_fit=min_test,
+            )
+        else:
+            matrix = np.column_stack((
+                context_matrix[policy_context_rows], policy_features,
+            )).astype(np.float32)
+            score = fit_predict_policy_fold(
+                matrix, events, policy_event_rows, train, test,
+                objective=objective, target_r=target_r, seed=int(seed) + inner_fold,
+            )
         rows_out.append(test)
         score_out.append(score)
         fold_out.append(np.full(len(test), inner_fold, np.int8))
@@ -420,7 +591,8 @@ def run(args) -> dict:
         if name in embeddings:
             raise ValueError(f"duplicate embedding arm: {name}")
         embeddings[name], embedding_manifests[name] = value, manifest
-    arm_names = ["raw_all", "causal_xgb"] + [f"{name}:fusion_xgb" for name in embeddings]
+    fusion_token = "fusion_xgb" if args.fusion_mode == "concatenate" else "residual_xgb"
+    arm_names = ["raw_all", "causal_xgb"] + [f"{name}:{fusion_token}" for name in embeddings]
 
     horizons = set(_parse_csv_numbers(args.horizons, int))
     targets = set(_parse_csv_numbers(args.targets, float))
@@ -476,12 +648,12 @@ def run(args) -> dict:
             raise RuntimeError("timeframe rows are absent from one or more embeddings")
         timeframe_embeddings = {name: value[positions] for name, value in embeddings.items()}
         outer_matrices = {"causal_xgb": []}
-        outer_matrices.update({f"{name}:fusion_xgb": [] for name in embeddings})
+        outer_matrices.update({f"{name}:{fusion_token}": [] for name in embeddings})
         inner_splits_by_outer, inner_matrices_by_outer = [], []
         for fold_index, (train, test) in enumerate(splits, start=1):
             outer_matrices["causal_xgb"].append(causal)
             for name, embedding in timeframe_embeddings.items():
-                outer_matrices[f"{name}:fusion_xgb"].append(context_matrix_for_fold(
+                outer_matrices[f"{name}:{fusion_token}"].append(context_matrix_for_fold(
                     causal, embedding, train, test, max_components=args.max_components,
                     seed=args.seed + fold_index,
                 ))
@@ -502,7 +674,7 @@ def run(args) -> dict:
                 inner_splits_by_outer.append(inner_splits)
                 arm_inner = {"causal_xgb": [causal for _ in inner_splits]}
                 for name, embedding in timeframe_embeddings.items():
-                    arm_inner[f"{name}:fusion_xgb"] = [
+                    arm_inner[f"{name}:{fusion_token}"] = [
                         context_matrix_for_fold(
                             causal, embedding, inner_train, inner_test,
                             max_components=args.max_components,
@@ -525,7 +697,10 @@ def run(args) -> dict:
             policy_context_local = event_local[local_policy_rows]
             policy_features, policy_feature_names = policy_feature_matrix(events, policy_event_rows)
             y = np.asarray(events["realized_r"][policy_event_rows], np.float32)
-            groups = events["ticker"][policy_event_rows]
+            policy_targets = np.unique(event_target[policy_event_rows])
+            if len(policy_targets) != 1:
+                raise ValueError(f"policy {policy!r} mixes target-R values")
+            policy_target_r = float(policy_targets[0])
             for fold_index, (train_context, test_context) in enumerate(splits, start=1):
                 role = np.zeros(len(context_rows), np.int8)
                 role[train_context], role[test_context] = 1, 2
@@ -556,14 +731,36 @@ def run(args) -> dict:
                         selected, executed = raw_selected, raw_executed
                         decision_threshold = np.nan
                     else:
-                        matrix = np.column_stack((
-                            outer_matrices[arm][fold_index - 1][policy_context_local], policy_features,
-                        )).astype(np.float32)
-                        raw_score = fit_predict_fold(
-                            matrix, y, groups, train, test, kind="reg", head="xgb",
-                            control="real",
-                            seed=stable_policy_seed(args.seed, policy, fold_index),
-                        )
+                        context_matrix = outer_matrices[arm][fold_index - 1]
+                        residual_arm = args.fusion_mode == "residual" and arm != "causal_xgb"
+                        if residual_arm:
+                            embedding_dim = context_matrix.shape[1] - causal.shape[1]
+                            base_matrix = np.column_stack((
+                                context_matrix[policy_context_local, embedding_dim:],
+                                policy_features,
+                            )).astype(np.float32)
+                            residual_matrix = np.column_stack((
+                                context_matrix[policy_context_local, :embedding_dim],
+                                policy_features,
+                            )).astype(np.float32)
+                            raw_score = fit_predict_residual_fold(
+                                residual_matrix, base_matrix, events, policy_event_rows,
+                                train, test,
+                                seed=stable_policy_seed(args.seed, policy, fold_index),
+                                residual_fraction=args.residual_fraction,
+                                min_base_fit=args.min_calibration_fit,
+                                min_residual_fit=args.min_calibration_rows,
+                            )
+                        else:
+                            matrix = np.column_stack((
+                                context_matrix[policy_context_local], policy_features,
+                            )).astype(np.float32)
+                            raw_score = fit_predict_policy_fold(
+                                matrix, events, policy_event_rows, train, test,
+                                objective=args.outcome_objective,
+                                target_r=policy_target_r,
+                                seed=stable_policy_seed(args.seed, policy, fold_index),
+                            )
                         score = raw_score
                         decision_threshold = float(args.threshold)
                         if args.threshold_mode == "nested_isotonic":
@@ -572,8 +769,14 @@ def run(args) -> dict:
                                     nested_oof_predictions(
                                         inner_matrices_by_outer[fold_index - 1][arm],
                                         inner_splits_by_outer[fold_index - 1],
-                                        policy_context_local, policy_features, y, groups,
+                                        policy_context_local, policy_event_rows,
+                                        policy_features, events,
                                         head="xgb",
+                                        objective=args.outcome_objective,
+                                        target_r=policy_target_r,
+                                        residual_fusion=residual_arm,
+                                        causal_context_dim=causal.shape[1],
+                                        residual_fraction=args.residual_fraction,
                                         seed=stable_policy_seed(
                                             args.seed, policy + ":nested", fold_index,
                                         ),
@@ -635,13 +838,26 @@ def run(args) -> dict:
                                     min_fit=args.min_calibration_fit,
                                     min_calibration=args.min_calibration_rows,
                                 )
-                                calibration_score = fit_predict_fold(
-                                    matrix, y, groups, inner_fit, calibration,
-                                    kind="reg", head="xgb", control="real",
-                                    seed=stable_policy_seed(
-                                        args.seed, policy + ":calibration", fold_index,
-                                    ),
-                                )
+                                if residual_arm:
+                                    calibration_score = fit_predict_residual_fold(
+                                        residual_matrix, base_matrix, events, policy_event_rows,
+                                        inner_fit, calibration,
+                                        seed=stable_policy_seed(
+                                            args.seed, policy + ":calibration", fold_index,
+                                        ),
+                                        residual_fraction=args.residual_fraction,
+                                        min_base_fit=args.min_calibration_fit,
+                                        min_residual_fit=args.min_calibration_rows,
+                                    )
+                                else:
+                                    calibration_score = fit_predict_policy_fold(
+                                        matrix, events, policy_event_rows, inner_fit, calibration,
+                                        objective=args.outcome_objective,
+                                        target_r=policy_target_r,
+                                        seed=stable_policy_seed(
+                                            args.seed, policy + ":calibration", fold_index,
+                                        ),
+                                    )
                                 calibrated = choose_calibrated_threshold(
                                     events, policy_event_rows, calibration, calibration_score,
                                     quantiles=args.threshold_quantiles,
@@ -768,7 +984,15 @@ def run(args) -> dict:
             "calibration_lcb_z": args.calibration_lcb_z,
             "threshold_quantiles": list(args.threshold_quantiles),
             "execution": "one active trade per policy/ticker/timeframe",
-            "head": "constrained_xgb_regression", "min_train": args.min_train,
+            "head": (
+                "constrained_xgb_regression"
+                if args.outcome_objective == "direct_r"
+                else "constrained_xgb_multiclass_plus_neither_regression"
+            ),
+            "min_train": args.min_train,
+            "outcome_objective": args.outcome_objective,
+            "fusion_mode": args.fusion_mode,
+            "residual_fraction": args.residual_fraction,
             "min_test": args.min_test, "max_components": args.max_components,
             "policy_features": list(policy_feature_names),
             "screen_sampling_limit": (
@@ -812,6 +1036,16 @@ def main() -> None:
     )
     parser.add_argument("--horizons", default="360")
     parser.add_argument("--targets", default="3")
+    parser.add_argument(
+        "--outcome-objective", choices=("direct_r", "barrier_decomposed"),
+        default="direct_r",
+        help="direct net-R regression or favorable/adverse/neither path decomposition",
+    )
+    parser.add_argument(
+        "--fusion-mode", choices=("concatenate", "residual"), default="concatenate",
+        help="embedding+causal concatenation or honest residual correction over causal features",
+    )
+    parser.add_argument("--residual-fraction", type=float, default=0.3)
     parser.add_argument(
         "--policies",
         default=(
@@ -862,6 +1096,10 @@ def main() -> None:
             parser.error(f"invalid outer evaluation interval: {error}")
         if args.outer_eval_end <= args.outer_eval_start:
             parser.error("outer evaluation end must be after start")
+    if args.fusion_mode == "residual" and args.outcome_objective != "direct_r":
+        parser.error("residual fusion is a one-factor direct-R ablation")
+    if not 0 < args.residual_fraction < 0.5:
+        parser.error("--residual-fraction must be in (0, 0.5)")
     run(args)
 
 

@@ -10,8 +10,11 @@ from futures_foundation.finetune.calibration import (
 )
 from scripts.benchmark_downstream_trading import (
     apply_concurrency,
+    barrier_outcome_classes,
     choose_calibrated_threshold,
     choose_stable_calibrated_threshold,
+    expected_net_r_from_barrier,
+    fit_predict_residual_fold,
     inner_calibration_rows,
     nested_context_splits,
     nested_oof_predictions,
@@ -32,6 +35,7 @@ def test_build_policy_events_expands_net_tick_costed_outcomes(tmp_path):
         policy_event_direction=np.asarray([1], np.int8),
         policy_valid=np.asarray([[True]]), policy_risk_ticks=np.asarray([[4.0]], np.float32),
         policy_cost_r=np.asarray([[0.25]], np.float32),
+        policy_barrier_state=np.asarray([[[[1]]]], np.int8),
         policy_realized_r=np.asarray([[[[1.75]]]], np.float32),
         policy_reached=np.asarray([[[[True]]]]),
         policy_exit_time_ns=np.asarray([[[[200]]]], np.int64),
@@ -52,6 +56,7 @@ def test_build_policy_events_expands_net_tick_costed_outcomes(tmp_path):
     assert metadata["rows"] == 1
     assert arrays["policy_key"].item() == "supertrend_flip__atr__60m__2R"
     assert arrays["gross_r"].item() == 2.0
+    assert arrays["barrier_state"].item() == 1
     assert arrays["slippage_r"].item() == 0.25
     assert arrays["fee_r"].item() == pytest.approx(0.1)
     assert arrays["realized_r"].item() == pytest.approx(1.65)
@@ -77,6 +82,16 @@ def test_trade_metrics_use_positive_net_r_as_win_rate():
     assert result["win_rate"] == 2 / 3
     assert result["target_hit_rate"] == 1 / 3
     assert result["profit_factor"] == 2.5
+
+
+def test_barrier_outcome_decomposition_is_mutually_exclusive_and_fee_aware():
+    classes = barrier_outcome_classes(np.asarray([0, 1, 2, 3], np.int8))
+    assert classes.tolist() == [2, 0, 1, 1]
+    score = expected_net_r_from_barrier(
+        np.asarray([[0.5, 0.25, 0.25], [0.0, 0.0, 1.0]]),
+        np.asarray([0.4, -0.2]), np.asarray([0.1, 0.05]), target_r=3.0,
+    )
+    np.testing.assert_allclose(score, [1.25, -0.25])
 
 
 def test_slippage_sensitivity_uses_risk_geometry_when_primary_slippage_is_zero():
@@ -196,9 +211,13 @@ def test_nested_oof_predictions_use_disjoint_later_rows():
     context = np.arange(80, dtype=np.float32)[:, None]
     splits = [(np.arange(30), np.arange(30, 45)), (np.arange(45), np.arange(45, 60))]
     y = (0.05 * context[:, 0]).astype(np.float32)
+    events = {
+        "realized_r": y, "ticker": np.asarray(["ES"] * 80),
+    }
     rows, score, folds, records = nested_oof_predictions(
-        [context, context], splits, np.arange(80), np.ones((80, 1), np.float32),
-        y, np.asarray(["ES"] * 80), head="linear", seed=3,
+        [context, context], splits, np.arange(80), np.arange(80),
+        np.ones((80, 1), np.float32),
+        events, head="xgb", objective="direct_r", target_r=3.0, seed=3,
         min_train=20, min_test=10,
     )
 
@@ -206,6 +225,31 @@ def test_nested_oof_predictions_use_disjoint_later_rows():
     assert len(np.unique(rows)) == len(rows)
     assert set(np.unique(folds)) == {1, 2}
     assert all(record["status"] == "complete" for record in records)
+
+
+def test_residual_fusion_predictions_ignore_test_and_future_outcomes():
+    n = 400
+    signal = np.arange(n, dtype=np.int64) * 10
+    base = np.column_stack((np.sin(np.arange(n) / 17), np.arange(n) % 5)).astype(np.float32)
+    residual = np.column_stack((np.cos(np.arange(n) / 11), np.arange(n) % 7)).astype(np.float32)
+    y = (0.2 * base[:, 0] + 0.1 * residual[:, 0]).astype(np.float32)
+    events = {
+        "realized_r": y.copy(), "ticker": np.asarray(["ES"] * n),
+        "signal_time_ns": signal, "exit_time_ns": signal + 1,
+    }
+    train, test = np.arange(300), np.arange(300, 350)
+    first = fit_predict_residual_fold(
+        residual, base, events, np.arange(n), train, test, seed=9,
+        min_base_fit=100, min_residual_fit=50,
+    )
+    changed = dict(events)
+    changed["realized_r"] = y.copy()
+    changed["realized_r"][300:] += 1000.0
+    second = fit_predict_residual_fold(
+        residual, base, changed, np.arange(n), train, test, seed=9,
+        min_base_fit=100, min_residual_fit=50,
+    )
+    np.testing.assert_allclose(first, second, rtol=0, atol=0)
 
 
 def test_stable_threshold_returns_no_trade_without_positive_fold_lcb():
