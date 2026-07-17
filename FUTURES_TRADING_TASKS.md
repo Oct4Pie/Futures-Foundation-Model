@@ -180,14 +180,22 @@ verification item is also checked.
   and continuation/termination/reversal; candle MSE is not reused.
 - [x] Preserve all 54 streams through per-timeframe future filtering; reject uniform 360-bar
   reservation because it removed CL@60-minute validation coverage.
-- [x] Verify both objectives on V1/V2 CUDA smokes, the 90-test torch SSL suite and the full
-  908-test default suite. See [REVISED_MANTIS_SSL_OBJECTIVES.md](REVISED_MANTIS_SSL_OBJECTIVES.md).
-- [ ] Run the single predeclared MantisV1 direct-`path` pilot from the merged source revision.
-  `structure_mask`, V2 path and all chained lineages are unfunded.
-- [ ] Require paired per-candidate lift over V1 vanilla, majority-fold stability, corrected interval
-  excluding zero, no compression-control damage, positive fee-only economics and survival at the
-  frozen one-tick sensitivity. Stop without iteration if any requirement fails.
-- [ ] Give a second seed only to a branch that beats both its vanilla backbone and causal features.
+- [x] Verify both objectives on V1/V2 CUDA smokes, the 90-test torch SSL suite and the full suite;
+  after the upstream-main merge it reports 916 passed and 90 skipped. See
+  [REVISED_MANTIS_SSL_OBJECTIVES.md](REVISED_MANTIS_SSL_OBJECTIVES.md).
+- [x] Run the single predeclared MantisV1 direct-`path` pilot from the merged source revision.
+  `structure_mask`, V2 path and all chained lineages remain unfunded.
+- [x] Apply the locked paired promotion gate. The checkpoint failed: pullback lift was `-0.01338`
+  R/candidate with interval `[-0.03002,+0.00374]` and two of five positive folds; compression lift
+  was `+0.00105` with interval `[-0.00481,+0.00698]` and one of five positive folds. It was not
+  exposed to OOS. See [REVISED_MANTIS_SSL_OBJECTIVES.md](REVISED_MANTIS_SSL_OBJECTIVES.md).
+- [x] Deny a second seed because the branch failed to beat its vanilla backbone and failed the
+  one-tick sensitivity (`-0.0802R`, PF `0.895` on pullbacks).
+- [ ] Diagnose the failed path objective from training-only labels and saved development
+  predictions without changing the frozen checkpoint or reopening its ruler. Quantify target
+  balance, horizon dominance, anchor drift and per-timeframe/per-symbol failure concentration.
+- [ ] Predeclare a genuinely new objective hypothesis and fresh development contract before any
+  additional SSL training. Do not tune this failed recipe's weights or horizons on the same rows.
 
 ## Gate 6 — full cross-family training, blocked until pilots pass
 
