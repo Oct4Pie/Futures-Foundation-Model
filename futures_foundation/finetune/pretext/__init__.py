@@ -20,13 +20,15 @@ its own file keeps ssl.py a clean orchestrator.
 """
 from .base import PretextTask
 from .mask import MaskTask
+from .structure_mask import StructureMaskTask
 from .forecast import ForecastTask
+from .path import PathTask
 from .forecast_dist import ForecastDistTask
 from .contrastive import ContrastiveTask
 from .electra import TurnElectraTask
 from .nextleg import NextLegTask
 
-PRETEXTS = {t.name: t for t in (MaskTask(), ForecastTask(), ForecastDistTask(),
+PRETEXTS = {t.name: t for t in (MaskTask(), StructureMaskTask(), ForecastTask(), PathTask(), ForecastDistTask(),
                                 ContrastiveTask(), TurnElectraTask(), NextLegTask())}
 
 
@@ -35,5 +37,6 @@ def get_pretext(name):
     return PRETEXTS[name or 'mask']
 
 
-__all__ = ['PretextTask', 'MaskTask', 'ForecastTask', 'ForecastDistTask', 'ContrastiveTask',
+__all__ = ['PretextTask', 'MaskTask', 'StructureMaskTask', 'ForecastTask', 'PathTask',
+           'ForecastDistTask', 'ContrastiveTask',
            'TurnElectraTask', 'NextLegTask', 'PRETEXTS', 'get_pretext']

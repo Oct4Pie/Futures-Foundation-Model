@@ -378,6 +378,12 @@ def _base_cfg(**kw):
              # OPTIONAL forecast direction-head squeeze (0 = off / backward-compat; >0 adds BCE on
              # sign of the forward close move -> trains the encoder to be direction-aware for WR):
              dir_weight=0.0, dir_close_ch=3,
+             # Revised Stage 3 fixed-wall-clock path distribution. The reserve is expressed in
+             # bars at the densest supported stream; each sampled stream converts the declared
+             # elapsed horizons to its own exact step counts inside the trainer.
+             path_horizons_minutes=(60, 180, 360), path_context_minutes=60,
+             path_max_future_bars=360, path_vol_weight=1.0,
+             path_excursion_weight=1.0, path_class_weight=1.0,
              # stage-2.5 forecast_dist faithfulness knobs (defaults = the original refine-study
              # behavior): mse_weight 0 = PURE Chronos loss (no MSE anchor); quantile_taus 'bolt9'
              # = the full 9-level quantile head; bins_k = bin-classification resolution.

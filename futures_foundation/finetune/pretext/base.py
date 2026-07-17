@@ -23,7 +23,10 @@ class PretextTask:
 
     def train(self, big, tr, va, cfg, control):
         """-> (best_encoder_state, history) under a control ('real'|'shuffle'|'random')."""
-        from .. import _ssl_torch                          # lazy: keep module load torch-free
+        # Resolve through sys.modules on every dispatch. Besides keeping import lazy, this avoids
+        # a stale package attribute defeating controlled module replacement in tests/plugins.
+        import importlib
+        _ssl_torch = importlib.import_module('futures_foundation.finetune._ssl_torch')
         kw = {k: v for k, v in cfg.items() if k != 'pretext'}
         return getattr(_ssl_torch, self.trainer)(big, tr, va, control=control, **kw)
 

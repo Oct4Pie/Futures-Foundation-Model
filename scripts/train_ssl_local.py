@@ -16,7 +16,7 @@ from pathlib import Path
 
 ROOTS = ('ES', 'NQ', 'RTY', 'YM', 'GC', 'SI', 'CL', 'ZB', 'ZN')
 TFS = ('1min', '3min', '5min', '15min', '30min', '60min')
-PREVIOUS_STAGE = {'contrastive': 'mask', 'forecast': 'contrastive'}
+PREVIOUS_STAGE = {'contrastive': 'mask', 'forecast': 'contrastive', 'path': 'contrastive'}
 CANONICAL_VAL_START = '2024-01-01'
 CANONICAL_OOS_START = '2025-07-01'
 TOURNAMENT_TRAIN_START = '2019-07-01'
@@ -32,6 +32,11 @@ STAGES = {
                  lr=1e-4, weight_decay=0.05, patience=8, freeze_encoder_layers=0,
                  seq=64, max_jitter=16, new_channels=5, mask_ratio=0.4,
                  span_mean=0.0, span_max=10),
+    'structure_mask': dict(pretext='structure_mask', batch=256, epochs=60,
+                           steps_per_epoch=200, lr=1e-4, weight_decay=0.05, patience=8,
+                           freeze_encoder_layers=0, seq=256, max_jitter=0,
+                           new_channels=5, mask_ratio=0.3, span_mean=16.0, span_max=64,
+                           feature_anchor_weight=0.1),
     'contrastive': dict(pretext='contrastive', batch=128, epochs=60, steps_per_epoch=200,
                         lr=1e-4, weight_decay=0.05, patience=8,
                         freeze_encoder_layers=0, seq=64, max_jitter=16,
@@ -51,6 +56,13 @@ STAGES = {
                      new_channels=5, horizons=(5, 10, 20, 25),
                      context_lengths=(64, 100, 150, 200), objective='candle_mse',
                      dir_weight=0.0),
+    'path': dict(pretext='path', batch=128, epochs=60, steps_per_epoch=200,
+                 lr=1e-4, weight_decay=0.05, patience=8, freeze_encoder_layers=0,
+                 seq=256, max_jitter=0, new_channels=5,
+                 path_horizons_minutes=(60, 180, 360), path_context_minutes=60,
+                 path_max_future_bars=360, path_vol_weight=1.0,
+                 path_excursion_weight=1.0, path_class_weight=1.0,
+                 feature_anchor_weight=0.1),
 }
 
 
@@ -121,9 +133,10 @@ def _write_dependency_lock(output: Path):
 
 
 def _resolve_lineage(stage, requested, warm):
-    lineage = ('vanilla' if stage == 'mask' else 'canonical') if requested == 'auto' else requested
-    if stage == 'mask' and lineage != 'vanilla':
-        raise ValueError('mask has no predecessor and must use --lineage vanilla')
+    root_stage = stage in {'mask', 'structure_mask'}
+    lineage = ('vanilla' if root_stage else 'canonical') if requested == 'auto' else requested
+    if root_stage and lineage != 'vanilla':
+        raise ValueError(f'{stage} has no predecessor and must use --lineage vanilla')
     if lineage == 'canonical' and stage in PREVIOUS_STAGE and warm is None:
         raise ValueError(f'canonical {stage} requires --warm-checkpoint')
     if lineage == 'diagnostic' and (stage not in PREVIOUS_STAGE or warm is None):
@@ -198,7 +211,8 @@ def run(args):
                 'aug_noise', 'aug_scale', 'aug_tmask', 'dir_weight',
                 'vicreg_invariance_weight', 'vicreg_variance_weight',
                 'vicreg_covariance_weight', 'vicreg_variance_target',
-                'freeze_encoder_layers', 'objective'):
+                'freeze_encoder_layers', 'objective', 'path_vol_weight',
+                'path_excursion_weight', 'path_class_weight'):
         value = getattr(args, key)
         if value is not None:
             cfg[key] = value
@@ -420,6 +434,12 @@ def main():
                    help='Stage-3 forecast supervision objective')
     p.add_argument('--dir-weight', type=float,
                    help='Stage-3 auxiliary direction-loss weight')
+    p.add_argument('--path-vol-weight', type=float,
+                   help='Revised Stage-3 forward realized-volatility loss weight')
+    p.add_argument('--path-excursion-weight', type=float,
+                   help='Revised Stage-3 MFE/MAE quantile loss weight')
+    p.add_argument('--path-class-weight', type=float,
+                   help='Revised Stage-3 continuation/termination/reversal loss weight')
     p.add_argument('--freeze-encoder-layers', type=int,
                    help='Freeze tokenizer plus the first N encoder layers')
     p.add_argument('--patience', type=int)

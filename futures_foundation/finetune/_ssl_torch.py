@@ -15,7 +15,11 @@ from .pretext._torch.common import (                      # noqa: F401  window/e
     resolve_preprocessing, _time_shuffle, _apply_control, _gather_batch,
     embed_encoder, embed_windows, _EncoderONNX, export_encoder_onnx, BaseTrainer)
 from .pretext._torch.mask import MaskNetwork, train_ssl_mask                             # noqa: F401
+from .pretext._torch.structure_mask import (                                             # noqa: F401
+    StructuralMaskNetwork, structural_targets, train_ssl_structure_mask)
 from .pretext._torch.forecast import MultiHorizonForecastNet, train_ssl_forecast         # noqa: F401
+from .pretext._torch.path import (                                                        # noqa: F401
+    PathNetwork, wall_clock_steps, path_targets, path_loss, train_ssl_path)
 from .pretext._torch.forecast_dist import (                # noqa: F401  stage-2.5 distributional refine
     train_ssl_forecast_dist, get_dist_objective, CandleQuantile, CandleBins)
 from .pretext._torch.contrastive import (                 # noqa: F401  stage-2 temporal regime geometry

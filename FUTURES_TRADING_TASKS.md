@@ -174,10 +174,14 @@ verification item is also checked.
   Fusion was negative (`-0.0130R`, PF 0.982) and beat V1 in only one of five folds.
 - [x] Reject cross-version feature/teacher distillation under the current evidence and retain
   specialized frozen backbones. Prediction ensembling requires a separate declared hypothesis.
-- [ ] Implement revised structural Stage 1 at 256 bars with shared-timestamp spans, structural
-  targets and entry-backbone anchoring; do not relabel the current candle-MSE mask stage as revised.
-- [ ] Implement minimal fixed-wall-clock path Stage 3 with forward volatility, MFE/MAE quantiles
-  and continuation/termination/reversal; do not reuse candle MSE.
+- [x] Implement revised structural Stage 1 at 256 bars with shared-timestamp spans, structural
+  targets and entry-backbone anchoring as the separate `structure_mask` pretext.
+- [x] Implement minimal fixed-wall-clock `path` Stage 3 with forward volatility, MFE/MAE quantiles
+  and continuation/termination/reversal; candle MSE is not reused.
+- [x] Preserve all 54 streams through per-timeframe future filtering; reject uniform 360-bar
+  reservation because it removed CL@60-minute validation coverage.
+- [x] Verify both objectives on V1/V2 CUDA smokes, the 90-test torch SSL suite and the full
+  908-test default suite. See [REVISED_MANTIS_SSL_OBJECTIVES.md](REVISED_MANTIS_SSL_OBJECTIVES.md).
 - [ ] Run one-seed isolated objective ablations before chained lineages: vanilla, Stage 1 only,
   direct revised Stage 2, and direct Stage 3. Chain only an objective that beats its own vanilla
   backbone on paired pullback utility without material safety-target regression.
