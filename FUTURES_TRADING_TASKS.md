@@ -162,6 +162,27 @@ verification item is also checked.
   but paired forward/economic lift over causal features failed.
 - [ ] **NOT FUNDED:** second seed; no checkpoint passed the downstream funding gate.
 
+## Gate 5B — bounded MantisV1/V2 objective and transfer branch
+
+- [x] Extract and evaluate vanilla MantisV1 on the identical 147,309-row conditional-event
+  contract. It leads the pullback point estimates but its paired lift over causal crosses zero.
+- [x] Train direct MantisV1 `vicreg_v1` with the exact V2 data, context, seed, budget, anchor and
+  shuffle-control contract. It passed the generic representation/control gate.
+- [x] Score V1 VICReg against V1 vanilla on the same full-history pullback ruler. It failed paired
+  promotion: `-0.00098` R/candidate, one of five folds positive, and damaged compression.
+- [x] Build a hash-bound frozen V1+V2 late-fusion arm and compare it with each single backbone.
+  Fusion was negative (`-0.0130R`, PF 0.982) and beat V1 in only one of five folds.
+- [x] Reject cross-version feature/teacher distillation under the current evidence and retain
+  specialized frozen backbones. Prediction ensembling requires a separate declared hypothesis.
+- [ ] Implement revised structural Stage 1 at 256 bars with shared-timestamp spans, structural
+  targets and entry-backbone anchoring; do not relabel the current candle-MSE mask stage as revised.
+- [ ] Implement minimal fixed-wall-clock path Stage 3 with forward volatility, MFE/MAE quantiles
+  and continuation/termination/reversal; do not reuse candle MSE.
+- [ ] Run one-seed isolated objective ablations before chained lineages: vanilla, Stage 1 only,
+  direct revised Stage 2, and direct Stage 3. Chain only an objective that beats its own vanilla
+  backbone on paired pullback utility without material safety-target regression.
+- [ ] Give a second seed only to a branch that beats both its vanilla backbone and causal features.
+
 ## Gate 6 — full cross-family training, blocked until pilots pass
 
 - [ ] **BLOCKED:** Kronos-mini.

@@ -310,6 +310,14 @@ vanilla. The frozen next step is legacy confirmation of the declared pullback fi
 threshold, objective and checkpoint tuning are prohibited before that read.
 The read is blocked until every symbol/timeframe source reaches 2026-07-01. Current common coverage
 ends in April 2026; a partial interval or NQ-only result is not an acceptable confirmation.
+The matched development extension now includes MantisV1. Vanilla V1 produced the strongest
+pullback point estimate (`+0.0961R`, PF 1.139), but its paired lift over causal crossed zero. A
+matched V1 VICReg run passed generic representation and shuffle-control gates yet failed paired
+trading promotion versus vanilla (`-0.00098` R/candidate; one of five folds positive) and damaged
+compression. Therefore the existing VICReg recipe is not a promoted adaptation for either Mantis
+version. Frozen V1+V2 late fusion has now failed: it produced `-0.0130R`, PF 0.982, trailed V1 by
+`-0.01613` R per candidate and was positive in only one of five folds. Cross-version
+feature/teacher distillation is not funded; retain specialized frozen backbones.
 The author's next-leg atlas is treated as an external targeted hypothesis, not a result reproduced
 by this repository: its exact script, checkpoint, report/hash and corpus manifest are required
 before a frozen sealed evaluation. The primary execution sensitivity remains fee-only with zero

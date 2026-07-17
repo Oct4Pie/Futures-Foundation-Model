@@ -4,8 +4,9 @@
 
 The causal pullback-continuation event family is promoted as a trading-research candidate. The
 compression-breakout family remains a secondary structural-stop candidate. ATR-stop variants are
-rejected. Vanilla MantisV2 is a promising but unconfirmed pullback selector; the `vicreg_v1`
-checkpoint is not promoted because it failed to beat vanilla or the causal ruler on this task.
+rejected. Vanilla MantisV1 and MantisV2 are promising but unconfirmed pullback selectors;
+MantisV1 has the stronger point estimate. The matched `vicreg_v1` checkpoints are not promoted
+because neither produced stable paired lift over its own vanilla backbone on this task.
 
 Do not rerun this experiment with the same rows, objectives or checkpoint. The next admissible
 step is a frozen confirmation of the declared finalists, not more development tuning.
@@ -90,6 +91,10 @@ Canonical hashes:
 - Vanilla MantisV2 embeddings: `d1819c8d908d9b3b2746986aeb15d5548a63715d78c61ef79cc5cf4dac57f2d3`.
 - VICReg MantisV2 embeddings: `7b186d426ac998a091eab80fa63d41b4828a37a93e6c003f3265df678dea4d97`.
 - VICReg checkpoint: `755e56ee4d7308218ad861b31f183a4b8e3b3c25279d522f5f39ef3aa3a60cf5`.
+- Vanilla MantisV1 embeddings: `04bfc263225df176113548c39b43082b900650448a2f44e05303c6f8e2d65eef`.
+- VICReg MantisV1 embeddings: `9c023207080981659b5352d92c76d04a31df3660bd02a923f91b2cbdab15a7de`.
+- VICReg MantisV1 checkpoint: `d1f031d59e54e5c7b7c5c481d80f8ad46760804f20a39ca02ad48e2a5a0c9e03`.
+- Frozen V1+V2 fusion embeddings: `4566c081fb8151cf9faae190749d245e849fcc6de5e8a3e3c964a6887e084b79`.
 
 ## Causal event-family results
 
@@ -112,7 +117,7 @@ Compression rows were capped chronologically per tag/stream, so its trade count 
 screen count rather than an estimate of total annual venue activity. The cap does not change the
 matched arm comparisons.
 
-## MantisV2 comparison
+## MantisV1 and MantisV2 comparison
 
 ### Direct realized-R head with concatenated fusion
 
@@ -132,6 +137,31 @@ zero and the FDR q-value is 0.288, so this is a promising hypothesis, not confir
 VICReg versus causal improved pullback R per candidate by only `+0.00167`, was positive in two of
 five folds, and had interval `[-0.01239, +0.01609]`. VICReg also trailed vanilla by `-0.00878` R per
 candidate. The SSL checkpoint is not promoted for this lane.
+
+### Matched MantisV1 result
+
+MantisV1 was extracted on the same 147,309-row contract and evaluated with identical heads, folds,
+costs, threshold calibration and execution rules.
+
+| Event | Arm | Trades | Mean net R | PF | Total R |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Pullback | Vanilla MantisV1 | 686 | +0.0961 | 1.139 | +65.90 |
+| Pullback | MantisV1 VICReg | 566 | +0.1085 | 1.162 | +61.42 |
+| Compression | Vanilla MantisV1 | 426 | -0.0551 | 0.906 | -23.46 |
+| Compression | MantisV1 VICReg | 487 | -0.1648 | 0.775 | -80.28 |
+
+Vanilla MantisV1 had the best pullback point estimate of the two vanilla backbones. Its paired lift
+over causal was `+0.01285` R per candidate with 95% weekly-block interval
+`[-0.00279, +0.02807]`; it was positive in three of five folds and was not significant after the
+declared comparison correction.
+
+The V1 VICReg checkpoint passed its generic representation/control gate: mean-core delta was
+`+0.1316` versus `+0.0397` for the matched shuffle control, and forward-direction AUC delta was
+`+0.0067`. That did not become stable economic lift. Against vanilla V1, VICReg changed R per
+candidate by `-0.00098`, with interval `[-0.01740, +0.01527]`, and beat vanilla in only one of five
+folds. The higher selected-trade mean R came from a smaller selection and produced less total R.
+It also materially damaged compression selection. Generic probe gains are not sufficient for
+trading promotion.
 
 ### Sensitivity tests
 
@@ -155,6 +185,27 @@ robust foundation representation advantage.
 5. Residual fusion is not the answer under the current head implementation.
 6. Barrier decomposition improves the causal head but removes the apparent Mantis advantage.
 7. No result in this document is untouched OOS or production evidence.
+8. MantisV1 is the strongest current vanilla pullback representation by point estimate, but its
+   advantage is not statistically established.
+9. The current direct VICReg objective is not a promoted adaptation for either Mantis version.
+10. Frozen V1+V2 late fusion must beat the best single backbone before any cross-version feature or
+    teacher distillation is funded. It did not, so cross-version distillation is not funded.
+
+### Cross-version transfer gate
+
+The required frozen late-fusion control concatenated aligned V1 and V2 embeddings before fold-local
+scaling/PCA. It used a hash-bound 147,309-row artifact and the same pullback ruler.
+
+| Arm | Trades | Mean net R | PF | Total R |
+| --- | ---: | ---: | ---: | ---: |
+| Vanilla MantisV1 | 686 | +0.0961 | 1.139 | +65.90 |
+| Vanilla MantisV2 | 652 | +0.0843 | 1.124 | +54.99 |
+| Frozen V1+V2 feature fusion | 582 | -0.0130 | 0.982 | -7.54 |
+
+Fusion versus V1 changed R per candidate by `-0.01613`, with 95% weekly-block interval
+`[-0.03548, +0.00283]`, and was positive in only one of five folds. The current representations do
+not demonstrate complementary value under this head. Feature/teacher distillation is rejected for
+the present branch; it would add complexity without an empirical transfer target.
 
 ## Artifact locations
 
@@ -165,6 +216,12 @@ robust foundation representation advantage.
 - Residual comparison: `conditional_event_gate_v2/mantis_residual_structural/`.
 - Barrier-decomposed pullback comparison:
   `conditional_event_gate_v2/mantis_barrier_decomposed_pullback/`.
+- Matched V1/V2 vanilla comparison:
+  `conditional_event_gate_v2/mantis_v1_v2_vanilla_direct/`.
+- MantisV1 VICReg comparison:
+  `conditional_event_gate_v2/mantis_v1_stage2_vs_vanilla_pullback/`.
+- Frozen V1+V2 late-fusion comparison:
+  `conditional_event_gate_v2/mantis_v1_v2_late_fusion_pullback/`.
 
 ## Reproduction commands
 
@@ -206,13 +263,17 @@ Freeze these development finalists without further threshold or event-definition
 
 1. Raw pullback-continuation structural 360m/3R.
 2. Causal barrier-decomposed pullback selector.
-3. Vanilla MantisV2 direct-R pullback fusion as an explicitly unconfirmed representation arm.
-4. VICReg direct-R pullback fusion as a negative adaptation control.
+3. Vanilla MantisV1 direct-R pullback fusion as the lead, explicitly unconfirmed representation
+   arm.
+4. Vanilla MantisV2 direct-R pullback fusion as the second unconfirmed representation arm.
+5. Both VICReg direct-R pullback fusions as negative adaptation controls.
 
 The next evaluation is the legacy 2025-07 to 2026-07 confirmation interval, carrying its known
 prior-inspection caveat. It is currently blocked by incomplete common source coverage: GC, SI and
 CL end on 2026-04-13; ES, RTY, YM, ZB and ZN end on 2026-05-04; only NQ reaches 2026-07-10. Do not
 run a partial-symbol or partial-period substitute. Supply hash-bound data through at least
-2026-07-01 for all nine symbols and all six timeframes, then execute the four frozen arms exactly
+2026-07-01 for all nine symbols and all six timeframes, then execute the frozen arms exactly
 once. A truly untouched verdict requires subsequently arriving data. Do not train Stage 3 or tune
-the pullback definition before that frozen confirmation.
+the pullback definition as part of the frozen confirmation. Separately versioned objective
+research may continue on the development interval, but it cannot replace or alter these frozen
+finalists.
