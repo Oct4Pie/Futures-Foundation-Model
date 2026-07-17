@@ -15,6 +15,49 @@ import pandas as pd
 
 from futures_foundation.pipeline._primitives import (      # noqa: F401  certified — ONE impl
     compute_atr, compute_adx, compute_supertrend, apply_rr_barriers, ehlers_decycler)
+from futures_foundation.primitives.detection import (      # noqa: F401  certified — ONE impl
+    detect_fractal_pivots, detect_fractal_zigzag_pivots, detect_atr_zigzag_pivots)
+
+
+# ── THE PRODUCTION PIVOT TRIGGER (2026-07-16) — the 4R model's candidate universe, params
+# FROZEN. The model's probability output is only defined on THIS trigger's pivots (its training
+# universe); a consumer re-implementing the detector (or loosening a parameter) feeds the model
+# out-of-distribution setups whose probas are extrapolations — measured symptom: ~2x pivots/day,
+# flat deciles, bulk expectancy ~0. Import THIS function; never re-implement. ──
+PIVOT_TREND_TRIGGER = dict(k=2, min_leg_atr=1.25, atr_period=20)   # fractal_zigzag, keep-FIRST
+PIVOT_TREND_STOP_BUFFER_ATR = 0.05                                 # structural stop buffer
+
+
+def pivot_trend_candidates(o, h, l, c, live_edge=True):
+    """The COMPLETE production candidate stream for the pivot-trend signal model — detector AND
+    stop in one certified call, so a consumer cannot re-derive either wrong.
+
+    Returns a list of dicts, one per KEPT pivot (fractal_zigzag k=2, leg>=1.25*ATR(origin),
+    keep-FIRST alternation — never keep-deeper, that variant is ~9 WR pts of lookahead):
+        confirm    bar index the pivot becomes tradeable (extreme + k; entry = next bar's open)
+        direction  +1 long (pivot low) / -1 short (pivot high)
+        origin     the extreme bar (stop reference)
+        extreme_px the pivot low/high price
+        stop_px    extreme -/+ 0.05 * ATR(confirm)   (Wilder ATR(20); 1R = |entry - stop_px|)
+    live_edge=True (default, the LIVE/streaming form): a pivot confirming on the newest closed
+    bar is emitted. Batch labeling uses live_edge=False (every pivot must have an entry bar).
+    Expected rate ~22/day/ticker on 3min — 40+ means a detector mismatch upstream."""
+    o = np.asarray(o, float); h = np.asarray(h, float)
+    l = np.asarray(l, float); c = np.asarray(c, float)
+    atr = compute_atr(h, l, c, PIVOT_TREND_TRIGGER['atr_period'])
+    out = []
+    for p in detect_fractal_zigzag_pivots(o, h, l, c, live_edge=live_edge,
+                                          **PIVOT_TREND_TRIGGER):
+        i, cf, d = int(p['origin']), int(p['confirm']), int(p['direction'])
+        ext = l[i] if d == 1 else h[i]
+        a = atr[cf] if cf < len(atr) else np.nan
+        if not (np.isfinite(a) and a > 0):
+            continue
+        buf = PIVOT_TREND_STOP_BUFFER_ATR * a
+        out.append({'confirm': cf, 'direction': d, 'origin': i,
+                    'extreme_px': float(ext),
+                    'stop_px': float(ext - buf if d == 1 else ext + buf)})
+    return out
 
 
 def ema(x, span):

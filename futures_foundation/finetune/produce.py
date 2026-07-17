@@ -146,6 +146,11 @@ def _contract(labeler, classifier, ck, C, seq, mu, sd, out, onnx_path, sha,
         'standardize': ({'mu': np.asarray(mu).tolist(), 'sd': np.asarray(sd).tolist()}
                         if mu is not None else None),
         'mv_contexts_fn': 'strategy.mv_contexts (direction-normalized causal window)',
+        # THE TRIGGER IS PART OF THE CONTRACT (2026-07-16): the proba is only defined on the
+        # candidate universe the model trained on — a consumer using a different detector feeds
+        # it out-of-distribution setups (measured: ~2x pivots/day -> flat deciles, bulk expR~0).
+        # Labelers declare TRIGGER_SPEC (detector name + frozen params + expected rate).
+        'trigger': getattr(labeler, 'TRIGGER_SPEC', None),   # see the streamed-contract note
         'nan_policy': {'posinf': 0, 'neginf': 0, 'nan': 0},
         'ft_config': {k: v for k, v in (ck or {}).items()
                       if k not in ('standardize_mu', 'standardize_sd', 'log_path')},
@@ -230,6 +235,11 @@ def _emit(out, classifier, ck, eval_lab, mu, sd, C, seq,
         'standardize': ({'mu': np.asarray(mu).tolist(), 'sd': np.asarray(sd).tolist()}
                         if mu is not None else None),
         'mv_contexts_fn': 'strategy.mv_contexts (direction-normalized causal window)',
+        # THE TRIGGER IS PART OF THE CONTRACT (2026-07-16): the proba is only defined on the
+        # candidate universe the model trained on — a consumer using a different detector feeds
+        # it out-of-distribution setups (measured: ~2x pivots/day -> flat deciles, bulk expR~0).
+        # Labelers declare TRIGGER_SPEC (detector name + frozen params + expected rate).
+        'trigger': getattr(eval_lab, 'TRIGGER_SPEC', None),
         'nan_policy': {'posinf': 0, 'neginf': 0, 'nan': 0},
         'ft_config': {k: v for k, v in (ck or {}).items()
                       if k not in ('standardize_mu', 'standardize_sd', 'log_path')},
