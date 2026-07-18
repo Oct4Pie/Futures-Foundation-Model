@@ -1,6 +1,6 @@
 {
   "schema_version": "ffm_native_contract_evidence_v1",
-  "methodology_commit": "8b33c28a67088c57e7ce2a8b14dab5c93e3f8ba6",
+  "methodology_commit": "fa1f933023adba165b572f0ef5a1076094c6940a",
   "generated_utc": "2026-07-18T02:30:01Z",
   "policy": {
     "meaning": "Technical parity evidence only. Runtime execution still requires a current hash-bound admission report and two independent approvals.",
