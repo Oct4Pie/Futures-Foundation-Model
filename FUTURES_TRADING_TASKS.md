@@ -236,10 +236,17 @@ verification item is also checked.
   families in [FOUNDATION_MODEL_NATIVE_CONTRACT_TASKS.md](FOUNDATION_MODEL_NATIVE_CONTRACT_TASKS.md).
   This unblocks governed Corpus v3 design/materialization, not model training. Training remains
   prohibited until the family-specific training surface and Phase 3/4/5 gates pass.
-- [ ] Pin a Corpus v3 development contract to the admitted Sierra tick source, registry,
-  admission artifact, loader, instrument economics and lake hash-of-hashes.
-- [ ] Produce a root-by-year liquidity, continuity, roll and gap matrix; select roots without
-  reading strategy outcomes.
+- [x] Pin a coverage-audit-only Corpus v3 contract to the admitted Sierra tick source, registry,
+  admission artifact, reference loader, instrument economics, coverage inventory, full leaf
+  manifest and lake hash-of-hashes. It explicitly blocks materialization and training. See
+  [CORPUS_V3_STATUS.md](CORPUS_V3_STATUS.md).
+- [x] Produce a deterministic root-by-year UTC inventory report without reading strategy events or
+  outcomes. The report conserves all admitted files/rows but selects zero roots because UTC file
+  buckets are not exchange sessions.
+- [ ] Implement and admit the AlphaForge-owned all-contract `foundation_training` streaming export
+  and receipt; do not bypass it with `session_store_v6`, QA or validation purpose tokens.
+- [ ] Produce the sessionized valid-tick liquidity, continuity, roll and gap matrix, then freeze
+  core-comparable and supplemental-pretraining roots without reading strategy outcomes.
 - [ ] Materialize a representative tick-derived multi-resolution subset with exact ordered barrier,
   MFE, MAE and time-to-barrier labels.
 - [ ] Measure event yield, barrier balance, effective calendar-block sample size, cross-root

@@ -29,6 +29,10 @@ setup(
             "config/foundation_models/trusted_approvers.json",
             "config/foundation_models/historical_native_contract_snapshot.json",
         ]),
+        ("config/corpus_v3", [
+            "config/corpus_v3/contract.json",
+            "config/corpus_v3/coverage_audit.json",
+        ]),
         *_data_tree("output/native_parity_evidence_v2_canonical"),
     ],
     python_requires=">=3.9",
@@ -53,7 +57,7 @@ setup(
                    "safetensors>=0.4"],
         "heads": ["xgboost>=2.0", "joblib>=1.3"],
         "regime": ["hmmlearn>=0.3"],   # futures_foundation.regime market-state HMM
-        "data": ["pyarrow>=16"],       # sealed parquet corpus preparation
+        "data": ["pyarrow>=16", "pyyaml>=6"],  # governed corpus preparation
         "onnx": ["onnxmltools", "skl2onnx"],
         "dev": ["pytest>=7.0", "black", "ruff", "hmmlearn>=0.3"],
     },

@@ -1,0 +1,195 @@
+{
+  "schema_version": "ffm_corpus_v3_contract_v1",
+  "contract_id": "corpus_v3_sierra_ticks_pre2026_v1",
+  "purpose": "Outcome-blind universe selection and deterministic tick-derived foundation research",
+  "current_admission": {
+    "status": "coverage_audit_only",
+    "materialization": "blocked",
+    "blocker": "missing_alphaforge_foundation_training_stream_and_hash_receipt"
+  },
+  "source": {
+    "source_id": "sc_historical_ticks_v2",
+    "status_required": "admitted_limited",
+    "data_mode": "raw_ticks",
+    "physical_root": "/mnt/nvme_work/topstepx/sc_clean/sc_v2_ticks/raw",
+    "max_date_exclusive": "2026-01-01",
+    "timestamp_resolution": "provider_utc_microseconds_then_event_seq",
+    "quote_semantics": "bid_and_ask_are_bbo_at_trade_not_quote_stream",
+    "hash_of_hashes_sha256": "632f859e138d6ad22b67801d8279ac42363a8ededabf79dbb767eb1d649baffe",
+    "inventory_totals": {
+      "all_tick_files": 1733652,
+      "all_tick_rows": 17378601600,
+      "admitted_pre_cutoff_files": 1216047,
+      "admitted_pre_cutoff_rows": 15594891123,
+      "admitted_contract_symbols_all_dates": 4343,
+      "admitted_contract_symbols_pre_cutoff": 4275
+    }
+  },
+  "loader": {
+    "schema_version": "session_store_v6",
+    "disposition": "reference_only_not_authorized_as_corpus_v3_export",
+    "alphaforge_git_commit": "6bc696ba461661c0a192671d73175f87913aac68",
+    "path": "/home/m3hdi/projects/alphaforge/src/alphaforge/session_store.py",
+    "sha256": "8e210ff3804e2ab115130f9ad290656c7a6a23c3a0037ac746b1a7837c6ae72c",
+    "roll_selection": "most_active_contract_using_only_valid_ticks_through_session_anchor",
+    "ordering": ["timestamp_microseconds", "event_seq"],
+    "invalid_quotes": "filter_nonfinite_nonpositive_or_crossed_and_count"
+  },
+  "required_export_seam": {
+    "owner": "alphaforge",
+    "purpose_token": "foundation_training",
+    "mode": "streaming_contract_day_shards_without_roll_splicing",
+    "must_reuse_admitted_loader_internals": true,
+    "must_not_use_purpose_tokens": ["qa", "validation", "historical_validation"],
+    "required_row_fields": [
+      "timestamp_utc_ns", "session_day", "time_us", "event_seq", "price", "bid", "ask",
+      "volume", "bid_volume", "ask_volume", "contract_id", "source_path",
+      "source_file_sha256", "source_row_ordinal"
+    ],
+    "required_receipt_bindings": [
+      "request", "roots", "date_range", "window_contract", "loader_sha256",
+      "config_sha256", "governance_sha256", "lake_hash_of_hashes_sha256",
+      "selected_source_file_sha256", "excluded_row_counts", "output_row_counts",
+      "output_shard_sha256"
+    ],
+    "ordering_must_be_strict_and_unique": ["timestamp_utc_ns", "event_seq"],
+    "missing_event_seq_policy": "reject",
+    "receipt_verification": "fail_closed_before_any_FFM_bar_or_label_materialization"
+  },
+  "derived_views": {
+    "contract_native_pretraining": {
+      "status": "required_primary_foundation_view",
+      "stream_identity": ["root", "contract_id"],
+      "roll_selection": "none",
+      "window_crosses_contract": false
+    },
+    "causal_front_contract_downstream": {
+      "status": "blocked_pending_separate_admission",
+      "selection_cutoff": "not_later_than_each_decision_time",
+      "future_or_full_day_activity": "forbidden",
+      "window_or_label_crosses_contract": false
+    }
+  },
+  "artifacts": {
+    "data_source_registry": {
+      "path": "/home/m3hdi/projects/alphaforge/config/data_sources.yaml",
+      "sha256": "f582c8f54f29077dc959e7ad3ab09befc980a5a00ef5347f68085d3112b4bf81"
+    },
+    "data_contracts": {
+      "path": "/home/m3hdi/projects/alphaforge/roadmap/data_contracts.yaml",
+      "sha256": "a6840d6958283b61b81017747411a77e27959f051fa3555e5213e76bf5242e90"
+    },
+    "data_admission": {
+      "path": "/home/m3hdi/projects/alphaforge/roadmap/data_admission.yaml",
+      "sha256": "aa9bf140b620d79b269fa33328d7fc5abf98d4e77a8c8193838fbf4831ee6c69"
+    },
+    "tick_admission": {
+      "path": "/home/m3hdi/projects/alphaforge/artifacts/qa/sc_tick_instrument_admission_20260710.yaml",
+      "sha256": "44ad9aa3bcdcd7aa14f7483d0763621078cfdc88cbf861266c77ccd5a8324c71"
+    },
+    "loader_smoke": {
+      "path": "/home/m3hdi/projects/alphaforge/artifacts/qa/sc_tick_loader_smoke_20260710.yaml",
+      "sha256": "f9a764b98f8cc9bdb265a74f1238d3a967f22b23962ef8dfeb474325e470d0ca"
+    },
+    "instrument_economics": {
+      "path": "/home/m3hdi/projects/alphaforge/config/instruments.yaml",
+      "sha256": "f51c619e8a128839148e7dbc861db46320683f43e5447098fb789ffb68ad8f3c"
+    },
+    "market_calendar": {
+      "path": "/home/m3hdi/projects/alphaforge/config/market_calendar.yaml",
+      "sha256": "488421d031b9393569f94d1895e40482d5bfabfb52941dfaee0a4aa3d8d06d93"
+    },
+    "coverage_manifest": {
+      "path": "/home/m3hdi/projects/alphaforge/data/sources/sierra_chart/manifests/coverage_symbol_days.jsonl.gz",
+      "sha256": "69e89ff938706e34e67e9280a48ce5e08ee80c16e81aa73fd278b1f03c1ee942"
+    },
+    "lake_hash_summary": {
+      "path": "/mnt/nvme_work/topstepx/sc_clean/manifests/file_hashes_2026-07-10.summary.json",
+      "sha256": "9a846830c59213642cff5adac94264a62b25c80558f00ff600c46c613cd641ab"
+    },
+    "lake_leaf_manifest": {
+      "path": "/mnt/nvme_work/topstepx/sc_clean/manifests/file_hashes_2026-07-10.jsonl.gz",
+      "sha256": "367d5847ccfeae04e085d9fd55664bc6e5f52a2d56be686d1d25e43f46663928"
+    }
+  },
+  "admitted_roots": [
+    "6A", "6B", "6C", "6E", "6J", "6S", "BTC", "CL", "ES", "ETH", "GC",
+    "HG", "HO", "M2K", "M6E", "MBT", "MCL", "MES", "MET", "MGC", "MHG",
+    "MNG", "MNQ", "MYM", "NG", "NKD", "NQ", "RB", "RTY", "SI", "SIL",
+    "TN", "UB", "YM", "ZB", "ZC", "ZF", "ZL", "ZM", "ZN", "ZS", "ZT", "ZW"
+  ],
+  "blocked_roots": {"M6J": "blocked_no_sierra_tick_data"},
+  "timeframes_minutes": [1, 3, 5, 15, 30, 60],
+  "subminute_context_candidates_seconds": [10, 30],
+  "splits": {
+    "foundation_pretraining": {
+      "start": "2011-01-01",
+      "end_exclusive": "2024-07-01",
+      "use": "training_only"
+    },
+    "supervised_training": {
+      "start": "2019-07-01",
+      "end_exclusive": "2024-07-01",
+      "use": "training_only"
+    },
+    "development": {
+      "start": "2024-07-01",
+      "end_exclusive": "2025-07-01",
+      "use": "validation_model_selection"
+    },
+    "legacy_holdout_excluded": {
+      "start": "2025-07-01",
+      "end_exclusive": "2026-01-01",
+      "use": "coverage_report_only_never_training_validation_calibration_or_selection",
+      "caveat": "Previously inspected project interval; not pristine confirmation for Corpus v3"
+    }
+  },
+  "universe_screen": {
+    "uses_strategy_outcomes": false,
+    "authorizes_universe_selection": false,
+    "status": "report_only_pending_sessionized_foundation_export",
+    "eligible_periods": ["supervised_training", "development"],
+    "provisional_diagnostic_thresholds": {
+      "min_training_utc_buckets": 750,
+      "min_training_years_with_150_utc_buckets": 4,
+      "min_development_utc_buckets": 180,
+      "min_median_top_contract_ticks_per_utc_bucket": 1500,
+      "max_training_utc_bucket_gap_days": 45
+    },
+    "required_final_denominator": "exchange_session_calendar_from_sessionized_export",
+    "final_tiers": {
+      "core_comparable": "common session coverage for identical-row model ranking",
+      "supplemental_pretraining": "training-only root/year-masked diversity; never validation or ranking"
+    },
+    "note": "UTC coverage-manifest dates are inventory buckets, not exchange sessions; they cannot select roots"
+  },
+  "label_contract": {
+    "decision_time": "regular_bar_close",
+    "entry_time": "first_valid_ordered_tick_strictly_after_decision",
+    "horizons_minutes": [60, 180, 360],
+    "tick_order": ["timestamp_microseconds", "event_seq"],
+    "barrier_order": "exact_first_ordered_tick_touch",
+    "mfe_mae": "ordered_post_entry_trade_prices_in_tick_units",
+    "label_end": "actual_terminal_tick_or_declared_wall_clock_horizon",
+    "no_contract_crossing": true,
+    "no_session_truncation": true,
+    "fill_claim": "none_without_separate_marketability_contract"
+  },
+  "execution_ruler": {
+    "fees": "instrument_specific_round_trip_fee_from_pinned_economics_artifact",
+    "fee_schedule_status": "provisional_static_approximation_not_effective_dated",
+    "historical_economic_promotion": "blocked_pending_effective_dated_fee_schedule",
+    "primary_added_slippage_ticks_round_trip": 0,
+    "primary_added_delay": "none",
+    "frozen_sensitivity_added_slippage_ticks_round_trip": 1
+  },
+  "prohibited": [
+    "strategy_outcome_based_universe_selection",
+    "random_train_validation_splits",
+    "windows_crossing_contract_rolls",
+    "labels_using_ticks_at_or_before_decision_or_entry",
+    "training_validation_or_calibration_on_legacy_holdout_excluded",
+    "depth_or_databento_without_separate_admission",
+    "passive_fill_or_queue_claims_from_trade_ticks"
+  ]
+}

@@ -203,7 +203,9 @@ new ranking is authorized until the relevant admission items pass.
 
 ## Phase 3 — data and label contract
 
-- [ ] Complete governed Corpus v3 coverage/yield audit before materialization.
+- [x] Complete the outcome-blind, manifest-level Corpus v3 inventory audit and pin all governance
+  and leaf-manifest inputs. Root selection remains blocked pending a sessionized export audit.
+- [ ] Complete the governed sessionized Corpus v3 coverage/yield audit before materialization.
 - [ ] Freeze common-information and native-best views separately.
 - [ ] Seal regular bars, contract IDs, source rows and timestamps.
 - [ ] Seal native future-series forecast targets separately from trading labels.
