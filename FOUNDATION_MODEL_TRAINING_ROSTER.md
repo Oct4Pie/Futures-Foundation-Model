@@ -22,9 +22,9 @@ Authoritative inputs:
 
 ```text
 registry: config/foundation_models/native_contracts.json
-canonical registry-content SHA-256: e51b6a32a92ac96bf5d7b93cc0cca1fbb53dd3dc5db25e99e98aeca20a2fa5a1
+canonical registry-content SHA-256: 6134f06aa223671f521099f35332dab23a240fc3db7cd9a6a3b18650b06fa233
 evidence: config/foundation_models/native_contract_evidence.json
-canonical evidence-content SHA-256: 1fd3115ae6bccf82136380bb24d540034899dc261f0f8dad852ba09825265edc
+canonical evidence-content SHA-256: 88c0d1c594747668d57354a900ffa42a3e90ceec89be0daa8bacd7f072003d2a
 ```
 
 ## Canonical arms and blockers

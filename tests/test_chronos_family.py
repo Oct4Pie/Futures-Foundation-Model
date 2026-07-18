@@ -34,7 +34,7 @@ def test_candidates_are_pinned_capacity_bounded_and_capability_labeled():
     assert [candidate.key for candidate in selected] == list(CANDIDATES)
     assert all(len(candidate.revision) == 40 for candidate in selected)
     assert max(candidate.parameters for candidate in selected) < 30_000_000
-    assert not CANDIDATES["chronos_v1"].public_embedding_api
+    assert CANDIDATES["chronos_v1"].public_embedding_api
     assert CANDIDATES["chronos_v2"].native_multivariate
     with pytest.raises(ValueError, match="unknown"):
         resolve_candidates(("chronos_v3",))

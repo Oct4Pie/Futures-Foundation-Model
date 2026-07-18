@@ -7,9 +7,9 @@ new ranking is authorized until the relevant admission items pass.
 ## Hardened native F/R evidence checkpoint — 2026-07-17 PDT / 2026-07-18 UTC
 
 - Methodology source: `8e2bd47d8fd6dc333dfa74ad0eea3d3613e63469`.
-- Registry content SHA-256: `e51b6a32a92ac96bf5d7b93cc0cca1fbb53dd3dc5db25e99e98aeca20a2fa5a1`.
+- Registry content SHA-256: `6134f06aa223671f521099f35332dab23a240fc3db7cd9a6a3b18650b06fa233`.
 - Canonical evidence content SHA-256:
-  `1fd3115ae6bccf82136380bb24d540034899dc261f0f8dad852ba09825265edc`.
+  `88c0d1c594747668d57354a900ffa42a3e90ceec89be0daa8bacd7f072003d2a`.
 - All 16 admitted native forecast/representation tracks passed canonical execution and an
   independent replay; every output key, dtype, shape and array byte matched. The replay comparison
   is sealed in

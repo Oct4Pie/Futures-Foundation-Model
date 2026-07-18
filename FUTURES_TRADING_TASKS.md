@@ -203,6 +203,9 @@ verification item is also checked.
 - [x] Freeze the canonical 14-arm/10-family roster and distinguish native forecast/representation
   parity from training admission. See
   [FOUNDATION_MODEL_TRAINING_ROSTER.md](FOUNDATION_MODEL_TRAINING_ROSTER.md).
+- [x] Audit every declared family's actual upstream training methodology and retire the universal
+  Stage 1→2→3 assumption. The evidence-bound routes and exclusions are frozen in
+  [FOUNDATION_MODEL_NATIVE_TRAINING_AUDIT.md](FOUNDATION_MODEL_NATIVE_TRAINING_AUDIT.md).
 - [ ] Admit or explicitly exclude each arm through its architecture-specific training contract;
   do not force forecast-only families through the Mantis Stage 1→2→3 lineage.
 
@@ -216,9 +219,10 @@ verification item is also checked.
 - [ ] **BLOCKED:** Chronos V2.
 - [ ] **BLOCKED:** TimesFM 2.5.
 - [ ] **BLOCKED:** TTM-R2.
-- [ ] **BLOCKED:** Moirai-2 small.
-- [ ] Toto only after a verified native training adapter exists.
-- [ ] Sundial excluded from representation training while hidden states remain non-finite.
+- [ ] **RESEARCH-ONLY/BLOCKED:** Moirai-2 small has no pinned official trainer; any custom pinball
+  route requires separate mathematical and numerical admission.
+- [ ] **EXCLUDED:** Toto-2 fine-tuning is not released upstream; Toto 1 would be a separate arm.
+- [ ] **EXCLUDED:** Sundial fine-tuning is not released and hidden states remain non-finite.
 - [ ] TabPFN-TS retained as a downstream head/control, not forced into an artificial Stage 1-3 chain.
 
 ## Gate 7 — confirmation and deployment
@@ -289,8 +293,14 @@ verification item is also checked.
   all 2024 and 2025 H1; PMC, observed inactivity and generic clearing notices are not substitutes.
 - [ ] Resolve or quarantine pre-2017 `RTY` provider history. Official CME RTY starts on
   `2017-07-10`; older files cannot silently inherit that product identity.
-- [ ] Define contract-lifecycle/last-trade semantics separately from the root/venue denominator so
-  legitimate expiring-contract inactivity is not mislabeled missing market data.
+- [ ] Build and independently admit the producer governance/split capability, metadata-only
+  provider candidate universe, official lifecycle/provider identity, expected request denominator
+  and only then the exact split-scoped leaf inventory. Two consumer-only prototypes were
+  constructively rejected; neither may be committed or used as authority. Full UTC-day leaves that
+  straddle OOS are blocked before open/hash unless a separate split-safe namespace is admitted.
+- [ ] Define official contract-eligibility and half-open trading-end semantics separately from the
+  root/venue denominator so observed files/ticks and legitimate expiring-contract inactivity never
+  define eligibility.
 - [ ] Generate the actual consumer-bound 43-root pre-OOS denominator and record wall time, peak RSS,
   artifact size and independent reload-verification time. No observed file may define whether a
   denominator row exists.

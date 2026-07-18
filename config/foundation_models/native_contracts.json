@@ -324,7 +324,7 @@
       "native_context": {"minimum": 1, "maximum": "model_config", "selection": "official_packed_input"},
       "native_preprocessing": "official_packed_multivariate_scaler_masks_and_token_indexing",
       "official_outputs": {"forecast": "native_quantiles", "representation": null},
-      "adaptation_routes": ["verified_native_loss_research_only", "supervised_barrier_research_only"],
+      "adaptation_routes": ["custom_native_objective_candidate_unadmitted", "custom_supervised_barrier_candidate_unadmitted"],
       "tracks": {
         "F": {"status": "research_only", "reason": "packed native quantiles passed after masked-value zero fill; CC-BY-NC-4.0 restricts use to noncommercial research", "evidence_id": "moirai2_small:F:2026-07-18"},
         "R": {"status": "blocked", "reason": "no_official_representation_contract"},

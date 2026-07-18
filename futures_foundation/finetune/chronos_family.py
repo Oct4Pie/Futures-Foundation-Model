@@ -34,8 +34,8 @@ class ChronosCandidate:
 
 
 # Identity pins come from the single native-contract registry.  The booleans below are
-# API-shape descriptors only; they do not imply admission.  Track R remains blocked until
-# exact public-API parity is recorded in a current admission report.
+# API-shape descriptors only; they do not imply training admission. Runtime use still requires
+# the separately hash-bound track admission report.
 def _candidate(key, *, family, public_embedding_api, native_multivariate):
     arm = get_arm(key)
     dossier = get_dossier(key)
@@ -53,7 +53,7 @@ def _candidate(key, *, family, public_embedding_api, native_multivariate):
 CANDIDATES = {
     "chronos_v1": _candidate(
         "chronos_v1", family="original_chronos_t5",
-        public_embedding_api=False, native_multivariate=False,
+        public_embedding_api=True, native_multivariate=False,
     ),
     "chronos_bolt": _candidate(
         "chronos_bolt", family="chronos_bolt",
