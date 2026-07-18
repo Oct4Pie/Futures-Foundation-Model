@@ -1,0 +1,22 @@
+{
+  "schema_version": "ffm_native_parity_replay_attestation_v1",
+  "methodology_commit": "8e2bd47d8fd6dc333dfa74ad0eea3d3613e63469",
+  "registry_sha256": "e51b6a32a92ac96bf5d7b93cc0cca1fbb53dd3dc5db25e99e98aeca20a2fa5a1",
+  "canonical": {
+    "path": "../native_parity_evidence_v2_canonical",
+    "aggregate_sha256": "133bebc6f70f5d85b4831cca71c4dcd35b9a518d70701a83c3f60dcd15066357",
+    "candidate_evidence_sha256": "1fd3115ae6bccf82136380bb24d540034899dc261f0f8dad852ba09825265edc"
+  },
+  "replay": {
+    "path": ".",
+    "aggregate_sha256": "c93507957225c4d71ea81e620b43420b1b1793adfa8c20e9cb9f6f16d20cce39",
+    "candidate_evidence_sha256": "2bec2c623981044e3eb9ac5366f860cb573c01458c8c77232d80dd7781c24332"
+  },
+  "comparison": {
+    "track_count": 16,
+    "native_array_aggregate_sha256": "7b427432f4a72af0eeebab9efc91ebb0db5780bf76e94f423513e6e4e4763aca",
+    "keys_dtypes_shapes_and_bytes_identical": true,
+    "aggregate_hashes_expected_to_differ": true,
+    "aggregate_difference_reason": "bundle paths, creation timestamps, and sealed log metadata differ between independent runs"
+  }
+}

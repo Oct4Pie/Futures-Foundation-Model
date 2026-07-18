@@ -6,7 +6,7 @@
     "native_ranking_eligible_count": 0,
     "registered_model_count": 14
   },
-  "evidence_sha256": "cc2ec200af26330b3dfbc6c95fe406a59b8ecc5b1a8d6968ee85370bdfc8b9ee",
+  "evidence_sha256": "1fd3115ae6bccf82136380bb24d540034899dc261f0f8dad852ba09825265edc",
   "methodology": "Historical scores remain evidence under their exact adapter contracts. No row in this snapshot is eligible for a native cross-family ranking.",
   "models": {
     "chronos_bolt": {
