@@ -226,11 +226,22 @@ def _max_abs(left: Any, right: Any) -> float:
     return float(np.max(np.abs(a.astype(np.float64) - b.astype(np.float64)), initial=0.0))
 
 
-def _affine_evidence(observed: Any, expected: Any, *, label: str) -> dict[str, Any]:
+def _affine_evidence(
+    observed: Any,
+    expected: Any,
+    *,
+    label: str,
+    atol: float = 1e-3,
+    rtol: float = 2e-4,
+) -> dict[str, Any]:
     left, right = _numpy(observed), _numpy(expected)
     error = _max_abs(left, right)
-    passed = bool(np.allclose(left, right, atol=1e-4, rtol=1e-5, equal_nan=False))
-    return _invariant(passed, f"{label} affine input/output max_abs={error:.9g}")
+    passed = bool(np.allclose(left, right, atol=atol, rtol=rtol, equal_nan=False))
+    return _invariant(
+        passed,
+        f"{label} affine input/output max_abs={error:.9g}; "
+        f"atol={atol:.9g}, rtol={rtol:.9g}",
+    )
 
 
 def _file_digest(path: Path) -> str:

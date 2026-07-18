@@ -30,6 +30,17 @@ def test_every_real_arm_has_one_explicit_profile_and_dispatch():
         assert worker.runtime_profile_for_arm(arm) in worker.PROFILE_ARMS
 
 
+def test_affine_contract_allows_quantization_but_rejects_missing_inverse_scale():
+    expected = np.array([132.0, 3544.0], dtype=np.float32)
+    quantized = expected + np.array([0.0005, 0.53], dtype=np.float32)
+    assert worker._affine_evidence(
+        quantized, expected, label="test"
+    )["passed"] is True
+    assert worker._affine_evidence(
+        expected / 1.25, expected, label="test"
+    )["passed"] is False
+
+
 def test_profile_selection_rejects_wrong_family(monkeypatch):
     monkeypatch.setattr(worker.sys, "version_info", (3, 12, 0))
     with pytest.raises(worker.WorkerError, match="requires runtime profile"):
