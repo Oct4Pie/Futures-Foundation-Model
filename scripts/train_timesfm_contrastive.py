@@ -19,6 +19,9 @@ if str(ROOT) not in sys.path:
 
 from futures_foundation.finetune import tournament, tournament_data
 from futures_foundation.finetune.foundation_roster import get_arm
+from futures_foundation.finetune.native_contracts import (
+    add_admission_argument, require_admission_from_args,
+)
 from futures_foundation.finetune.tournament import MAX_CONTEXT, OOS_START, TRAIN_START, VALIDATION_START
 from futures_foundation.finetune.tournament_data import (
     balanced_schedule, gather_parent, load_adaptation_data, schedule_fingerprint,
@@ -90,6 +93,10 @@ def train(args):
     import torch
     from peft import set_peft_model_state_dict
     arm = get_arm("timesfm25")
+    require_admission_from_args(
+        args, arm_key="timesfm25", track="C",
+        route="historical_hidden_state_contrastive", require_training=True,
+    )
     if (args.model_id, args.model_revision, args.source_revision) != (
             arm.model_id, arm.model_revision, arm.source_revision):
         raise ValueError("TimesFM model/source pins do not match the admitted arm")
@@ -219,7 +226,9 @@ def _parser():
     parser.add_argument("--device", default="cuda:0"); parser.add_argument("--seed", type=int, default=8400)
     parser.add_argument("--validation-seed", type=int, default=5400); parser.add_argument("--resume", action="store_true")
     parser.add_argument("--source-revision", default=arm.source_revision); parser.add_argument("--model-id", default=arm.model_id)
-    parser.add_argument("--model-revision", default=arm.model_revision); return parser
+    parser.add_argument("--model-revision", default=arm.model_revision)
+    add_admission_argument(parser)
+    return parser
 
 
 def main():

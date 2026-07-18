@@ -13,6 +13,8 @@ import json
 import numpy as np
 import pandas as pd
 
+from futures_foundation.finetune.native_contracts import get_arm, get_dossier
+
 
 QUANTILE_LEVELS = (0.1, 0.5, 0.9)
 
@@ -31,35 +33,35 @@ class ChronosCandidate:
         return asdict(self)
 
 
-# Revisions are immutable Hugging Face commit hashes, resolved on 2026-07-14.
-# Tiny/small representatives test each architecture before any redundant size sweep.
+# Identity pins come from the single native-contract registry.  The booleans below are
+# API-shape descriptors only; they do not imply admission.  Track R remains blocked until
+# exact public-API parity is recorded in a current admission report.
+def _candidate(key, *, family, public_embedding_api, native_multivariate):
+    arm = get_arm(key)
+    dossier = get_dossier(key)
+    return ChronosCandidate(
+        key=key,
+        family=family,
+        model_id=arm.model_id,
+        revision=arm.model_revision,
+        parameters=int(dossier["parameters"]),
+        public_embedding_api=public_embedding_api,
+        native_multivariate=native_multivariate,
+    )
+
+
 CANDIDATES = {
-    "chronos_v1": ChronosCandidate(
-        key="chronos_v1",
-        family="original_chronos_t5",
-        model_id="amazon/chronos-t5-tiny",
-        revision="29d808298f1a62493e7b9a5e08529d0d930fa189",
-        parameters=8_394_496,
-        public_embedding_api=False,
-        native_multivariate=False,
+    "chronos_v1": _candidate(
+        "chronos_v1", family="original_chronos_t5",
+        public_embedding_api=False, native_multivariate=False,
     ),
-    "chronos_bolt": ChronosCandidate(
-        key="chronos_bolt",
-        family="chronos_bolt",
-        model_id="amazon/chronos-bolt-tiny",
-        revision="a0e552de83495b5c28c14c71c374f3e33280b340",
-        parameters=8_652_672,
-        public_embedding_api=True,
-        native_multivariate=False,
+    "chronos_bolt": _candidate(
+        "chronos_bolt", family="chronos_bolt",
+        public_embedding_api=True, native_multivariate=False,
     ),
-    "chronos_v2": ChronosCandidate(
-        key="chronos_v2",
-        family="chronos_2",
-        model_id="autogluon/chronos-2-small",
-        revision="ddec01313e50b6bc58ebaa92ede81bc24a3d9f9a",
-        parameters=27_934_624,
-        public_embedding_api=True,
-        native_multivariate=True,
+    "chronos_v2": _candidate(
+        "chronos_v2", family="chronos_2",
+        public_embedding_api=True, native_multivariate=True,
     ),
 }
 

@@ -35,8 +35,8 @@ def _atomic_json(path, value):
     os.replace(tmp, path)
 
 
-def build_matrix(*, data_dir, output_dir, seeds=(17, 29), epochs=5, steps=50, batch=32,
-                 device='cuda'):
+def build_matrix(*, data_dir, output_dir, admission_report, seeds=(17, 29),
+                 epochs=5, steps=50, batch=32, device='cuda'):
     rows = []
     for objective in OBJECTIVES:
         for seed in seeds:
@@ -52,6 +52,7 @@ def build_matrix(*, data_dir, output_dir, seeds=(17, 29), epochs=5, steps=50, ba
                 '--seed', str(int(seed)), '--epochs', str(int(epochs)),
                 '--steps-per-epoch', str(int(steps)), '--batch', str(int(batch)),
                 '--patience', str(int(epochs)), '--probe-folds', '5', '--controls', 'shuffle',
+                '--admission-report', str(Path(admission_report).resolve()),
             ]
             rows.append({
                 'name': name, 'objective': objective, 'seed': int(seed), 'output': str(output),
@@ -192,6 +193,7 @@ def main():
     p.add_argument('--steps-per-epoch', type=int, default=50)
     p.add_argument('--batch', type=int, default=32)
     p.add_argument('--device', default='cuda')
+    p.add_argument('--admission-report', required=True)
     p.add_argument('--execute', action='store_true')
     a = p.parse_args()
     seeds = tuple(int(x) for x in a.seeds.split(',') if x)
@@ -213,7 +215,8 @@ def main():
         'control': 'shuffle', 'tickers': list(train.ROOTS), 'timeframes': list(train.TFS),
     }
     output_dir = Path(a.output_dir).resolve()
-    rows = build_matrix(data_dir=data_dir, output_dir=output_dir, seeds=seeds,
+    rows = build_matrix(data_dir=data_dir, output_dir=output_dir,
+                        admission_report=a.admission_report, seeds=seeds,
                         epochs=a.epochs, steps=a.steps_per_epoch, batch=a.batch,
                         device=a.device)
     manifest = output_dir / 'matrix.json'

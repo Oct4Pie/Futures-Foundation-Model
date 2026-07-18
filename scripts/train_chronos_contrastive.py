@@ -19,6 +19,9 @@ if str(ROOT) not in sys.path:
 
 from futures_foundation.finetune import chronos_family, tournament, tournament_data
 from futures_foundation.finetune.chronos_family import CANDIDATES
+from futures_foundation.finetune.native_contracts import (
+    add_admission_argument, require_admission_from_args,
+)
 from futures_foundation.finetune.tournament import (
     MAX_CONTEXT, OOS_START, PARENT_LENGTH, TRAIN_START, VALIDATION_START,
 )
@@ -105,6 +108,10 @@ def train(args):
     import torch
     if args.family not in CANDIDATES:
         raise ValueError(f"unsupported Chronos family: {args.family}")
+    require_admission_from_args(
+        args, arm_key=args.family, track="C",
+        route="historical_hidden_state_contrastive", require_training=True,
+    )
     if args.batch_size < 2 or min(args.max_steps, args.eval_every, args.val_batches) < 1:
         raise ValueError("contrastive budgets require batch>=2 and positive steps")
     candidate = CANDIDATES[args.family]
@@ -251,6 +258,7 @@ def _parser():
     parser.add_argument("--seed", type=int, default=8400)
     parser.add_argument("--validation-seed", type=int, default=5400)
     parser.add_argument("--resume", action="store_true")
+    add_admission_argument(parser)
     return parser
 
 

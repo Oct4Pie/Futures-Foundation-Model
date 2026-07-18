@@ -1,0 +1,176 @@
+{
+  "artifact_root": "output/foundation_tournament/final_staged",
+  "coverage": {
+    "artifact_directory_count": 12,
+    "indexed_model_count": 11,
+    "native_ranking_eligible_count": 0,
+    "registered_model_count": 14
+  },
+  "evidence_sha256": "cc056ce1c3ef0fc14a75a71b5f5660a059ef9bb2bb64932fd347918220c56703",
+  "methodology": "Historical scores remain evidence under their exact adapter contracts. No row in this snapshot is eligible for a native cross-family ranking.",
+  "models": {
+    "chronos_bolt": {
+      "artifact_directory": "output/foundation_tournament/final_staged/chronos_bolt",
+      "artifact_file_count": 25,
+      "complete_chain_claim": true,
+      "historical_key": "chronos_bolt",
+      "index_present": true,
+      "native_ranking_eligible": false,
+      "reason": "pooling_and_channel_fusion_require_exact_embed_API_parity",
+      "shared_validation_present": true,
+      "status": "configuration_specific"
+    },
+    "chronos_v1": {
+      "artifact_directory": "output/foundation_tournament/final_staged/chronos_v1",
+      "artifact_file_count": 25,
+      "complete_chain_claim": true,
+      "historical_key": "chronos_v1",
+      "index_present": true,
+      "native_ranking_eligible": false,
+      "reason": "arbitrary_hidden_state_pooling_cannot_be_presented_as_official_representation",
+      "shared_validation_present": true,
+      "status": "configuration_specific"
+    },
+    "chronos_v2": {
+      "artifact_directory": "output/foundation_tournament/final_staged/chronos_v2",
+      "artifact_file_count": 25,
+      "complete_chain_claim": true,
+      "historical_key": "chronos_v2",
+      "index_present": true,
+      "native_ranking_eligible": false,
+      "reason": "custom_token_pooling_requires_separate_track_C_reporting",
+      "shared_validation_present": true,
+      "status": "configuration_specific"
+    },
+    "kronos_mini": {
+      "artifact_directory": "output/foundation_tournament/final_staged/kronos_mini",
+      "artifact_file_count": 18,
+      "complete_chain_claim": true,
+      "historical_key": "kronos_mini",
+      "index_present": true,
+      "native_ranking_eligible": false,
+      "reason": "historical_runs_used_Kronos-Tokenizer-base_instead_of_Kronos-Tokenizer-2k",
+      "shared_validation_present": true,
+      "status": "invalid_contract"
+    },
+    "kronos_small": {
+      "artifact_directory": "output/foundation_tournament/final_staged/kronos_small",
+      "artifact_file_count": 18,
+      "complete_chain_claim": true,
+      "historical_key": "kronos_small",
+      "index_present": true,
+      "native_ranking_eligible": false,
+      "reason": "forecast_outputs_may_be_retained_but_hidden_state_pooling_is_not_official_representation",
+      "shared_validation_present": true,
+      "status": "configuration_specific"
+    },
+    "mantis_v1": {
+      "artifact_directory": "output/foundation_tournament/final_staged/mantis_v1",
+      "artifact_file_count": 24,
+      "complete_chain_claim": false,
+      "historical_key": "mantis_v1",
+      "index_present": true,
+      "native_ranking_eligible": false,
+      "reason": "external_per_window_channel_zscore_is_not_canonical_raw_Mantis_preprocessing",
+      "shared_validation_present": false,
+      "status": "configuration_specific"
+    },
+    "mantis_v2": {
+      "artifact_directory": "output/foundation_tournament/final_staged/mantis_v2",
+      "artifact_file_count": 24,
+      "complete_chain_claim": false,
+      "historical_key": "mantis_v2",
+      "index_present": true,
+      "native_ranking_eligible": false,
+      "reason": "external_zscore_and_final_cls_are_not_the_primary_enhanced_V2_contract",
+      "shared_validation_present": false,
+      "status": "configuration_specific"
+    },
+    "moirai2_small": {
+      "artifact_directory": "output/foundation_tournament/final_staged/moirai2_small",
+      "artifact_file_count": 22,
+      "complete_chain_claim": true,
+      "historical_key": "moirai2_small",
+      "index_present": true,
+      "native_ranking_eligible": false,
+      "reason": "CC-BY-NC_weights_and_custom_token_pooling_prohibit_deployment_native_representation_claims",
+      "shared_validation_present": true,
+      "status": "research_only"
+    },
+    "moment_small": {
+      "artifact_directory": "output/foundation_tournament/final_staged/moment",
+      "artifact_file_count": 238,
+      "complete_chain_claim": true,
+      "historical_key": "moment",
+      "index_present": true,
+      "native_ranking_eligible": false,
+      "reason": "historical_per_channel_pooled_concat_is_not_yet_proven_as_official_representation",
+      "shared_validation_present": true,
+      "status": "configuration_specific"
+    },
+    "sundial_base": {
+      "artifact_directory": null,
+      "artifact_file_count": 0,
+      "complete_chain_claim": null,
+      "historical_key": "sundial_base",
+      "index_present": false,
+      "native_ranking_eligible": false,
+      "reason": "hidden_state_extraction_was_non_finite_or_numerically_invalid",
+      "shared_validation_present": false,
+      "status": "blocked"
+    },
+    "tabpfn_ts": {
+      "artifact_directory": null,
+      "artifact_file_count": 0,
+      "complete_chain_claim": null,
+      "historical_key": "tabpfn_ts",
+      "index_present": false,
+      "native_ranking_eligible": false,
+      "reason": "downstream_only_control_not_a_staged_encoder_arm",
+      "shared_validation_present": false,
+      "status": "blocked"
+    },
+    "timesfm25": {
+      "artifact_directory": "output/foundation_tournament/final_staged/timesfm25",
+      "artifact_file_count": 22,
+      "complete_chain_claim": true,
+      "historical_key": "timesfm25",
+      "index_present": true,
+      "native_ranking_eligible": false,
+      "reason": "hidden_state_mean_is_custom_feature_transfer",
+      "shared_validation_present": true,
+      "status": "configuration_specific"
+    },
+    "toto2_22m": {
+      "artifact_directory": "output/foundation_tournament/final_staged/toto2_22m",
+      "artifact_file_count": 24,
+      "complete_chain_claim": null,
+      "historical_key": "toto2_22m",
+      "index_present": false,
+      "native_ranking_eligible": false,
+      "reason": "historical_trained_stages_used_an_unsupported_custom_adaptation_surface",
+      "shared_validation_present": false,
+      "status": "invalid_contract"
+    },
+    "ttm_r2": {
+      "artifact_directory": "output/foundation_tournament/final_staged/ttm_r2",
+      "artifact_file_count": 22,
+      "complete_chain_claim": true,
+      "historical_key": "ttm_r2",
+      "index_present": true,
+      "native_ranking_eligible": false,
+      "reason": "historical_runs_bypassed_a_proven_selector_contract_enabled_a_random_forecast_channel_mixer_and_representation_views_appended_256_artificial_normalized_zeros",
+      "shared_validation_present": true,
+      "status": "invalid_contract"
+    }
+  },
+  "registry_sha256": "7824076b082228fb8803f43f0d34a7e8110cdff6c7cf3d8277696c1f140b4e35",
+  "schema_version": "ffm_historical_native_contract_snapshot_v1",
+  "source_index": {
+    "created_utc": "2026-07-16T03:06:39.661324+00:00",
+    "path": "output/foundation_tournament/final_staged/STAGE_RESULTS_INDEX.json",
+    "schema_version": "ffm_stage_results_index_v1",
+    "sha256": "7949bacbdb407fecccbbe84823f5fb96e18eb1f88abb37fd2a2f558372d93ac7"
+  },
+  "unregistered_artifact_directories": []
+}

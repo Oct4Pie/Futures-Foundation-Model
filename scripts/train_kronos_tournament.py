@@ -24,6 +24,9 @@ from futures_foundation.finetune.tournament_data import (
 )
 from futures_foundation.finetune import tournament, tournament_data
 from futures_foundation.finetune.foundation_roster import get_arm
+from futures_foundation.finetune.native_contracts import (
+    add_admission_argument, require_admission_from_args, validate_identity,
+)
 
 
 SOURCE_REVISION = "67b630e67f6a18c9e9be918d9b4337c960db1e9a"
@@ -31,6 +34,8 @@ MODEL_ID = "NeoQuasar/Kronos-small"
 MODEL_REVISION = "901c26c1332695a2a8f243eb2f37243a37bea320"
 TOKENIZER_ID = "NeoQuasar/Kronos-Tokenizer-base"
 TOKENIZER_REVISION = "0e0117387f39004a9016484a186a908917e22426"
+MINI_TOKENIZER_ID = "NeoQuasar/Kronos-Tokenizer-2k"
+MINI_TOKENIZER_REVISION = "26966d0035065a0cae0ebad7af8ece35bc1fb51c"
 
 
 def _sha256(path):
@@ -176,12 +181,21 @@ def _predictor_loss(predictor, tokenizer, values, stamps):
 
 def train(args):
     import torch
-    arm = get_arm(args.arm)
+    arm = validate_identity(
+        args.arm,
+        model_id=args.model_id,
+        model_revision=args.model_revision,
+        source_revision=args.source_revision,
+        tokenizer_id=args.tokenizer_id,
+        tokenizer_revision=args.tokenizer_revision,
+    )
     if arm.family != "kronos" or not arm.supported_training:
-        raise ValueError(f"{args.arm} is not an admitted trainable Kronos arm")
-    if (args.model_id, args.model_revision, args.source_revision) != (
-            arm.model_id, arm.model_revision, arm.source_revision):
-        raise ValueError("Kronos model/source pins do not match the admitted arm")
+        raise ValueError(f"{args.arm} does not declare a Kronos-native adaptation route")
+    admission = require_admission_from_args(
+        args, arm_key=args.arm, track="F",
+        route="native_tokenizer_and_hierarchical_autoregressive",
+        require_training=True,
+    )
     repo, source = _validate_source(args.kronos_repo, args.source_revision)
     if min(args.tokenizer_steps, args.predictor_steps, args.eval_every, args.val_batches) < 0:
         raise ValueError("training budgets cannot be negative")
@@ -438,6 +452,7 @@ def train(args):
                           train_schedule, train_groups),
                      "validation_schedule_sha256": schedule_fingerprint(
                           val_schedule, val_groups)},
+        "admission": admission,
         "config": vars(args), "best_tokenizer_val_loss": best_tokenizer_val,
         "best_predictor_val_loss": best_predictor_val, "history": history,
         "checkpoint": {"path": str(output), "sha256": _sha256(output)},
@@ -472,20 +487,23 @@ def _parser():
     parser.add_argument("--arm", choices=("kronos_mini", "kronos_small"),
                         default="kronos_small")
     parser.add_argument("--source-revision", default=SOURCE_REVISION)
-    parser.add_argument("--model-id", default=MODEL_ID)
-    parser.add_argument("--model-revision", default=MODEL_REVISION)
-    parser.add_argument("--tokenizer-id", default=TOKENIZER_ID)
-    parser.add_argument("--tokenizer-revision", default=TOKENIZER_REVISION)
+    parser.add_argument("--model-id")
+    parser.add_argument("--model-revision")
+    parser.add_argument("--tokenizer-id")
+    parser.add_argument("--tokenizer-revision")
+    add_admission_argument(parser)
     return parser
 
 
 def main():
     args = _parser().parse_args()
     arm = get_arm(args.arm)
-    # Arm selection owns immutable model/source pins.  Explicit conflicting values are
-    # rejected later rather than silently loading a different checkpoint.
-    if args.model_id == MODEL_ID and args.model_revision == MODEL_REVISION:
-        args.model_id, args.model_revision = arm.model_id, arm.model_revision
+    # The arm owns all model and tokenizer pins. Omitted values resolve from the dossier;
+    # explicitly supplied conflicting values survive and are rejected by validate_identity().
+    args.model_id = args.model_id or arm.model_id
+    args.model_revision = args.model_revision or arm.model_revision
+    args.tokenizer_id = args.tokenizer_id or arm.tokenizer_id
+    args.tokenizer_revision = args.tokenizer_revision or arm.tokenizer_revision
     args.tickers = tuple(x for x in args.tickers.split(",") if x)
     args.timeframes = tuple(x for x in args.timeframes.split(",") if x)
     train(args)

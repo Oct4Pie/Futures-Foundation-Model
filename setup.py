@@ -9,6 +9,13 @@ setup(
     license="Apache-2.0",
     url="https://github.com/johnamcruz/Futures-Foundation-Model",
     packages=find_packages(),
+    data_files=[
+        ("config/foundation_models", [
+            "config/foundation_models/native_contracts.json",
+            "config/foundation_models/native_contract_evidence.json",
+            "config/foundation_models/historical_native_contract_snapshot.json",
+        ]),
+    ],
     python_requires=">=3.9",
     # Core install is torch-free (the parent process must never load torch —
     # see futures_foundation/foundation.py). Torch/Chronos run only inside
@@ -33,5 +40,11 @@ setup(
         "data": ["pyarrow>=16"],       # sealed parquet corpus preparation
         "onnx": ["onnxmltools", "skl2onnx"],
         "dev": ["pytest>=7.0", "black", "ruff", "hmmlearn>=0.3"],
+    },
+    entry_points={
+        "console_scripts": [
+            "ffm-native-parity-evidence=futures_foundation.finetune.native_evidence_cli:main",
+            "ffm-native-parity-matrix=futures_foundation.finetune.native_parity_matrix_cli:main",
+        ],
     },
 )

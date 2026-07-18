@@ -10,6 +10,10 @@ may begin merely because a model dossier exists. Training remains blocked until 
 passes the shared parity harness, Phase 3 data contract is sealed, and the corresponding frozen
 Phase 4/5 baselines are complete in
 [FOUNDATION_MODEL_NATIVE_CONTRACT_TASKS.md](FOUNDATION_MODEL_NATIVE_CONTRACT_TASKS.md).
+The executable family dossiers and current blocked/admitted status are indexed in
+[FOUNDATION_MODEL_NATIVE_DOSSIERS.md](FOUNDATION_MODEL_NATIVE_DOSSIERS.md). The machine sources of
+truth are [`config/foundation_models/native_contracts.json`](config/foundation_models/native_contracts.json)
+and [`config/foundation_models/native_contract_evidence.json`](config/foundation_models/native_contract_evidence.json).
 
 The historical tournament remains immutable evidence about its exact adapters. It is not a valid
 ranking of the best correctly configured version of every foundation-model family.
@@ -76,24 +80,31 @@ Claims in historical reports must be qualified with “under the historical adap
 `F` is native forecasting, `R` is official representation/embedding, `C` is custom representation
 transfer, `B` is the project-specific supervised barrier task, and `D` is downstream-only.
 
-| Family | F | R | C | B | Initial status and role |
+| Family | F | R | C | B/D | Current technical status and role |
 |---|---:|---:|---:|---:|---|
-| MantisV1 | — | yes | optional | eligible | Representation/classification primary after raw/extractor parity |
-| MantisV2 | — | yes | optional | eligible | Representation/classification primary after enhanced-extractor parity |
-| MOMENT Small | yes | yes | optional | eligible | Multi-task family; each official task mode remains a separate branch |
-| Kronos Mini | yes | — | optional | forecast features first | Blocked until Tokenizer-2k parity |
-| Kronos Small | yes | — | optional | forecast features first | Forecast-native; hidden states remain custom |
-| Chronos V1 | yes | pending pinned API proof | optional | feature provider | Forecast-native; installed package exposes `embed()`, exact pinned parity pending |
-| Chronos Bolt | yes | pending parity | optional | feature provider | Forecast-native with sanctioned embedding API pending exact pooling contract |
-| Chronos-2 | yes, joint | pending parity | optional | feature provider | Primary multivariate forecast family; official special-token behavior required |
-| TimesFM 2.5 | yes | — | optional | forecast features first | Forecast teacher; Transformers/official-wrapper parity required |
-| TTM-R2 | blocked | — | blocked | blocked | Repair checkpoint selection, no-padding input and channel mixer first |
-| Moirai-2 Small | yes | — | optional | forecast features first | Research-only because of non-commercial license |
-| Toto-2 22M | zero-shot | — | optional later | forecast features first | Zero-shot forecast only; short-horizon decode parity required |
-| Sundial Base | zero-shot | — | blocked | forecast features first | Forecast-only in isolated pinned environment; hidden states excluded |
-| TabPFN-TS | control | — | — | D | Nested downstream/in-context control; never forced into persistent stages |
+| MantisV1 | — | native valid | blocked | blocked | Official final-CLS per-channel representation |
+| MantisV2 | — | native valid | blocked | blocked | Official layer-2 combined per-channel representation |
+| MOMENT Small | blocked | native valid | blocked | blocked | Pretrained masked embedding mean; task heads require separate evidence |
+| Kronos Mini | native valid | — | blocked | blocked | Joint OHLCVA forecast with Tokenizer-2k |
+| Kronos Small | native valid | — | blocked | blocked | Joint OHLCVA forecast with Tokenizer-base |
+| Chronos V1 | native valid | native valid | blocked | blocked | Seeded forecast plus unpooled public tokens/tokenizer state |
+| Chronos Bolt | native valid | native valid | blocked | blocked | Quantile forecast plus unpooled public tokens/location-scale state |
+| Chronos-2 | native valid | native valid | blocked | blocked | Grouped forecast plus unpooled public tokens/scaling state |
+| TimesFM 2.5 | native valid | — | blocked | blocked | Official-wrapper-equivalent point/raw-quantile forecast |
+| TTM-R2 | native valid | — | blocked | blocked | Repaired selector, real 512-bar input, native scaler/prefix |
+| Moirai-2 Small | research only | — | blocked | blocked | Packed native forecast, noncommercial only |
+| Toto-2 22M | native valid | — | blocked | blocked | Zero-shot forecast only |
+| Sundial Base | native valid | excluded | blocked | blocked | Isolated forecast-only environment |
+| TabPFN-TS | — | — | — | D blocked | Fold guard repaired; model terms/artifact unavailable |
 
-Every `pending`, `optional` or `eligible` cell remains blocked until its dossier and tests pass.
+A technically valid cell still requires a current evidence-bound report and two independent
+approvals before execution. Every custom/adaptation cell remains blocked until its own evidence
+passes; no current arm is training-admitted.
+
+The current verifier enforces a hard minimum of two normalized, distinct reviewer labels and
+valid approval timestamps. It does **not** cryptographically authenticate reviewer identity or
+organizational independence. Operational authorization must remain blocked until that external
+governance step is completed or a trusted-signature mechanism is implemented.
 
 ## Three separate leaderboards
 
@@ -274,7 +285,8 @@ resource feasibility. It is excluded from every ranking and may not select econo
 
 - Enforce Mini ↔ Tokenizer-2k and Small ↔ Tokenizer-base fail-closed pairing.
 - Use joint OHLCVA, declared amount fallback, calendar stamps, official normalization and clip ±5.
-- Reproduce official probabilistic forecast outputs and inverse transform.
+- Admit the official greedy output/inverse-transform surface first across all six project
+  timeframes; treat stochastic/probabilistic decoding as a separate evidence expansion.
 - Keep `decode_s1` hidden-state pooling custom.
 - Use tokenizer reconstruction and autoregressive hierarchical-token training only as native
   adaptation.
@@ -290,10 +302,13 @@ resource feasibility. It is excluded from every ranking and may not select econo
 ### TimesFM 2.5
 
 - Prove Transformers-wrapper parity with the pinned official wrapper.
+- Treat the pinned forward API as frequency-agnostic; it has no external frequency input.
 - Preserve raw-series LoRA/native forecast behavior and probabilistic outputs.
 - Keep hidden-state pooling custom.
 
 ### TTM-R2
+
+- Bind project timeframes to resolution-prefix tokens `1/0/3/5/6/7`, with 3-minute explicitly OOV.
 
 - Select the correct context/horizon/frequency checkpoint branch through the official API.
 - Remove artificial trailing-zero padding.

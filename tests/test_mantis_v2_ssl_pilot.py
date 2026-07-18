@@ -5,7 +5,10 @@ from scripts import run_mantis_v2_ssl_pilot as pilot
 
 
 def test_pilot_matrix_locks_single_factor_protocol(tmp_path):
-    rows = pilot.build_matrix(data_dir=tmp_path, output_dir=tmp_path / 'out')
+    admission = tmp_path / 'admission.json'
+    rows = pilot.build_matrix(
+        data_dir=tmp_path, output_dir=tmp_path / 'out', admission_report=admission,
+    )
     assert [row['objective'] for row in rows] == list(pilot.OBJECTIVES)
     assert len({row['seed'] for row in rows}) == 1
     for row in rows:
@@ -18,6 +21,7 @@ def test_pilot_matrix_locks_single_factor_protocol(tmp_path):
             'per_window_per_channel_zscore_v1'
         assert cmd[cmd.index('--probe-folds') + 1] == '5'
         assert cmd[cmd.index('--controls') + 1] == 'shuffle'
+        assert cmd[cmd.index('--admission-report') + 1] == str(admission.resolve())
 
 
 def _probe(delta, gate=True):
@@ -36,7 +40,10 @@ def test_pilot_analysis_requires_strict_and_shuffle_lift(tmp_path):
         'train_start': '2019-07-01', 'val_start': '2024-07-01',
         'holdout_start': '2025-07-01', 'lineage': 'vanilla',
     }
-    rows = pilot.build_matrix(data_dir=tmp_path, output_dir=tmp_path / 'out')
+    rows = pilot.build_matrix(
+        data_dir=tmp_path, output_dir=tmp_path / 'out',
+        admission_report=tmp_path / 'admission.json',
+    )
     for row in rows:
         output = Path(row['output'])
         output.parent.mkdir(parents=True, exist_ok=True)

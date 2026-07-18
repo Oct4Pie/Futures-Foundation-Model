@@ -17,6 +17,13 @@ def test_row_bound_embedding_saves_selection_and_context_identity(tmp_path):
         "context_manifest": {
             "artifact": {"sha256": "context-sha"}, "content_fingerprint": "context-fp",
         },
+        "native_admission": {
+            "integrity": {"algorithm": "sha256", "digest": "admission"},
+            "registry_sha256": "registry",
+            "dossier_sha256": "dossier",
+            "track": "R",
+            "route": None,
+        },
     })()
     windows = {"window_fingerprint": "screen", "artifact": {"sha256": "context-sha"}}
     benchmark._save_embedding(

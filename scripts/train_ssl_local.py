@@ -13,6 +13,10 @@ import tarfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+from futures_foundation.finetune.native_contracts import (
+    add_admission_argument, require_admission_from_args,
+)
+
 
 ROOTS = ('ES', 'NQ', 'RTY', 'YM', 'GC', 'SI', 'CL', 'ZB', 'ZN')
 TFS = ('1min', '3min', '5min', '15min', '30min', '60min')
@@ -166,6 +170,11 @@ def run(args):
     from futures_foundation.finetune import ssl
     from futures_foundation.finetune.pretext._torch.backbone import resolve_mantis_version
 
+    arm_key = "mantis_v2" if args.model_version == "v2" else "mantis_v1"
+    require_admission_from_args(
+        args, arm_key=arm_key, track="C",
+        route="historical_custom_ssl_stage_chain", require_training=True,
+    )
     resolve_mantis_version(args.model_id, args.model_version)  # fail before reading/training data
     if args.protocol == 'canonical_v2':
         if args.model_version == 'v2' and (args.train_start is not None or
@@ -445,6 +454,7 @@ def main():
     p.add_argument('--patience', type=int)
     p.add_argument('--resume', action='store_true')
     p.add_argument('--smoke', action='store_true')
+    add_admission_argument(p)
     a = p.parse_args()
     a.tickers = tuple(x for x in a.tickers.split(',') if x)
     a.tfs = tuple(x for x in a.tfs.split(',') if x)

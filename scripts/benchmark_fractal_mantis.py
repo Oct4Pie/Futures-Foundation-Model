@@ -51,6 +51,39 @@ def _arm(text):
     return Arm(name, version, path)
 
 
+def _admission(text):
+    try:
+        name, raw = text.split('=', 1)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError('admission must be ARM_NAME=/path/report.json') from exc
+    path = Path(raw).expanduser().resolve()
+    if not name or not path.is_file():
+        raise argparse.ArgumentTypeError(f'invalid admission mapping: {text}')
+    return name, path
+
+
+def _verify_arm_admissions(arms, mappings):
+    from futures_foundation.finetune.native_contracts import verify_admission_report
+    supplied = dict(mappings)
+    names = [arm.name for arm in arms]
+    if len(supplied) != len(mappings):
+        raise ValueError('admission arm names must be unique')
+    if set(supplied) != set(names):
+        raise ValueError(
+            f'admission mappings must match arms exactly: missing={sorted(set(names) - set(supplied))}, '
+            f'unknown={sorted(set(supplied) - set(names))}'
+        )
+    verified = {}
+    for arm in arms:
+        arm_key = 'mantis_v2' if arm.version == 'v2' else 'mantis_v1'
+        verified[arm.name] = verify_admission_report(
+            supplied[arm.name], arm_key=arm_key, track='B',
+            route='supervised_barrier_experimental_task', require_training=False,
+            required_artifacts={'checkpoint': arm.checkpoint},
+        )
+    return verified
+
+
 def _sha256(path):
     h = hashlib.sha256()
     with Path(path).open('rb') as f:
@@ -330,6 +363,7 @@ def run(args):
     from sklearn.neural_network import MLPClassifier
     from sklearn.preprocessing import StandardScaler
 
+    admissions = _verify_arm_admissions(args.arms, args.admissions)
     hs = pd.Timestamp(args.holdout_start)
     if hs.year >= 2026 and args.confirm_oos != OOS_CONFIRMATION:
         raise ValueError(f'2026 is one-shot; pass --confirm-oos {OOS_CONFIRMATION} only after '
@@ -389,8 +423,15 @@ def run(args):
         'same_bar_policy': args.same_bar_policy,
         'label': 'explicit first-touch 3R before stop', 'reach_targets': list(targets),
         'heads': list(args.heads), 'results': [], 'controls': {},
-        'arms': [{'name': a.name, 'version': a.version, 'model_id': a.model_id,
-                  'checkpoint': str(a.checkpoint), 'sha256': _sha256(a.checkpoint)} for a in args.arms],
+        'arms': [{
+            'name': a.name, 'version': a.version, 'model_id': a.model_id,
+            'checkpoint': str(a.checkpoint), 'sha256': _sha256(a.checkpoint),
+            'admission': {
+                'integrity': admissions[a.name]['integrity'],
+                'registry_sha256': admissions[a.name]['registry_sha256'],
+                'dossier_sha256': admissions[a.name]['dossier_sha256'],
+            },
+        } for a in args.arms],
     }
     report_path = args.output_dir / 'report.json'
     rng = np.random.default_rng(args.seed)
@@ -511,6 +552,8 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--arm', dest='arms', action='append', type=_arm, required=True,
                    help='repeat NAME,v1|v2,CHECKPOINT')
+    p.add_argument('--admission', dest='admissions', action='append', type=_admission,
+                   required=True, help='repeat ARM_NAME=/path/current-admission.json')
     p.add_argument('--heads', default='logistic,mlp')
     p.add_argument('--data-dir', type=Path, default=Path('data/ssl_corpus_v2_6tf'))
     p.add_argument('--output-dir', type=Path, default=Path('output/fractal_benchmark'))

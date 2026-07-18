@@ -1,0 +1,311 @@
+{
+  "schema_version": "ffm_native_contract_evidence_v1",
+  "methodology_commit": "8b33c28a67088c57e7ce2a8b14dab5c93e3f8ba6",
+  "generated_utc": "2026-07-18T02:30:01Z",
+  "policy": {
+    "meaning": "Technical parity evidence only. Runtime execution still requires a current hash-bound admission report and two independent approvals.",
+    "research_only": "A research_only pass is noncommercial and cannot authorize deployment.",
+    "fp32_lock": "Reduced precision is not admitted by these records; each admitted adapter is initially locked to FP32 unless a later evidence record replaces it."
+  },
+  "check_profiles": {
+    "forecast_fp32": {
+      "official_example": {"status": "pass", "evidence": "public upstream forecast API executed on deterministic synthetic fixtures"},
+      "adapter_public_api_parity": {"status": "pass", "evidence": "candidate adapter matched the public upstream output surface"},
+      "scaling_inverse_scaling": {"status": "pass", "evidence": "native scaling/inverse behavior checked on affine fixtures"},
+      "padding_mask_missing_values": {"status": "not_applicable", "reason": "model-specific record supplies pass or an explicit native-input limitation"},
+      "frequency_timezone_covariates": {"status": "not_applicable", "reason": "model has no frequency/timezone input unless overridden by the record"},
+      "channel_semantics": {"status": "pass", "evidence": "declared independent or grouped channel behavior was exercised"},
+      "batch_partition_parity": {"status": "pass", "evidence": "batched and partitioned outputs agreed within the recorded tolerance"},
+      "fp32_finite": {"status": "pass", "evidence": "all admitted outputs were finite in FP32"},
+      "reduced_precision_tolerance": {"status": "not_applicable", "reason": "this evidence locks the native adapter to FP32"},
+      "context_horizon_boundaries": {"status": "pass", "evidence": "the declared context and 16-step evaluation horizon were exercised"},
+      "prefix_invariance": {"status": "pass", "evidence": "adapter preprocessing consumes only the supplied causal context"},
+      "gradient_freeze_surface": {"status": "not_applicable", "reason": "base inference evidence does not admit adaptation"},
+      "repeated_batch_loss_decrease": {"status": "not_applicable", "reason": "base inference evidence does not admit adaptation"},
+      "exact_resume": {"status": "not_applicable", "reason": "base inference evidence does not admit adaptation"},
+      "save_reload_export": {"status": "not_applicable", "reason": "base inference evidence does not admit adaptation"},
+      "license_governance": {"status": "pass", "evidence": "code and weight licenses were recorded in the dossier"}
+    },
+    "representation_fp32": {
+      "official_example": {"status": "pass", "evidence": "public upstream representation API executed on deterministic synthetic fixtures"},
+      "adapter_public_api_parity": {"status": "pass", "evidence": "candidate adapter matched the public upstream representation output"},
+      "scaling_inverse_scaling": {"status": "not_applicable", "reason": "record uses the upstream representation preprocessing and returns no forecast to inverse-scale"},
+      "padding_mask_missing_values": {"status": "not_applicable", "reason": "record supplies a model-specific pass or the interface has no missing-value mask"},
+      "frequency_timezone_covariates": {"status": "not_applicable", "reason": "official representation interface has no frequency/timezone input"},
+      "channel_semantics": {"status": "pass", "evidence": "native univariate, averaged, or grouped channel semantics are preserved without custom fusion"},
+      "batch_partition_parity": {"status": "pass", "evidence": "batched and partitioned representations agreed within the recorded tolerance"},
+      "fp32_finite": {"status": "pass", "evidence": "all admitted representations were finite in FP32"},
+      "reduced_precision_tolerance": {"status": "not_applicable", "reason": "this evidence locks the native adapter to FP32"},
+      "context_horizon_boundaries": {"status": "pass", "evidence": "the declared representation context boundary was exercised"},
+      "prefix_invariance": {"status": "pass", "evidence": "masked padding and causal input preparation do not read future values"},
+      "gradient_freeze_surface": {"status": "not_applicable", "reason": "base representation evidence does not admit adaptation"},
+      "repeated_batch_loss_decrease": {"status": "not_applicable", "reason": "base representation evidence does not admit adaptation"},
+      "exact_resume": {"status": "not_applicable", "reason": "base representation evidence does not admit adaptation"},
+      "save_reload_export": {"status": "not_applicable", "reason": "base representation evidence does not admit adaptation"},
+      "license_governance": {"status": "pass", "evidence": "code and weight licenses were recorded in the dossier"}
+    }
+  },
+  "records": {
+    "mantis_v1:R:2026-07-18": {
+      "arm_key": "mantis_v1",
+      "track": "R",
+      "status": "pass",
+      "profile": "representation_fp32",
+      "identity": {
+        "model_id": "paris-noah/Mantis-8M",
+        "model_revision": "93a16a52a5e2e6d76c0b823533b5836dd83ca10a",
+        "source_revision": "84350a0dac8518faaf40a021ef1d591f1132065e"
+      },
+      "environment": {"python": "3.12", "torch": "2.13.0", "mantis-tsfm": "1.0.0", "device": "RTX 5090", "dtype": "float32"},
+      "checks": {
+        "padding_mask_missing_values": {"status": "not_applicable", "reason": "Mantis has no missing-value mask; admitted input is finite raw univariate data"}
+      },
+      "admitted_runtime": {"context_length": 512, "dtype": "float32", "output_layout": "B,C,D", "channel_fusion": "forbidden_in_track_R"},
+      "metrics": {"output_shape": [2, 256], "direct_vs_MantisTrainer_transform_max_abs": 0.0000019073486328125, "finite": true},
+      "notes": "Official final CLS only. Per-channel outputs remain [B,C,D]; channel fusion is Track C."
+    },
+    "mantis_v2:R:2026-07-18": {
+      "arm_key": "mantis_v2",
+      "track": "R",
+      "status": "pass",
+      "profile": "representation_fp32",
+      "identity": {
+        "model_id": "paris-noah/MantisV2",
+        "model_revision": "99fe0f548960e272fbfa4b82fd9b5b5956779dfd",
+        "source_revision": "84350a0dac8518faaf40a021ef1d591f1132065e"
+      },
+      "environment": {"python": "3.12", "torch": "2.13.0", "mantis-tsfm": "1.0.0", "device": "RTX 5090", "dtype": "float32"},
+      "checks": {
+        "padding_mask_missing_values": {"status": "not_applicable", "reason": "Mantis has no missing-value mask; admitted input is finite raw univariate data"}
+      },
+      "admitted_runtime": {"context_length": 512, "dtype": "float32", "return_transf_layer": 2, "output_token": "combined", "output_layout": "B,C,D", "channel_fusion": "forbidden_in_track_R"},
+      "metrics": {"return_transf_layer": 2, "output_token": "combined", "output_shape": [2, 512], "direct_vs_MantisTrainer_transform_max_abs": 9.5367431640625e-7, "finite": true},
+      "notes": "Official V2 enhanced layer-2 CLS+mean output. Final-CLS-only and channel fusion remain Track C."
+    },
+    "moment_small:R:2026-07-18": {
+      "arm_key": "moment_small",
+      "track": "R",
+      "status": "pass",
+      "profile": "representation_fp32",
+      "identity": {
+        "model_id": "AutonLab/MOMENT-1-small",
+        "model_revision": "411e288267f82cce86296dbe4d6c8bc533cc162f",
+        "source_revision": "38f7310ad594100747ca2a8357e9c7ca7d323e0e"
+      },
+      "environment": {"python": "3.12", "torch": "2.13.0", "momentfm": "0.1.5", "device": "RTX 5090", "dtype": "float32"},
+      "checks": {
+        "scaling_inverse_scaling": {"status": "pass", "evidence": "official embed path applies internal RevIN"},
+        "padding_mask_missing_values": {"status": "pass", "evidence": "changing masked left-padding values produced max_abs=0"}
+      },
+      "admitted_runtime": {"context_length": 512, "dtype": "float32", "reduction": "mean", "output_layout": "B,D"},
+      "metrics": {"embedding_shape": [2, 512], "manual_masked_mean_max_abs": 4.76837158203125e-7, "batch_partition_max_abs": 0.0, "masked_padding_max_abs": 0.0},
+      "notes": "Only the pretrained embedding mean is admitted. Forecasting and classification heads require task-specific fine-tuning."
+    },
+    "kronos_mini:F:2026-07-18": {
+      "arm_key": "kronos_mini",
+      "track": "F",
+      "status": "pass",
+      "profile": "forecast_fp32",
+      "identity": {
+        "model_id": "NeoQuasar/Kronos-mini",
+        "model_revision": "f4e68697d9d5aed55cef5c96aabc3376bcad9f81",
+        "source_revision": "67b630e67f6a18c9e9be918d9b4337c960db1e9a",
+        "tokenizer_id": "NeoQuasar/Kronos-Tokenizer-2k",
+        "tokenizer_revision": "26966d0035065a0cae0ebad7af8ece35bc1fb51c"
+      },
+      "environment": {"python": "3.12", "torch": "2.13.0", "source_checkout": "67b630e67f6a18c9e9be918d9b4337c960db1e9a", "device": "RTX 5090", "dtype": "float32"},
+      "checks": {
+        "padding_mask_missing_values": {"status": "not_applicable", "reason": "official predictor requires complete finite OHLCVA context"},
+        "frequency_timezone_covariates": {"status": "pass", "evidence": "official timestamp inputs and generated DatetimeIndex exercised"}
+      },
+      "admitted_runtime": {"context_length": 512, "prediction_length": 16, "dtype": "float32", "decoding": [{"temperature": 1.0, "top_k": 1, "top_p": 1.0, "sample_count": 1}], "timeframes_minutes": [1, 3, 5, 15, 30, 60], "timestamp_timezone": "UTC"},
+      "metrics": {"output_shape": [2, 16, 6], "single_vs_batch_max_abs": 0.0078125, "batch_tolerance": {"atol": 0.01, "rtol": 0.00001}, "seeded_stochastic_repeat_max_abs": 0.0, "different_seed_effect_max_abs": 1582.2421875, "finite": true, "ohlc_order_preserved": true},
+      "notes": "The admitted surface is deterministic greedy decoding across UTC 1/3/5/15/30/60-minute timestamps; tokenizer-2k pairing is mandatory."
+    },
+    "kronos_small:F:2026-07-18": {
+      "arm_key": "kronos_small",
+      "track": "F",
+      "status": "pass",
+      "profile": "forecast_fp32",
+      "identity": {
+        "model_id": "NeoQuasar/Kronos-small",
+        "model_revision": "901c26c1332695a2a8f243eb2f37243a37bea320",
+        "source_revision": "67b630e67f6a18c9e9be918d9b4337c960db1e9a",
+        "tokenizer_id": "NeoQuasar/Kronos-Tokenizer-base",
+        "tokenizer_revision": "0e0117387f39004a9016484a186a908917e22426"
+      },
+      "environment": {"python": "3.12", "torch": "2.13.0", "source_checkout": "67b630e67f6a18c9e9be918d9b4337c960db1e9a", "device": "RTX 5090", "dtype": "float32"},
+      "checks": {
+        "padding_mask_missing_values": {"status": "not_applicable", "reason": "official predictor requires complete finite OHLCVA context"},
+        "frequency_timezone_covariates": {"status": "pass", "evidence": "official timestamp inputs and generated DatetimeIndex exercised"}
+      },
+      "admitted_runtime": {"context_length": 512, "prediction_length": 16, "dtype": "float32", "decoding": [{"temperature": 1.0, "top_k": 1, "top_p": 1.0, "sample_count": 1}], "timeframes_minutes": [1, 3, 5, 15, 30, 60], "timestamp_timezone": "UTC"},
+      "metrics": {"output_shape": [2, 16, 6], "single_vs_batch_max_abs": 0.0078125, "batch_tolerance": {"atol": 0.01, "rtol": 0.00001}, "seeded_stochastic_repeat_max_abs": 0.0, "different_seed_effect_max_abs": 1087.0546875, "finite": true, "ohlc_order_preserved": true},
+      "notes": "The admitted surface is deterministic greedy decoding across UTC 1/3/5/15/30/60-minute timestamps; Tokenizer-base pairing is mandatory."
+    },
+    "chronos_v1:F:2026-07-18": {
+      "arm_key": "chronos_v1",
+      "track": "F",
+      "status": "pass",
+      "profile": "forecast_fp32",
+      "identity": {"model_id": "amazon/chronos-t5-tiny", "model_revision": "29d808298f1a62493e7b9a5e08529d0d930fa189", "source_revision": "chronos-forecasting==2.3.1"},
+      "environment": {"python": "3.12", "torch": "2.13.0", "chronos-forecasting": "2.3.1", "device": "RTX 5090", "dtype": "float32"},
+      "checks": {"padding_mask_missing_values": {"status": "pass", "evidence": "official tokenizer/scaling/missing mask path used"}},
+      "admitted_runtime": {"context_length": 512, "prediction_length": 16, "dtype": "float32", "num_samples": 20, "quantile_levels": [0.1, 0.5, 0.9]},
+      "metrics": {"quantile_shape": [2, 16, 3], "seeded_tensor_vs_list_max_abs": 0.0, "finite": true},
+      "notes": "Forecast parity only; representation parity is recorded separately through the concrete ChronosPipeline public embed API."
+    },
+    "chronos_v1:R:2026-07-18": {
+      "arm_key": "chronos_v1",
+      "track": "R",
+      "status": "pass",
+      "profile": "representation_fp32",
+      "identity": {"model_id": "amazon/chronos-t5-tiny", "model_revision": "29d808298f1a62493e7b9a5e08529d0d930fa189", "source_revision": "chronos-forecasting==2.3.1"},
+      "environment": {"python": "3.12", "torch": "2.13.0", "chronos-forecasting": "2.3.1", "device": "RTX 5090", "dtype": "float32"},
+      "checks": {"padding_mask_missing_values": {"status": "pass", "evidence": "concrete public embed API used the official tokenizer state"}},
+      "admitted_runtime": {"context_length": 512, "dtype": "float32", "output": "unpooled_embeddings_and_tokenizer_state"},
+      "metrics": {"embedding_shape": [2, 513, 256], "tokenizer_state_shape": [2], "finite": true},
+      "notes": "Transitional technical record from direct offline public-API inspection; the generated raw parity bundle replaces this record before final admission."
+    },
+    "chronos_bolt:F:2026-07-18": {
+      "arm_key": "chronos_bolt",
+      "track": "F",
+      "status": "pass",
+      "profile": "forecast_fp32",
+      "identity": {"model_id": "amazon/chronos-bolt-tiny", "model_revision": "a0e552de83495b5c28c14c71c374f3e33280b340", "source_revision": "chronos-forecasting==2.3.1"},
+      "environment": {"python": "3.12", "torch": "2.13.0", "chronos-forecasting": "2.3.1", "device": "RTX 5090", "dtype": "float32"},
+      "checks": {"padding_mask_missing_values": {"status": "pass", "evidence": "official patchifier/scaling/missing mask path used"}},
+      "admitted_runtime": {"context_length": 512, "prediction_length": 16, "dtype": "float32", "quantile_levels": [0.1, 0.5, 0.9]},
+      "metrics": {"quantile_shape": [2, 16, 3], "tensor_vs_list_max_abs": 0.0, "finite": true},
+      "notes": "Forecast parity only; representation parity is recorded separately through the concrete ChronosBoltPipeline public embed API."
+    },
+    "chronos_bolt:R:2026-07-18": {
+      "arm_key": "chronos_bolt",
+      "track": "R",
+      "status": "pass",
+      "profile": "representation_fp32",
+      "identity": {"model_id": "amazon/chronos-bolt-tiny", "model_revision": "a0e552de83495b5c28c14c71c374f3e33280b340", "source_revision": "chronos-forecasting==2.3.1"},
+      "environment": {"python": "3.12", "torch": "2.13.0", "chronos-forecasting": "2.3.1", "device": "RTX 5090", "dtype": "float32"},
+      "checks": {"padding_mask_missing_values": {"status": "pass", "evidence": "concrete public embed API used the official patchifier and location/scale state"}},
+      "admitted_runtime": {"context_length": 512, "dtype": "float32", "output": "unpooled_embeddings_and_location_scale"},
+      "metrics": {"embedding_shape": [2, 33, 256], "location_shape": [2], "scale_shape": [2], "finite": true},
+      "notes": "Transitional technical record from direct offline public-API inspection; the generated raw parity bundle replaces this record before final admission."
+    },
+    "chronos_v2:F:2026-07-18": {
+      "arm_key": "chronos_v2",
+      "track": "F",
+      "status": "pass",
+      "profile": "forecast_fp32",
+      "identity": {"model_id": "autogluon/chronos-2-small", "model_revision": "ddec01313e50b6bc58ebaa92ede81bc24a3d9f9a", "source_revision": "chronos-forecasting==2.3.1"},
+      "environment": {"python": "3.12", "torch": "2.13.0", "chronos-forecasting": "2.3.1", "device": "RTX 5090", "dtype": "float32"},
+      "checks": {"padding_mask_missing_values": {"status": "pass", "evidence": "official grouped scaling/missing mask path used"}},
+      "admitted_runtime": {"context_length": 512, "prediction_length": 16, "dtype": "float32", "quantile_levels": [0.1, 0.5, 0.9], "cross_learning": false},
+      "metrics": {"per_series_quantile_shape": [1, 16, 3], "batch_partition_max_abs": 4.76837158203125e-7, "finite": true},
+      "notes": "Grouped multivariate input is preserved; cross_learning=False is explicit for independent OHLCV evaluation."
+    },
+    "chronos_v2:R:2026-07-18": {
+      "arm_key": "chronos_v2",
+      "track": "R",
+      "status": "pass",
+      "profile": "representation_fp32",
+      "identity": {"model_id": "autogluon/chronos-2-small", "model_revision": "ddec01313e50b6bc58ebaa92ede81bc24a3d9f9a", "source_revision": "chronos-forecasting==2.3.1"},
+      "environment": {"python": "3.12", "torch": "2.13.0", "chronos-forecasting": "2.3.1", "device": "RTX 5090", "dtype": "float32"},
+      "checks": {
+        "scaling_inverse_scaling": {"status": "pass", "evidence": "official embed API returned scaling state alongside tokens"},
+        "padding_mask_missing_values": {"status": "pass", "evidence": "official grouped embed preprocessing used"}
+      },
+      "admitted_runtime": {"context_length": 512, "dtype": "float32", "output": "tokens_and_scaling_state_unpooled"},
+      "metrics": {"series_count": 2, "per_series_embedding_shape": [5, 34, 512], "state_tensor_shapes": [[5, 1], [5, 1]], "batch_partition_embedding_max_abs": 0.0, "batch_partition_state_max_abs": 0.0, "finite": true},
+      "notes": "Tokens and scaling state are returned unchanged. Any token pooling is Track C."
+    },
+    "timesfm25:F:2026-07-18": {
+      "arm_key": "timesfm25",
+      "track": "F",
+      "status": "pass",
+      "profile": "forecast_fp32",
+      "identity": {
+        "model_id": "google/timesfm-2.5-200m-transformers",
+        "model_revision": "5a9806b9b291fad9233b5249d88263f1846304d3",
+        "source_revision": "3dae50b20d7a724981e8ea36cda75578f80dd2dc",
+        "reference_model_id": "google/timesfm-2.5-200m-pytorch",
+        "reference_model_revision": "1d952420fba87f3c6dee4f240de0f1a0fbc790e3"
+      },
+      "environment": {"python": "3.12", "torch": "2.13.0", "transformers": "5.13.1", "timesfm": "2.0.2", "device": "RTX 5090", "dtype": "float32"},
+      "checks": {"padding_mask_missing_values": {"status": "not_applicable", "reason": "pinned Transformers wrapper accepts finite univariate series without an external mask"}},
+      "admitted_runtime": {"context_length": 512, "prediction_length": 16, "dtype": "float32", "force_flip_invariance": true, "truncate_negative": false, "fix_quantile_crossing": false},
+      "metrics": {"point_shape": [2, 16], "quantile_shape": [2, 16, 10], "point_max_abs": 2.384185791015625e-7, "point_mean_abs": 5.21540641784668e-8, "raw_quantile_max_abs": 4.76837158203125e-7, "raw_quantile_mean_abs": 1.0095536850940334e-7},
+      "notes": "Parity uses force_flip_invariance=true, infer/truncate-positive=false, and fix_quantile_crossing=false. Quantile repair is downstream post-processing."
+    },
+    "ttm_r2:F:2026-07-18": {
+      "arm_key": "ttm_r2",
+      "track": "F",
+      "status": "pass",
+      "profile": "forecast_fp32",
+      "identity": {"model_id": "ibm-granite/granite-timeseries-ttm-r2", "model_revision": "b972f0c22190b7502764526004d16e2b4ed39e8c", "source_revision": "743e709b9edbfe1b59e31adb1621bdc98a57b91b"},
+      "environment": {"python": "3.12", "torch": "2.10.0", "transformers": "4.57.6", "source_checkout": "743e709b9edbfe1b59e31adb1621bdc98a57b91b", "device": "RTX 5090", "dtype": "float32"},
+      "checks": {
+        "padding_mask_missing_values": {"status": "not_applicable", "reason": "admitted selector fixture uses complete finite 512-bar context"},
+        "frequency_timezone_covariates": {"status": "pass", "evidence": "1/3/5/15/30/60-minute resolution-prefix tokens 1/0/3/5/6/7 exercised; 3-minute uses OOV=0"}
+      },
+      "admitted_runtime": {"context_length": 512, "prediction_length": 16, "dtype": "float32", "frequency_tokens_by_timeframe": {"1min": 1, "3min": 0, "5min": 3, "15min": 5, "30min": 6, "60min": 7}, "selector": "512-48-ft-r2.1"},
+      "metrics": {"output_shape": [2, 16, 5], "batch_partition_max_abs": 0.00000762939453125, "unaffected_channel_max_abs": 0.0, "affine_scaling_max_abs": 0.000030517578125, "finite": true},
+      "selector": {"official_model_key": "512-48-ft-r2.1", "context_length": 512, "native_prediction_length": 48, "prediction_filter_length": 16, "resolution_prefix_tuning": true, "forecast_channel_mixing": false, "num_input_channels": 5},
+      "notes": "Raw values enter the model; its native std scaler performs scaling/inverse scaling. Artificial zero padding and random channel mixing are forbidden."
+    },
+    "moirai2_small:F:2026-07-18": {
+      "arm_key": "moirai2_small",
+      "track": "F",
+      "status": "research_only_pass",
+      "profile": "forecast_fp32",
+      "identity": {"model_id": "Salesforce/moirai-2.0-R-small", "model_revision": "30f43ff08c8494f4943ae1521e9d4e94a0fbb389", "source_revision": "cfd46d4510ed8896f263116f32928eede05b0a75"},
+      "environment": {"python": "3.11", "torch": "2.10.0", "uni2ts": "2.0.0", "device": "RTX 5090", "dtype": "float32", "use_scope": "research_noncommercial"},
+      "checks": {
+        "padding_mask_missing_values": {"status": "pass", "evidence": "adapter zero-fills masked entries before the official packed API"},
+        "license_governance": {"status": "pass", "evidence": "CC-BY-NC-4.0 restriction is encoded as research_only"}
+      },
+      "admitted_runtime": {"context_length": 512, "prediction_length": 16, "dtype": "float32", "use_scope": "research_noncommercial", "masked_value_fill": 0.0, "quantile_crossing_repair": "forbidden_in_parity"},
+      "metrics": {"output_shape": [2, 9, 16, 5], "batch_partition_max_abs": 0.00006103515625, "raw_masked_value_leak_max_abs": 0.09912109375, "native_min_quantile_difference": -0.0767822265625, "finite_after_mask_sanitization": true},
+      "notes": "Native quantiles may cross. Masked values must be zero-filled before packing. Noncommercial research only."
+    },
+    "toto2_22m:F:2026-07-18": {
+      "arm_key": "toto2_22m",
+      "track": "F",
+      "status": "pass",
+      "profile": "forecast_fp32",
+      "identity": {"model_id": "Datadog/Toto-2.0-22m", "model_revision": "685e4ae3e2be8d8998025e53dd98e7fdcb296a89", "source_revision": "44ea4e88852228039564aa3e76fac26aafac0803"},
+      "environment": {"python": "3.12", "torch": "2.13.0", "toto-2": "2.0.0", "device": "RTX 5090", "dtype": "float32"},
+      "checks": {"padding_mask_missing_values": {"status": "pass", "evidence": "zero-filled masked finite values were invariant with max_abs=0"}},
+      "admitted_runtime": {"context_length": 512, "prediction_length": 16, "dtype": "float32", "decode_block_size": null, "masked_value_fill": 0.0, "series_ids": "one_semantic_group_per_item", "has_missing_values": false},
+      "metrics": {"output_shape": [9, 2, 5, 16], "batch_partition_max_abs": 0.00006103515625, "decode_none_vs_zero_max_abs": 0.0, "decode_none_vs_oversized_max_abs": 0.0, "masked_value_max_abs": 0.0, "minimum_quantile_difference": 0.0, "group_id_effect_max_abs": 0.1055908203125, "finite": true},
+      "notes": "Short-horizon leaderboard path uses decode_block_size=None. Series IDs are semantic grouping, not arbitrary labels."
+    },
+    "sundial_base:F:2026-07-18": {
+      "arm_key": "sundial_base",
+      "track": "F",
+      "status": "pass",
+      "profile": "forecast_fp32",
+      "identity": {"model_id": "thuml/sundial-base-128m", "model_revision": "3212e42564493f520593e5414af4367fc4b49226", "source_revision": "3ef03b8c3804f64a506e57101a173470040aaece"},
+      "environment": {"python": "3.12", "torch": "2.10.0", "transformers": "4.40.1", "huggingface-hub": "0.36.2", "device": "RTX 5090", "dtype": "float32", "isolated": true},
+      "checks": {"padding_mask_missing_values": {"status": "not_applicable", "reason": "official generator accepts complete finite univariate contexts"}, "batch_partition_parity": {"status": "pass", "evidence": "seeded repeat parity is exact; stochastic partitioning is distributional"}},
+      "admitted_runtime": {"context_length": 512, "prediction_length": 16, "dtype": "float32", "num_samples": 20, "isolated_environment": true, "hidden_states": "forbidden"},
+      "metrics": {"output_shape": [2, 20, 16], "seeded_repeat_max_abs": 0.0, "minimum_sample_std": 0.00227932701818645, "affine_scaling_max_abs": 0.000030517578125, "unaffected_series_max_abs": 0.0, "finite": true},
+      "notes": "Forecast-only isolated environment. Hidden-state extraction remains excluded because prior hidden outputs were non-finite."
+    },
+    "tabpfn_ts:D:2026-07-18": {
+      "arm_key": "tabpfn_ts",
+      "track": "D",
+      "status": "blocked",
+      "profile": "forecast_fp32",
+      "identity": {"model_id": "tabpfn-v3-regressor-v3_20260506_timeseries.ckpt", "model_revision": "license_gated_unresolved_sha256", "source_revision": "a756ae3fb3af82c903c39e1cd71864ff5252bc4d"},
+      "environment": {"package": "tabpfn_time_series", "source_default": "v1.1.0-compatible", "required_tabpfn": ">=8.0.0"},
+      "checks": {
+        "official_example": {"status": "fail", "evidence": "local TabPFN-TS-3 checkpoint is absent"},
+        "adapter_public_api_parity": {"status": "fail", "evidence": "cannot execute local predictor before model terms are accepted"},
+        "fp32_finite": {"status": "fail", "evidence": "no licensed local model artifact available"},
+        "license_governance": {"status": "fail", "evidence": "separate TabPFN model terms have not been accepted"}
+      },
+      "metrics": {"source_checkpoint_default": "tabpfn-v3-regressor-v3_20260506_timeseries.ckpt", "max_context_length": 32768, "fold_containment_guard_implemented": true},
+      "notes": "Code is repaired as downstream-only and fold-contained, but technical admission is impossible without a licensed checkpoint and exact artifact hash."
+    }
+  }
+}

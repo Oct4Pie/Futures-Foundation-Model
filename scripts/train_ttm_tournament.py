@@ -21,6 +21,9 @@ if str(ROOT) not in sys.path:
 
 from futures_foundation.finetune import tournament, tournament_data
 from futures_foundation.finetune.foundation_roster import get_arm
+from futures_foundation.finetune.native_contracts import (
+    add_admission_argument, get_dossier, require_admission_from_args, validate_identity,
+)
 from futures_foundation.finetune.tournament import (
     FORECAST_HORIZON, OOS_START, TRAIN_START, VALIDATION_START,
 )
@@ -79,6 +82,8 @@ def _validate_source(repo, expected):
     actual = subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
     if actual != expected:
         raise ValueError(f"granite-tsfm revision mismatch: expected {expected}, got {actual}")
+    if str(repo) not in sys.path:
+        sys.path.insert(0, str(repo))
     return repo
 
 
@@ -109,21 +114,67 @@ def _frequency_tokens(group_ids, streams):
     return np.asarray([FREQUENCY_TOKEN[streams[int(group)]["tf"]] for group in group_ids], np.int64)
 
 
-def _load_model(args):
+def _validate_model_contract(model, selected_key, dossier):
+    """Prove the exact official selector result and loaded TTM configuration."""
+    selector = dossier["selector"]
+    if selected_key != selector["official_model_key"]:
+        raise ValueError(
+            f"TTM selector drift: expected {selector['official_model_key']!r}, "
+            f"got {selected_key!r}"
+        )
+    config = model.config
+    expected = {
+        "context_length": selector["context_length"],
+        "prediction_length": selector["native_prediction_length"],
+        "prediction_filter_length": selector["prediction_filter_length"],
+        "resolution_prefix_tuning": selector["resolution_prefix_tuning"],
+        "enable_forecast_channel_mixing": selector["forecast_channel_mixing"],
+        "num_input_channels": 5,
+    }
+    actual = {name: getattr(config, name, None) for name in expected}
+    if actual != expected:
+        raise ValueError(f"TTM loaded configuration drift: expected {expected}, got {actual}")
+    return {"official_model_key": selected_key, **expected}
+
+
+def _load_model(args, *, source=None):
+    import inspect
     from tsfm_public.toolkit.get_model import get_model
-    return get_model(
+    if source is not None:
+        expected_source = Path(source).resolve() / "tsfm_public" / "toolkit" / "get_model.py"
+        actual_source = Path(inspect.getfile(get_model)).resolve()
+        if actual_source != expected_source:
+            raise ValueError(
+                f"TTM selector import drift: expected {expected_source}, got {actual_source}"
+            )
+    dossier = get_dossier("ttm_r2")
+    selector = dossier["selector"]
+    selected_key = get_model(
+        args.model_id, context_length=CONTEXT, prediction_length=FORECAST_HORIZON,
+        freq_prefix_tuning=True, prefer_longer_context=True, force_return=None,
+        return_model_key=True,
+    )
+    model = get_model(
         args.model_id, context_length=CONTEXT, prediction_length=FORECAST_HORIZON,
         model_revision=args.model_revision, num_input_channels=5,
-        enable_forecast_channel_mixing=True,
+        enable_forecast_channel_mixing=False,
     )
+    model._ffm_native_selector = _validate_model_contract(model, selected_key, dossier)
+    if args.model_revision != selector["exact_revision"]:
+        raise ValueError("TTM exact checkpoint revision drift")
+    return model
 
 
 def train(args):
     import torch
-    arm = get_arm("ttm_r2")
-    if (args.model_id, args.model_revision, args.source_revision) != (
-            arm.model_id, arm.model_revision, arm.source_revision):
-        raise ValueError("TTM model/source pins do not match the admitted arm")
+    arm = validate_identity(
+        "ttm_r2", model_id=args.model_id, model_revision=args.model_revision,
+        source_revision=args.source_revision,
+    )
+    require_admission_from_args(
+        args, arm_key="ttm_r2", track="F",
+        route="historical_universal_stage_chain", require_training=True,
+    )
     source = _validate_source(args.ttm_repo, args.source_revision)
     if min(args.max_steps, args.batch_size, args.eval_every, args.val_batches) < 1:
         raise ValueError("training and validation budgets must be positive")
@@ -151,7 +202,7 @@ def train(args):
         val_starts, groups["val_bounds"], args.val_batches * args.batch_size,
         args.validation_seed,
     )
-    model = _load_model(args).to(args.device)
+    model = _load_model(args, source=source).to(args.device)
     parent = None
     if args.stage == "stage3_forecast":
         _, parent_bundle, parent = _load_parent(
@@ -315,6 +366,7 @@ def _parser():
     parser.add_argument("--source-revision", default=arm.source_revision)
     parser.add_argument("--model-id", default=arm.model_id)
     parser.add_argument("--model-revision", default=arm.model_revision)
+    add_admission_argument(parser)
     return parser
 
 

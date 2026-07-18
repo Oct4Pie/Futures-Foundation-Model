@@ -6,7 +6,10 @@ from scripts import run_stage2_objective_comparison as comparison
 
 
 def test_comparison_matrix_locks_shared_protocol(tmp_path):
-    rows = comparison.build_matrix(data_dir=tmp_path, output_dir=tmp_path / 'out')
+    admission = tmp_path / 'admission.json'
+    rows = comparison.build_matrix(
+        data_dir=tmp_path, output_dir=tmp_path / 'out', admission_report=admission,
+    )
     assert len(rows) == 4
     assert {(r['objective'], r['seed']) for r in rows} == {
         (objective, seed) for objective in comparison.OBJECTIVES for seed in (17, 29)}
@@ -16,6 +19,7 @@ def test_comparison_matrix_locks_shared_protocol(tmp_path):
         assert cmd[cmd.index('--probe-folds') + 1] == '5'
         assert cmd[cmd.index('--controls') + 1] == 'shuffle'
         assert cmd[cmd.index('--lineage') + 1] == 'vanilla'
+        assert cmd[cmd.index('--admission-report') + 1] == str(admission.resolve())
         assert '--no-probe' not in cmd and '--smoke' not in cmd
 
 
@@ -47,7 +51,10 @@ def test_analysis_requires_paired_seed_control_and_sampling_wins(tmp_path):
         'source_tree_sha256': 'source', 'corpus_manifest_sha256': 'corpus',
         'val_start': '2024-01-01', 'holdout_start': '2025-07-01', 'lineage': 'vanilla',
     }
-    rows = comparison.build_matrix(data_dir=tmp_path, output_dir=tmp_path / 'out')
+    rows = comparison.build_matrix(
+        data_dir=tmp_path, output_dir=tmp_path / 'out',
+        admission_report=tmp_path / 'admission.json',
+    )
     for row in rows:
         out = Path(row['output']); out.parent.mkdir(parents=True, exist_ok=True)
         delta = 0.03 if row['objective'] == 'elapsed_time_v2' else 0.01

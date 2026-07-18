@@ -26,7 +26,14 @@ from futures_foundation.finetune.chronos_family import (
     persistence_quantiles, resolve_candidates,
 )
 from futures_foundation.finetune.kronos_eval import build_forecast_windows, window_fingerprint
+from futures_foundation.finetune.native_adapters import chronos_native_quantiles
+from futures_foundation.finetune.native_contracts import (
+    technical_runtime_contract,
+    validate_runtime_contract,
+    verify_admission_report,
+)
 from futures_foundation.finetune.tournament import OOS_START, VALIDATION_START, protocol
+from scripts.predict_foundation_forecasts import _forecast_runtime_facts
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -102,20 +109,41 @@ def _load_pipeline(candidate, device, dtype, checkpoint=None):
     return pipeline, checkpoint_meta
 
 
-def _parse_checkpoint_map(value):
+def _parse_keyed_paths(value, *, label):
     output = {}
     if not value:
         return output
     for item in str(value).split(","):
         if "=" not in item:
-            raise ValueError("checkpoint map entries must use candidate=path")
+            raise ValueError(f"{label} entries must use candidate=path")
         key, path = (part.strip() for part in item.split("=", 1))
         if key not in {"chronos_v1", "chronos_bolt", "chronos_v2"}:
-            raise ValueError(f"unknown checkpoint candidate: {key}")
+            raise ValueError(f"unknown candidate in {label}: {key}")
         if not path or key in output:
-            raise ValueError("checkpoint map paths must be nonempty and keys unique")
+            raise ValueError(f"{label} paths must be nonempty and keys unique")
         output[key] = path
     return output
+
+
+def _parse_checkpoint_map(value):
+    return _parse_keyed_paths(value, label="checkpoint map")
+
+
+def _verify_admission_map(candidates, admission_map):
+    expected = {candidate.key for candidate in candidates}
+    supplied = set(admission_map)
+    if supplied != expected:
+        raise ValueError(
+            f"admission map must match candidates exactly: missing={sorted(expected - supplied)}, "
+            f"unknown={sorted(supplied - expected)}"
+        )
+    return {
+        candidate.key: verify_admission_report(
+            admission_map[candidate.key], arm_key=candidate.key, track="F",
+            route=None, require_training=False,
+        )
+        for candidate in candidates
+    }
 
 
 def _normalize_quantiles(candidate, values, batch_rows, horizon, n_quantiles,
@@ -141,19 +169,26 @@ def _predict_batch(pipeline, candidate, contexts, *, horizon, levels, samples,
     import torch
     if candidate.family == "chronos_2":
         inputs = contexts if joint_ohlcv else contexts[:, 3:4, :]
-        quantiles, _mean = pipeline.predict_quantiles(
-            torch.as_tensor(inputs), prediction_length=horizon,
-            quantile_levels=list(levels), batch_size=batch_size,
-            context_length=contexts.shape[-1], cross_learning=False,
+        quantiles, _mean = chronos_native_quantiles(
+            pipeline,
+            torch.as_tensor(inputs),
+            family=candidate.family,
+            prediction_length=horizon,
+            quantile_levels=list(levels),
+            batch_size=batch_size,
+            context_length=contexts.shape[-1],
         )
         return _normalize_quantiles(
             candidate, quantiles, len(contexts), horizon, len(levels),
             close_channel=3 if joint_ohlcv else 0,
         )
-    quantiles, _mean = pipeline.predict_quantiles(
-        torch.as_tensor(contexts[:, 3, :]), prediction_length=horizon,
+    quantiles, _mean = chronos_native_quantiles(
+        pipeline,
+        torch.as_tensor(contexts[:, 3, :]),
+        family=candidate.family,
+        prediction_length=horizon,
         quantile_levels=list(levels),
-        **({"num_samples": int(samples)} if candidate.family == "original_chronos_t5" else {}),
+        num_samples=int(samples),
     )
     return _normalize_quantiles(
         candidate, quantiles, len(contexts), horizon, len(levels),
@@ -212,6 +247,22 @@ def _archive_sources(output):
 def benchmark(args):
     import torch
     candidates = resolve_candidates(args.candidates)
+    if args.checkpoints:
+        raise ValueError(
+            "native Chronos benchmarking is zero-shot only; adapted checkpoints are not admitted"
+        )
+    if args.dtype != "float32":
+        raise ValueError("current Chronos technical evidence admits FP32 only")
+    for candidate in candidates:
+        facts = _forecast_runtime_facts(
+            candidate.key,
+            context_length=args.context,
+            prediction_length=args.horizon,
+            dtype=args.dtype,
+            samples=args.samples,
+        )
+        validate_runtime_contract(candidate.key, "F", facts)
+    admissions = _verify_admission_map(candidates, args.admission_map)
     separation = args.context + args.horizon
     windows = build_forecast_windows(
         args.data_dir, args.tickers, args.timeframes,
@@ -243,6 +294,14 @@ def benchmark(args):
             config = {
                 "schema_version": "ffm_chronos_family_candidate_v1",
                 "candidate": candidate.manifest(), "mode": mode,
+                "admission": {
+                    "integrity": admissions[candidate.key]["integrity"],
+                    "registry_sha256": admissions[candidate.key]["registry_sha256"],
+                    "dossier_sha256": admissions[candidate.key]["dossier_sha256"],
+                    "evidence_registry_sha256": admissions[candidate.key]["evidence_registry_sha256"],
+                    "technical_evidence_id": admissions[candidate.key]["technical_evidence_id"],
+                },
+                "technical_runtime_contract": technical_runtime_contract(candidate.key, "F"),
                 "window_fingerprint": fingerprint,
                 "context": args.context, "horizon": args.horizon,
                 "quantile_levels": list(QUANTILE_LEVELS),
@@ -274,7 +333,7 @@ def benchmark(args):
         "created_utc": datetime.now(timezone.utc).isoformat(),
         "status": "complete",
         "policy": (
-            "development benchmark of configured frozen or train-adapted checkpoints; "
+            "development benchmark of pinned zero-shot native checkpoints only; "
             "validation interval only; no benchmark-time adaptation and no locked OOS access; "
             "earliest validation contexts may use "
             "preceding train-period history; upstream pretraining overlap is unknown"
@@ -326,7 +385,7 @@ def _parser():
     )
     parser.add_argument("--tickers", default="ES,NQ,RTY,YM,GC,SI,CL,ZB,ZN")
     parser.add_argument("--timeframes", default="1min,3min,5min,15min,30min,60min")
-    parser.add_argument("--context", type=int, default=256)
+    parser.add_argument("--context", type=int, default=512)
     parser.add_argument("--horizon", type=int, default=16)
     parser.add_argument("--max-per-stream", type=int, default=200)
     parser.add_argument("--csv-chunksize", type=int, default=250000)
@@ -334,11 +393,15 @@ def _parser():
     parser.add_argument("--samples", type=int, default=20)
     parser.add_argument(
         "--checkpoint-map", default="",
-        help="comma-separated candidate=/path/to/trained.pt entries",
+        help="deprecated; adapted checkpoints are not admitted on native Track F",
+    )
+    parser.add_argument(
+        "--admission-map", required=True,
+        help="comma-separated candidate=/path/to/current-admission.json entries",
     )
     parser.add_argument("--seed", type=int, default=5400)
     parser.add_argument("--device", default="cuda")
-    parser.add_argument("--dtype", choices=("float32", "bfloat16"), default="bfloat16")
+    parser.add_argument("--dtype", choices=("float32",), default="float32")
     parser.add_argument(
         "--no-chronos2-joint", action="store_false", dest="chronos2_joint",
         help="disable the separately labeled Chronos-2 joint-OHLCV capability track",
@@ -353,6 +416,7 @@ def main():
     args.tickers = tuple(x.strip() for x in args.tickers.split(",") if x.strip())
     args.timeframes = tuple(x.strip() for x in args.timeframes.split(",") if x.strip())
     args.checkpoints = _parse_checkpoint_map(args.checkpoint_map)
+    args.admission_map = _parse_keyed_paths(args.admission_map, label="admission map")
     if args.context < 8 or args.context > 256:
         raise ValueError("tournament context must lie in [8,256]")
     if args.horizon != 16:

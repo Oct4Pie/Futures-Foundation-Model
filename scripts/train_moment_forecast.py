@@ -19,6 +19,9 @@ if str(ROOT) not in sys.path:
 
 from futures_foundation.finetune import moment_eval, tournament, tournament_data
 from futures_foundation.finetune.moment_eval import left_pad_contexts
+from futures_foundation.finetune.native_contracts import (
+    add_admission_argument, require_admission_from_args, validate_identity,
+)
 from futures_foundation.finetune.tournament import (
     FORECAST_HORIZON, MAX_CONTEXT, OOS_START, PARENT_LENGTH, TRAIN_START,
     VALIDATION_START,
@@ -78,6 +81,14 @@ def _scale_normalized_mse(forecast, future, context, input_mask):
 
 def train(args):
     import torch
+    validate_identity(
+        "moment_small", model_id=args.model_id, model_revision=args.model_revision,
+        source_revision=args.source_revision,
+    )
+    admission = require_admission_from_args(
+        args, arm_key="moment_small", track="F", route="forecast",
+        require_training=True,
+    )
     repo, source = _validate_source(args.moment_repo, args.source_revision)
     if min(args.batch_size, args.max_steps, args.eval_every, args.val_batches) < 1:
         raise ValueError("forecast budgets must be positive")
@@ -192,6 +203,7 @@ def train(args):
     report = {
         "schema_version": "ffm_moment_stage3_train_v1", "status": "complete",
         "created_utc": datetime.now(timezone.utc).isoformat(), "parent": parent,
+        "admission": admission,
         "split": {"train_start": TRAIN_START, "validation_start": VALIDATION_START,
                   "oos_start": OOS_START, "oos_read": False},
         "data": {"streams": [stream["sid"] for stream in streams],
@@ -233,6 +245,7 @@ def _parser():
     parser.add_argument("--source-revision", default=SOURCE_REVISION)
     parser.add_argument("--model-id", default=MODEL_ID)
     parser.add_argument("--model-revision", default=MODEL_REVISION)
+    add_admission_argument(parser)
     return parser
 
 

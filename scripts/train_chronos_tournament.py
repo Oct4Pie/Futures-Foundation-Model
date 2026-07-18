@@ -16,6 +16,9 @@ import numpy as np
 
 from futures_foundation.finetune import chronos_family, tournament, tournament_data
 from futures_foundation.finetune.chronos_family import CANDIDATES
+from futures_foundation.finetune.native_contracts import (
+    add_admission_argument, require_admission_from_args,
+)
 from futures_foundation.finetune.tournament import (
     FORECAST_HORIZON, MAX_CONTEXT, OOS_START, PARENT_LENGTH, TRAIN_START,
     VALIDATION_START,
@@ -206,6 +209,10 @@ def train(args):
     import torch
     if args.family not in CANDIDATES:
         raise ValueError(f"unsupported Chronos family: {args.family}")
+    require_admission_from_args(
+        args, arm_key=args.family, track="F",
+        route="historical_universal_stage_chain", require_training=True,
+    )
     candidate = CANDIDATES[args.family]
     if args.family != "chronos_v2" and args.chronos2_mode != "close_only":
         raise ValueError("--chronos2-mode only applies to chronos_v2")
@@ -451,6 +458,7 @@ def _parser():
     parser.add_argument("--validation-seed", type=int, default=5400)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--stop-after", type=int)
+    add_admission_argument(parser)
     return parser
 
 

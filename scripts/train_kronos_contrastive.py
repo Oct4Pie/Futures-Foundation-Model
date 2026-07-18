@@ -18,6 +18,9 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from futures_foundation.finetune.foundation_roster import get_arm
+from futures_foundation.finetune.native_contracts import (
+    add_admission_argument, require_admission_from_args, validate_identity,
+)
 from futures_foundation.finetune.tournament import (
     OOS_START, PARENT_LENGTH, TRAIN_START, VALIDATION_START,
 )
@@ -78,10 +81,20 @@ def _encode_half(predictor, tokenizer, values, stamps, projector):
 
 def train(args):
     import torch
-    arm = get_arm(args.arm)
+    arm = validate_identity(
+        args.arm,
+        model_id=args.model_id,
+        model_revision=args.model_revision,
+        source_revision=args.source_revision,
+        tokenizer_id=args.tokenizer_id,
+        tokenizer_revision=args.tokenizer_revision,
+    )
     if arm.family != "kronos" or not arm.supported_training:
-        raise ValueError(f"{args.arm} is not a trainable Kronos arm")
-    args.model_id, args.model_revision = arm.model_id, arm.model_revision
+        raise ValueError(f"{args.arm} does not declare a Kronos adaptation route")
+    admission = require_admission_from_args(
+        args, arm_key=args.arm, track="C", route="adjacent_half_contrastive",
+        require_training=True,
+    )
     repo, source = _validate_source(args.kronos_repo, args.source_revision)
     if args.max_steps < 1 or args.batch_size < 2 or args.val_batches < 1:
         raise ValueError("positive steps/validation and batch >= 2 are required")
@@ -218,6 +231,7 @@ def train(args):
     report = {
         "schema_version": "ffm_kronos_contrastive_train_v1", "status": "complete",
         "created_utc": datetime.now(timezone.utc).isoformat(), "arm": arm.manifest(),
+        "admission": admission,
         "split": {"train_start": TRAIN_START, "validation_start": VALIDATION_START,
                   "oos_start": OOS_START, "oos_read": False},
         "parent": parent, "first_backbone_grad_norm": first_grad_norm,
@@ -262,15 +276,21 @@ def _parser():
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--validation-seed", type=int, default=5400)
     parser.add_argument("--source-revision", default=SOURCE_REVISION)
-    parser.add_argument("--tokenizer-id", default=TOKENIZER_ID)
-    parser.add_argument("--tokenizer-revision", default=TOKENIZER_REVISION)
-    parser.add_argument("--model-id", default="")
-    parser.add_argument("--model-revision", default="")
+    parser.add_argument("--tokenizer-id")
+    parser.add_argument("--tokenizer-revision")
+    parser.add_argument("--model-id")
+    parser.add_argument("--model-revision")
+    add_admission_argument(parser)
     return parser
 
 
 def main():
     args = _parser().parse_args()
+    arm = get_arm(args.arm)
+    args.model_id = args.model_id or arm.model_id
+    args.model_revision = args.model_revision or arm.model_revision
+    args.tokenizer_id = args.tokenizer_id or arm.tokenizer_id
+    args.tokenizer_revision = args.tokenizer_revision or arm.tokenizer_revision
     args.tickers = tuple(value for value in args.tickers.split(",") if value)
     args.timeframes = tuple(value for value in args.timeframes.split(",") if value)
     train(args)

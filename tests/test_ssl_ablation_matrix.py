@@ -7,7 +7,10 @@ from scripts import train_ssl_local
 
 
 def test_matrix_is_bounded_direct_vanilla_smoke(tmp_path):
-    rows = matrix.build_matrix(data_dir=tmp_path, output_dir=tmp_path / 'out')
+    admission = tmp_path / 'admission.json'
+    rows = matrix.build_matrix(
+        data_dir=tmp_path, output_dir=tmp_path / 'out', admission_report=admission,
+    )
     assert len(rows) == 6
     assert {(r['seq'], r['preprocessing']) for r in rows} == {
         (seq, prep) for seq in (64, 128, 256) for prep in matrix.PREPROCESSING.values()}
@@ -17,6 +20,7 @@ def test_matrix_is_bounded_direct_vanilla_smoke(tmp_path):
         assert command[command.index('--contrastive-objective') + 1] == 'elapsed_time_v2'
         assert row['contrastive_objective'] == 'elapsed_time_v2'
         assert '--smoke' in command and '--no-probe' in command
+        assert command[command.index('--admission-report') + 1] == str(admission.resolve())
         assert row['status'] == 'pending' and Path(row['output']).parent == tmp_path / 'out'
 
 

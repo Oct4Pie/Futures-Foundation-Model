@@ -28,6 +28,7 @@ from futures_foundation.finetune.kronos_eval import build_forecast_windows, wind
 from futures_foundation.finetune.moment_eval import (
     left_pad_contexts, pool_channel_patches, targets_from_context_future,
 )
+from futures_foundation.finetune.native_contracts import verify_admission_report
 
 
 MOMENT_SOURCE_REVISION = "38f7310ad594100747ca2a8357e9c7ca7d323e0e"
@@ -234,6 +235,14 @@ def _probe_splits(windows, folds):
 
 
 def benchmark(args):
+    moment_admission = verify_admission_report(
+        args.moment_admission_report, arm_key="moment_small", track="C",
+        route="historical_custom_representation_extraction", require_training=False,
+    )
+    mantis_admission = verify_admission_report(
+        args.mantis_admission_report, arm_key="mantis_v2", track="C",
+        route="historical_custom_representation_extraction", require_training=False,
+    )
     repo, moment_source = _validate_moment_source(args.moment_repo, args.source_revision)
     checkpoint = Path(args.stage2_checkpoint).expanduser().resolve()
     if not checkpoint.is_file():
@@ -357,6 +366,18 @@ def benchmark(args):
             "development representation probe only; no finetuning and no 2025-07+ holdout; "
             "MOMENT pretraining overlap with this futures corpus is not independently proven"
         ),
+        "admission": {
+            "moment_small": {
+                "integrity": moment_admission["integrity"],
+                "registry_sha256": moment_admission["registry_sha256"],
+                "dossier_sha256": moment_admission["dossier_sha256"],
+            },
+            "mantis_v2": {
+                "integrity": mantis_admission["integrity"],
+                "registry_sha256": mantis_admission["registry_sha256"],
+                "dossier_sha256": mantis_admission["dossier_sha256"],
+            },
+        },
         "config": {
             "moment": moment_config, "mantis_vanilla": vanilla_config,
             "mantis_stage2": stage2_config, "moment_continued": continued_config,
@@ -437,6 +458,8 @@ def _parser():
     parser.add_argument(
         "--mantis-preprocessing", default="per_window_per_channel_zscore_v1",
     )
+    parser.add_argument("--moment-admission-report", required=True)
+    parser.add_argument("--mantis-admission-report", required=True)
     return parser
 
 

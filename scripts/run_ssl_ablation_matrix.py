@@ -31,7 +31,7 @@ def _atomic_json(path, value):
     os.replace(tmp, path)
 
 
-def build_matrix(*, data_dir, output_dir, seqs=(64, 128, 256),
+def build_matrix(*, data_dir, output_dir, admission_report, seqs=(64, 128, 256),
                  preprocessing=('channel', 'shared'), ticker='ES', tf='3min',
                  device='cuda', seed=0):
     rows = []
@@ -47,6 +47,7 @@ def build_matrix(*, data_dir, output_dir, seqs=(64, 128, 256),
                 '--contrastive-objective', 'elapsed_time_v2',
                 '--tickers', ticker, '--tfs', tf, '--device', device, '--seed', str(int(seed)),
                 '--controls', '', '--smoke', '--no-probe', '--batch', '8',
+                '--admission-report', str(Path(admission_report).resolve()),
             ]
             rows.append({'name': name, 'stage': 'contrastive', 'lineage': 'vanilla',
                          'contrastive_objective': 'elapsed_time_v2',
@@ -92,6 +93,7 @@ def main():
     p.add_argument('--tf', default='3min')
     p.add_argument('--device', default='cuda')
     p.add_argument('--seed', type=int, default=0)
+    p.add_argument('--admission-report', required=True)
     p.add_argument('--execute', action='store_true')
     a = p.parse_args()
     preps = tuple(x for x in a.preprocessing.split(',') if x)
@@ -101,7 +103,8 @@ def main():
     seqs = tuple(int(x) for x in a.seqs.split(',') if x)
     if not seqs or any(x not in (64, 128, 256) for x in seqs):
         raise ValueError('smoke seqs must be drawn from 64,128,256')
-    rows = build_matrix(data_dir=a.data_dir, output_dir=a.output_dir, seqs=seqs,
+    rows = build_matrix(data_dir=a.data_dir, output_dir=a.output_dir,
+                        admission_report=a.admission_report, seqs=seqs,
                         preprocessing=preps, ticker=a.ticker, tf=a.tf,
                         device=a.device, seed=a.seed)
     manifest_path = Path(a.manifest or (Path(a.output_dir) / 'matrix.json')).resolve()

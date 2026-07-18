@@ -67,6 +67,39 @@ def _parse_arm(text: str) -> Arm:
     return Arm(name=name, version=version, checkpoint=path)
 
 
+def _parse_admission(text: str):
+    try:
+        name, raw_path = text.split('=', 1)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError('admission must be ARM_NAME=/path/report.json') from exc
+    path = Path(raw_path).expanduser().resolve()
+    if not name or not path.is_file():
+        raise argparse.ArgumentTypeError(f'invalid admission mapping: {text}')
+    return name, path
+
+
+def _verify_arm_admissions(arms, mappings):
+    from futures_foundation.finetune.native_contracts import verify_admission_report
+    supplied = dict(mappings)
+    names = [arm.name for arm in arms]
+    if len(supplied) != len(mappings):
+        raise ValueError('admission arm names must be unique')
+    if set(supplied) != set(names):
+        raise ValueError(
+            f'admission mappings must match arms exactly: missing={sorted(set(names) - set(supplied))}, '
+            f'unknown={sorted(set(supplied) - set(names))}'
+        )
+    verified = {}
+    for arm in arms:
+        arm_key = 'mantis_v2' if arm.version == 'v2' else 'mantis_v1'
+        verified[arm.name] = verify_admission_report(
+            supplied[arm.name], arm_key=arm_key, track='B',
+            route='supervised_barrier_experimental_task', require_training=False,
+            required_artifacts={'checkpoint': arm.checkpoint},
+        )
+    return verified
+
+
 class SuperTrendMantis:
     """Embedding-only SuperTrend(10,3) flip selector matching the linked gist."""
 
@@ -271,6 +304,7 @@ def _clf_kwargs(arm: Arm, head: str, args):
 
 
 def run(args):
+    admissions = _verify_arm_admissions(args.arms, args.admissions)
     data_dir = args.data_dir.resolve()
     args.output_dir.mkdir(parents=True, exist_ok=True)
     streams = [(tk, tf) for tk in args.tickers for tf in args.tfs]
@@ -298,9 +332,15 @@ def run(args):
                   'stop': '0.5*ATR20', 'target': '3R', 'vertical_bars': 120,
                   'cost_R': 0.03, 'same_bar_policy': 'author_tp_first',
                   'roll_policy': 'context_and_outcome_must_remain_in_one_contract'},
-        'arms': [{'name': a.name, 'version': a.version, 'model_id': a.model_id,
-                  'checkpoint': str(a.checkpoint), 'sha256': _sha256(a.checkpoint)}
-                 for a in args.arms],
+        'arms': [{
+            'name': a.name, 'version': a.version, 'model_id': a.model_id,
+            'checkpoint': str(a.checkpoint), 'sha256': _sha256(a.checkpoint),
+            'admission': {
+                'integrity': admissions[a.name]['integrity'],
+                'registry_sha256': admissions[a.name]['registry_sha256'],
+                'dossier_sha256': admissions[a.name]['dossier_sha256'],
+            },
+        } for a in args.arms],
         'heads': list(args.heads), 'results': [],
     }
     report = args.output_dir / f'{args.mode}_report.json'
@@ -342,6 +382,8 @@ def main():
     p.add_argument('--mode', choices=('wf', 'oos'), default='wf')
     p.add_argument('--arm', dest='arms', action='append', type=_parse_arm, required=True,
                    help='repeat NAME,v1|v2,CHECKPOINT')
+    p.add_argument('--admission', dest='admissions', action='append', type=_parse_admission,
+                   required=True, help='repeat ARM_NAME=/path/current-admission.json')
     p.add_argument('--heads', default='logistic,mlp')
     p.add_argument('--data-dir', type=Path, default=Path('data/ssl_corpus_v2_6tf'))
     p.add_argument('--output-dir', type=Path, default=Path('output/supertrend_benchmark'))

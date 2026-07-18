@@ -423,6 +423,7 @@ def tune(args):
             mantis_stage=args.mantis_stage,
             warm_checkpoint=args.warm_checkpoint,
         )
+        command.extend(["--admission-report", str(Path(args.admission_report).resolve())])
         trial.set_user_attr("checkpoint", str(checkpoint))
         trial.set_user_attr("command", command)
         with log.open("w") as stream:
@@ -510,6 +511,7 @@ def _parser():
     parser.add_argument("--examples-per-trial", type=int, default=262_144)
     parser.add_argument("--seed", type=int, default=4400)
     parser.add_argument("--evaluation-seed", type=int, default=5400)
+    parser.add_argument("--admission-report", required=True)
     parser.add_argument("--smoke", action="store_true")
     return parser
 

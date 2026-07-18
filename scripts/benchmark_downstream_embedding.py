@@ -24,6 +24,7 @@ from futures_foundation.finetune.downstream_sample import (
     load_row_selection,
     purged_calendar_splits,
 )
+from futures_foundation.finetune.native_contracts import verify_admission_report
 
 
 SCHEMA_VERSION = "ffm_downstream_embedding_benchmark_v1"
@@ -140,6 +141,19 @@ def _aggregate(records: list[dict]) -> list[dict]:
 
 
 def run(args) -> dict:
+    embedding_sidecar = json.loads(Path(str(Path(args.embedding).resolve()) + ".manifest.json").read_text())
+    stamped_admission = embedding_sidecar.get("admission")
+    if not isinstance(stamped_admission, dict):
+        raise ValueError("embedding lacks native-admission provenance")
+    admission = verify_admission_report(
+        args.admission_report,
+        arm_key=str(embedding_sidecar.get("arm")),
+        track=str(stamped_admission.get("track")),
+        route=stamped_admission.get("route"),
+        require_training=False,
+    )
+    if admission["integrity"] != stamped_admission.get("integrity"):
+        raise ValueError("embedding admission provenance differs from the supplied current report")
     sample, sample_manifest = load_balanced_sample(args.sample)
     selection, selection_manifest = load_row_selection(
         args.row_selection, sample_manifest=sample_manifest,
@@ -275,6 +289,11 @@ def run(args) -> dict:
         "created_utc": datetime.now(timezone.utc).isoformat(), "oos_read": False,
         "sample_sha256": sample_manifest["artifact"]["sha256"],
         "row_selection_sha256": selection_manifest["artifact"]["sha256"],
+        "admission": {
+            "integrity": admission["integrity"],
+            "registry_sha256": admission["registry_sha256"],
+            "dossier_sha256": admission["dossier_sha256"],
+        },
         "embedding": {
             "path": str(Path(args.embedding).resolve()),
             "sha256": embedding_manifest["artifact"]["sha256"],
@@ -309,6 +328,7 @@ def run(args) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--embedding", required=True)
+    parser.add_argument("--admission-report", required=True)
     parser.add_argument(
         "--sample", default="output/foundation_tournament/downstream_gate_v1/balanced_sample.npz",
     )

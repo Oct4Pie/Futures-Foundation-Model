@@ -78,9 +78,11 @@ def _regime_label(desc):
     return lab
 
 
-def _embed(W, ckpt, device='cpu'):
+def _embed(W, ckpt, *, model_id, model_version, device='cpu'):
     from futures_foundation.finetune.pretext._torch.common import embed_windows
-    z = embed_windows(W, ckpt=ckpt, device=device)
+    z = embed_windows(
+        W, ckpt=ckpt, model_id=model_id, model_version=model_version, device=device,
+    )
     return z / (np.linalg.norm(z, axis=1, keepdims=True) + 1e-9)         # cosine geometry
 
 
@@ -119,8 +121,10 @@ def _regime_separation(z, lab):
     return float(within), float(between), float(within / (between + 1e-9)), acc, chance
 
 
-def _run(name, ckpt, W, desc, lab, device):
-    z = _embed(W, ckpt, device)
+def _run(name, ckpt, W, desc, lab, *, model_id, model_version, device):
+    z = _embed(
+        W, ckpt, model_id=model_id, model_version=model_version, device=device,
+    )
     nn_d, rand_d, nn_ratio = _nn_retrieval(z, desc)
     wi, bw, sep_ratio, acc, chance = _regime_separation(z, lab)
     print(f"\n=== {name} ===  ({ckpt})")
@@ -141,16 +145,44 @@ def main():
     ap.add_argument('--tfs', default='3min')
     ap.add_argument('--n', type=int, default=3000)
     ap.add_argument('--device', default='cpu')
+    ap.add_argument('--model-version', choices=('v1', 'v2'), required=True)
+    ap.add_argument('--candidate-admission-report', required=True)
+    ap.add_argument('--base-admission-report')
     a = ap.parse_args()
+
+    from futures_foundation.finetune.native_contracts import verify_admission_report
+    arm_key = 'mantis_v2' if a.model_version == 'v2' else 'mantis_v1'
+    model_id = 'paris-noah/MantisV2' if a.model_version == 'v2' else 'paris-noah/Mantis-8M'
+    verify_admission_report(
+        a.candidate_admission_report, arm_key=arm_key, track='C',
+        route='historical_custom_representation_extraction', require_training=False,
+        required_artifacts={'checkpoint': a.ckpt},
+    )
+    if a.base:
+        if not a.base_admission_report:
+            ap.error('--base requires --base-admission-report')
+        verify_admission_report(
+            a.base_admission_report, arm_key=arm_key, track='C',
+            route='historical_custom_representation_extraction', require_training=False,
+            required_artifacts={'checkpoint': a.base},
+        )
+    elif a.base_admission_report:
+        ap.error('--base-admission-report requires --base')
 
     W, desc = _windows(a.data, a.tickers.split(','), a.tfs.split(','), a.n)
     lab = _regime_label(desc)
     print(f"windows={len(W)}  regimes: " +
           ', '.join(f'{k}={int(v)}' for k, v in pd.Series(lab).value_counts().items()))
 
-    cand = _run('CANDIDATE', a.ckpt, W, desc, lab, a.device)
+    cand = _run(
+        'CANDIDATE', a.ckpt, W, desc, lab,
+        model_id=model_id, model_version=a.model_version, device=a.device,
+    )
     if a.base:
-        base = _run('BASELINE', a.base, W, desc, lab, a.device)
+        base = _run(
+            'BASELINE', a.base, W, desc, lab,
+            model_id=model_id, model_version=a.model_version, device=a.device,
+        )
         print("\n" + "=" * 60 + "\n  A/B VERDICT (candidate vs baseline)\n" + "=" * 60)
         dnn = base['nn_ratio'] - cand['nn_ratio']            # + = candidate neighbors more similar
         dsep = base['sep_ratio'] - cand['sep_ratio']         # + = candidate separates regimes better

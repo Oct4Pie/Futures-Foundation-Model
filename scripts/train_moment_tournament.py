@@ -16,6 +16,9 @@ from pathlib import Path
 import numpy as np
 
 from futures_foundation.finetune.moment_eval import left_pad_contexts
+from futures_foundation.finetune.native_contracts import (
+    add_admission_argument, require_admission_from_args, validate_identity,
+)
 from futures_foundation.finetune import moment_eval, tournament, tournament_data
 from futures_foundation.finetune.tournament import (
     MAX_CONTEXT, OOS_START, PARENT_LENGTH, TRAIN_START, VALIDATION_START,
@@ -188,6 +191,14 @@ def _stage_bundle(model, args):
 
 def train(args):
     import torch
+    validate_identity(
+        "moment_small", model_id=args.model_id, model_revision=args.model_revision,
+        source_revision=args.source_revision,
+    )
+    admission = require_admission_from_args(
+        args, arm_key="moment_small", track="R", route="masked_patch_reconstruction",
+        require_training=True,
+    )
     repo, source = _validate_source(args.moment_repo, args.source_revision)
     if args.context not in (64, 128, 256) or args.context % 8:
         raise ValueError("MOMENT tournament context must be one of 64,128,256")
@@ -289,6 +300,7 @@ def train(args):
     report = {
         "schema_version": "ffm_moment_tournament_train_v1", "status": "complete",
         "created_utc": datetime.now(timezone.utc).isoformat(),
+        "admission": admission,
         "model": {"id": args.model_id, "revision": args.model_revision,
                   "parameters": sum(p.numel() for p in model.parameters())},
         "upstream": {"repo": str(repo), "revision": args.source_revision,
@@ -341,6 +353,7 @@ def _parser():
     parser.add_argument("--source-revision", default=SOURCE_REVISION)
     parser.add_argument("--model-id", default=MODEL_ID)
     parser.add_argument("--model-revision", default=MODEL_REVISION)
+    add_admission_argument(parser)
     return parser
 
 

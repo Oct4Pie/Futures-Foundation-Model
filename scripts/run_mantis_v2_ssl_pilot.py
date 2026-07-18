@@ -37,8 +37,8 @@ def _atomic_json(path, value):
     os.replace(tmp, path)
 
 
-def build_matrix(*, data_dir, output_dir, seed=17, epochs=5, steps=50, batch=32,
-                 device='cuda', feature_anchor_weight=.1):
+def build_matrix(*, data_dir, output_dir, admission_report, seed=17, epochs=5,
+                 steps=50, batch=32, device='cuda', feature_anchor_weight=.1):
     rows = []
     for objective in OBJECTIVES:
         name = f'mantis_v2_stage2_{objective}_seed{int(seed)}_256bar_dev'
@@ -57,6 +57,7 @@ def build_matrix(*, data_dir, output_dir, seed=17, epochs=5, steps=50, batch=32,
             '--probe-seed', '20260704', '--epochs', str(int(epochs)),
             '--steps-per-epoch', str(int(steps)), '--batch', str(int(batch)),
             '--patience', str(int(epochs)), '--probe-folds', '5', '--controls', 'shuffle',
+            '--admission-report', str(Path(admission_report).resolve()),
         ]
         rows.append({'name': name, 'objective': objective, 'seed': int(seed),
                      'output': str(output), 'epochs': int(epochs),
@@ -187,6 +188,7 @@ def main():
     parser.add_argument('--batch', type=int, default=32)
     parser.add_argument('--feature-anchor-weight', type=float, default=.1)
     parser.add_argument('--device', default='cuda')
+    parser.add_argument('--admission-report', required=True)
     parser.add_argument('--execute', action='store_true')
     args = parser.parse_args()
     if min(args.epochs, args.steps_per_epoch, args.batch) <= 0:
@@ -210,7 +212,8 @@ def main():
         'tickers': list(train.ROOTS), 'timeframes': list(train.TFS),
     }
     output_dir = Path(args.output_dir).resolve()
-    rows = build_matrix(data_dir=data_dir, output_dir=output_dir, seed=args.seed,
+    rows = build_matrix(data_dir=data_dir, output_dir=output_dir,
+                        admission_report=args.admission_report, seed=args.seed,
                         epochs=args.epochs, steps=args.steps_per_epoch, batch=args.batch,
                         device=args.device, feature_anchor_weight=args.feature_anchor_weight)
     manifest = output_dir / 'matrix.json'

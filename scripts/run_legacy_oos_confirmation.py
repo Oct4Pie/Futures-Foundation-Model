@@ -40,6 +40,7 @@ from futures_foundation.finetune.event_contexts import (
     materialize_context_stream,
     save_context_shard,
 )
+from futures_foundation.finetune.native_contracts import verify_admission_report
 from futures_foundation.finetune.path_labels import PathLabelConfig
 from futures_foundation.finetune.pretext._torch.common import embed_windows
 from futures_foundation.finetune.ssl_data import TFS_ALL, TICKERS_9, load_ohlcv
@@ -644,6 +645,7 @@ def _run_confirmation(args, oos_sample, oos_events, oos_embeddings, output_dir: 
             "prior_inspection_caveat": True,
         },
         "policy": POLICY,
+        "admission": args.admissions,
         "execution": {
             "primary_slippage_ticks_round_trip": 0.0, "delay_bars": 0,
             "entry": "next bar open", "same_bar_ambiguity": "adverse_first",
@@ -690,6 +692,8 @@ def main() -> None:
     parser.add_argument("--dev-v2-stage2", default="output/foundation_tournament/conditional_event_gate_v2/representations/embeddings/mantis_v2/stage2.npz")
     parser.add_argument("--v1-stage2-checkpoint", default="output/mantis_v1_ssl_pilot_256_v1/mantis_v1_stage2_vicreg_v1_seed17_256bar_dev.pt")
     parser.add_argument("--v2-stage2-checkpoint", default="output/mantis_v2_ssl_pilot_256_v1/mantis_v2_stage2_vicreg_v1_seed17_256bar_dev.pt")
+    parser.add_argument("--v1-admission-report", required=True)
+    parser.add_argument("--v2-admission-report", required=True)
     parser.add_argument("--execution-costs", default="config/execution_costs.yaml")
     parser.add_argument("--output-dir", default="output/foundation_tournament/legacy_oos_confirmation_v1")
     parser.add_argument("--oos-start", default=OOS_START)
@@ -706,6 +710,26 @@ def main() -> None:
         parser.error(f"common-coverage end cannot exceed {DEFAULT_OOS_END}")
     if args.warmup_days < 30 or args.bootstrap_repetitions < 1000:
         parser.error("warmup must be >=30 days and bootstrap repetitions >=1000")
+    admissions = {
+        "mantis_v1": verify_admission_report(
+            args.v1_admission_report, arm_key="mantis_v1", track="B",
+            route="supervised_barrier_experimental_task", require_training=False,
+            required_artifacts={"stage2_checkpoint": args.v1_stage2_checkpoint},
+        ),
+        "mantis_v2": verify_admission_report(
+            args.v2_admission_report, arm_key="mantis_v2", track="B",
+            route="supervised_barrier_experimental_task", require_training=False,
+            required_artifacts={"stage2_checkpoint": args.v2_stage2_checkpoint},
+        ),
+    }
+    args.admissions = {
+        key: {
+            "integrity": value["integrity"],
+            "registry_sha256": value["registry_sha256"],
+            "dossier_sha256": value["dossier_sha256"],
+        }
+        for key, value in admissions.items()
+    }
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     config, _ = _event_config(

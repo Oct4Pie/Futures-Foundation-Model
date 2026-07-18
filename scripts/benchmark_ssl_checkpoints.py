@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 
 from futures_foundation.finetune import ssl, ssl_probe
+from futures_foundation.finetune.native_contracts import verify_admission_report
 
 
 def _sha256(path: Path) -> str:
@@ -75,7 +76,18 @@ def _attest_run(run_path, report_path, report):
 def benchmark(data_dir, checkpoints, *, output, tickers, tfs, holdout_start='2026-01-01',
               val_start=None, val_frac=0.1, seq=64, fwd_k=16, max_windows=20000,
               batch=512, device='cuda', seed=0, folds=5,
-              model_id='paris-noah/Mantis-8M', model_version=None, attest_run=None):
+              model_id='paris-noah/Mantis-8M', model_version=None, attest_run=None,
+              admission_reports=()):
+    if len(admission_reports) != len(checkpoints):
+        raise ValueError('one --admission-report is required for each --checkpoint in order')
+    arm_key = 'mantis_v2' if model_version == 'v2' else 'mantis_v1'
+    admissions = []
+    for checkpoint, report in zip(checkpoints, admission_reports):
+        admissions.append(verify_admission_report(
+            report, arm_key=arm_key, track='C',
+            route='historical_custom_representation_extraction', require_training=False,
+            required_artifacts={'checkpoint': checkpoint},
+        ))
     streams, big, _, va, groups = ssl._load_assemble(
         data_dir, tickers, tfs, seq, fwd_k, val_frac, holdout_start, True,
         val_start=val_start, return_groups=True)
@@ -106,7 +118,7 @@ def benchmark(data_dir, checkpoints, *, output, tickers, tfs, holdout_start='202
         raise RuntimeError("vanilla embedding sample drifted from the sealed probe rows")
 
     results = {}
-    for spec in checkpoints:
+    for spec, admission in zip(checkpoints, admissions):
         path = Path(spec).resolve()
         if not path.is_file() or path.stat().st_size < 1024:
             raise FileNotFoundError(f"checkpoint is missing or a Git LFS pointer: {path}")
@@ -118,6 +130,11 @@ def benchmark(data_dir, checkpoints, *, output, tickers, tfs, holdout_start='202
             raise RuntimeError(f"checkpoint sample drifted: {path}")
         results[path.name] = {
             'path': str(path), 'sha256': _sha256(path),
+            'admission': {
+                'integrity': admission['integrity'],
+                'registry_sha256': admission['registry_sha256'],
+                'dossier_sha256': admission['dossier_sha256'],
+            },
             'probe': ssl_probe.compare(
                 emb, vanilla, targets, seed=seed, folds=folds, splits=splits),
         }
@@ -162,6 +179,8 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--data-dir', required=True)
     p.add_argument('--checkpoint', action='append', required=True)
+    p.add_argument('--admission-report', action='append', required=True,
+                   help='repeat once per checkpoint in the same order')
     p.add_argument('--output', required=True)
     p.add_argument('--tickers', default='ES,NQ,RTY,YM,GC,SI,CL,ZB,ZN')
     p.add_argument('--tfs', default='1min,3min,5min,15min,30min,60min')
@@ -186,7 +205,7 @@ def main():
               fwd_k=a.fwd_k, max_windows=a.max_windows, batch=a.batch,
               device=a.device, seed=a.seed, folds=a.folds,
               model_id=a.model_id, model_version=a.model_version,
-              attest_run=a.attest_run)
+              attest_run=a.attest_run, admission_reports=a.admission_report)
 
 
 if __name__ == '__main__':

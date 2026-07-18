@@ -1,0 +1,469 @@
+{
+  "schema_version": "ffm_native_contract_registry_v1",
+  "methodology_commit": "8b33c28a67088c57e7ce2a8b14dab5c93e3f8ba6",
+  "evidence_schema": "ffm_native_contract_evidence_v1",
+  "native_parity_tolerances": {"atol": 0.00001, "rtol": 0.00001},
+  "status_vocabulary": [
+    "native_valid",
+    "native_valid_experimental_task",
+    "configuration_specific",
+    "invalid_contract",
+    "blocked",
+    "research_only"
+  ],
+  "tracks": {
+    "F": "native_probabilistic_forecasting",
+    "R": "official_representation_extraction",
+    "C": "experimental_feature_transfer",
+    "B": "supervised_barrier_path_prediction",
+    "D": "downstream_in_context_control"
+  },
+  "required_checks": [
+    "official_example",
+    "adapter_public_api_parity",
+    "scaling_inverse_scaling",
+    "padding_mask_missing_values",
+    "frequency_timezone_covariates",
+    "channel_semantics",
+    "batch_partition_parity",
+    "fp32_finite",
+    "reduced_precision_tolerance",
+    "context_horizon_boundaries",
+    "prefix_invariance",
+    "gradient_freeze_surface",
+    "repeated_batch_loss_decrease",
+    "exact_resume",
+    "save_reload_export",
+    "license_governance"
+  ],
+  "models": {
+    "mantis_v1": {
+      "family": "mantis_v1",
+      "model_id": "paris-noah/Mantis-8M",
+      "model_revision": "93a16a52a5e2e6d76c0b823533b5836dd83ca10a",
+      "source_url": "https://github.com/vfeofanov/mantis",
+      "source_revision": "84350a0dac8518faaf40a021ef1d591f1132065e",
+      "package": {"name": "mantis-tsfm", "version": "1.0.0"},
+      "tokenizer": null,
+      "license": {"id": "Apache-2.0", "deployment": "allowed_after_admission", "source_license_file_sha256": "1eb85fc97224598dad1852b5d6483bbcf0aa8608790dcc657a5a2a761ae9c8c6"},
+      "pin_complete": true,
+      "overall_status": "native_valid",
+      "role": "representation_classification_primary",
+      "ohlcv_mode": "channel_independent_fixed_ohlcv_order",
+      "native_context": {"minimum": 1, "maximum": 512, "selection": "official_linear_interpolation_to_512"},
+      "native_preprocessing": "raw_univariate_per_channel; official_linear_interpolation_to_512; external_zscore_is_sensitivity_only",
+      "official_outputs": {"forecast": null, "representation": "final_cls_per_channel"},
+      "adaptation_routes": ["official_crop_resize_contrastive", "supervised_barrier_experimental_task"],
+      "tracks": {
+        "F": {"status": "blocked", "reason": "not_a_native_forecast_family"},
+        "R": {"status": "native_valid", "reason": "official final CLS per-channel representation passed public-API parity", "evidence_id": "mantis_v1:R:2026-07-18"},
+        "C": {"status": "blocked", "reason": "channel fusion and non-native preprocessing require separate Track C admission"},
+        "B": {"status": "blocked", "reason": "supervised barrier adaptation requires separate Track B evidence"},
+        "D": {"status": "blocked", "reason": "not_a_downstream_only_model"}
+      }
+    },
+    "mantis_v2": {
+      "family": "mantis_v2",
+      "model_id": "paris-noah/MantisV2",
+      "model_revision": "99fe0f548960e272fbfa4b82fd9b5b5956779dfd",
+      "source_url": "https://github.com/vfeofanov/mantis",
+      "source_revision": "84350a0dac8518faaf40a021ef1d591f1132065e",
+      "package": {"name": "mantis-tsfm", "version": "1.0.0"},
+      "tokenizer": null,
+      "license": {"id": "Apache-2.0-code/MIT-weights", "deployment": "allowed_after_admission", "source_license_file_sha256": "1eb85fc97224598dad1852b5d6483bbcf0aa8608790dcc657a5a2a761ae9c8c6"},
+      "pin_complete": true,
+      "overall_status": "native_valid",
+      "role": "representation_classification_primary",
+      "ohlcv_mode": "channel_independent_fixed_ohlcv_order",
+      "native_context": {"minimum": 1, "maximum": 512, "selection": "official_linear_interpolation_to_512"},
+      "native_preprocessing": "raw_univariate_per_channel; official_linear_interpolation_to_512; external_zscore_is_sensitivity_only",
+      "official_outputs": {"forecast": null, "representation": "layer_2_cls_plus_mean_per_channel"},
+      "adaptation_routes": ["official_crop_resize_contrastive", "supervised_barrier_experimental_task"],
+      "tracks": {
+        "F": {"status": "blocked", "reason": "not_a_native_forecast_family"},
+        "R": {"status": "native_valid", "reason": "official layer-2 CLS+mean per-channel representation passed public-API parity", "evidence_id": "mantis_v2:R:2026-07-18"},
+        "C": {"status": "blocked", "reason": "final CLS, channel fusion, and alternate pooling are Track C sensitivities"},
+        "B": {"status": "blocked", "reason": "supervised barrier adaptation requires separate Track B evidence"},
+        "D": {"status": "blocked", "reason": "not_a_downstream_only_model"}
+      }
+    },
+    "moment_small": {
+      "family": "moment",
+      "model_id": "AutonLab/MOMENT-1-small",
+      "model_revision": "411e288267f82cce86296dbe4d6c8bc533cc162f",
+      "source_url": "https://github.com/moment-timeseries-foundation-model/moment.git",
+      "source_revision": "38f7310ad594100747ca2a8357e9c7ca7d323e0e",
+      "package": {"name": "momentfm", "version": "0.1.5"},
+      "tokenizer": null,
+      "license": {"id": "MIT", "deployment": "allowed_after_admission"},
+      "pin_complete": true,
+      "overall_status": "native_valid",
+      "role": "multi_task_forecast_and_representation",
+      "ohlcv_mode": "channel_independent_ohlcv",
+      "native_context": {"minimum": 1, "maximum": 512, "selection": "left_pad_to_512_with_input_mask"},
+      "native_preprocessing": "raw_series_with_internal_revin_and_left_padding_mask",
+      "official_outputs": {
+        "forecast": "task_specific_forecast_head",
+        "representation": ["embedding_patch_mean", "classification_patch_concat"]
+      },
+      "adaptation_routes": ["masked_patch_reconstruction", "classification", "forecast", "adjacent_half_contrastive", "supervised_barrier_experimental_task"],
+      "tracks": {
+        "F": {"status": "blocked", "reason": "pretrained checkpoint has no trained forecast head; forecast requires separate task-specific admission"},
+        "R": {"status": "native_valid", "reason": "official masked embedding mean passed public-API parity", "evidence_id": "moment_small:R:2026-07-18"},
+        "C": {"status": "blocked", "reason": "historical per-channel pooled concat is a custom Track C representation"},
+        "B": {"status": "blocked", "reason": "classification or barrier heads require separate task-specific admission"},
+        "D": {"status": "blocked", "reason": "not_a_downstream_only_model"}
+      }
+    },
+    "kronos_mini": {
+      "family": "kronos",
+      "model_id": "NeoQuasar/Kronos-mini",
+      "model_revision": "f4e68697d9d5aed55cef5c96aabc3376bcad9f81",
+      "source_url": "https://github.com/shiyu-coder/Kronos.git",
+      "source_revision": "67b630e67f6a18c9e9be918d9b4337c960db1e9a",
+      "package": {"name": "kronos_source_checkout", "version": "67b630e67f6a18c9e9be918d9b4337c960db1e9a"},
+      "tokenizer": {"id": "NeoQuasar/Kronos-Tokenizer-2k", "revision": "26966d0035065a0cae0ebad7af8ece35bc1fb51c"},
+      "license": {"id": "MIT", "deployment": "allowed_after_admission"},
+      "pin_complete": true,
+      "overall_status": "native_valid",
+      "role": "native_forecast_greedy_surface",
+      "ohlcv_mode": "joint_ohlcva",
+      "native_context": {"minimum": 1, "maximum": 2048, "selection": "truncate_to_max_context"},
+      "native_preprocessing": "official_joint_ohlcva_amount_fallback_calendar_stamps_normalize_clip_5",
+      "official_outputs": {"forecast": "admitted_greedy_point_dataframe_after_inverse_transform", "representation": null},
+      "adaptation_routes": ["native_tokenizer_and_hierarchical_autoregressive", "tokenizer_reconstruction", "hierarchical_autoregressive_tokens", "adjacent_half_contrastive", "supervised_barrier_experimental_task"],
+      "tracks": {
+        "F": {"status": "native_valid", "reason": "official joint OHLCVA greedy predictor passed tokenizer-2k, six-timeframe, batch, and inverse-transform parity", "evidence_id": "kronos_mini:F:2026-07-18"},
+        "R": {"status": "blocked", "reason": "no_official_representation_contract"},
+        "C": {"status": "blocked", "reason": "decode_s1_hidden_state_pooling_is_custom"},
+        "B": {"status": "blocked", "reason": "forecast_features_first_after_track_f_admission"},
+        "D": {"status": "blocked", "reason": "not_a_downstream_only_model"}
+      }
+    },
+    "kronos_small": {
+      "family": "kronos",
+      "model_id": "NeoQuasar/Kronos-small",
+      "model_revision": "901c26c1332695a2a8f243eb2f37243a37bea320",
+      "source_url": "https://github.com/shiyu-coder/Kronos.git",
+      "source_revision": "67b630e67f6a18c9e9be918d9b4337c960db1e9a",
+      "package": {"name": "kronos_source_checkout", "version": "67b630e67f6a18c9e9be918d9b4337c960db1e9a"},
+      "tokenizer": {"id": "NeoQuasar/Kronos-Tokenizer-base", "revision": "0e0117387f39004a9016484a186a908917e22426"},
+      "license": {"id": "MIT", "deployment": "allowed_after_admission"},
+      "pin_complete": true,
+      "overall_status": "native_valid",
+      "role": "native_forecast_greedy_surface",
+      "ohlcv_mode": "joint_ohlcva",
+      "native_context": {"minimum": 1, "maximum": 512, "selection": "truncate_to_max_context"},
+      "native_preprocessing": "official_joint_ohlcva_amount_fallback_calendar_stamps_normalize_clip_5",
+      "official_outputs": {"forecast": "admitted_greedy_point_dataframe_after_inverse_transform", "representation": null},
+      "adaptation_routes": ["native_tokenizer_and_hierarchical_autoregressive", "tokenizer_reconstruction", "hierarchical_autoregressive_tokens", "adjacent_half_contrastive", "supervised_barrier_experimental_task"],
+      "tracks": {
+        "F": {"status": "native_valid", "reason": "official joint OHLCVA greedy predictor passed Tokenizer-base, six-timeframe, batch, and inverse-transform parity", "evidence_id": "kronos_small:F:2026-07-18"},
+        "R": {"status": "blocked", "reason": "no_official_representation_contract"},
+        "C": {"status": "blocked", "reason": "decode_s1_hidden_state_pooling_is_custom"},
+        "B": {"status": "blocked", "reason": "forecast_features_first_after_track_f_admission"},
+        "D": {"status": "blocked", "reason": "not_a_downstream_only_model"}
+      }
+    },
+    "chronos_v1": {
+      "family": "chronos_v1",
+      "model_id": "amazon/chronos-t5-tiny",
+      "model_revision": "29d808298f1a62493e7b9a5e08529d0d930fa189",
+      "source_url": "https://github.com/amazon-science/chronos-forecasting.git",
+      "source_revision": "chronos-forecasting==2.3.1",
+      "package": {"name": "chronos-forecasting", "version": "2.3.1"},
+      "tokenizer": {"id": "bundled", "revision": "model_revision"},
+      "license": {"id": "Apache-2.0", "deployment": "allowed_after_admission"},
+      "pin_complete": true,
+      "parameters": 8394496,
+      "overall_status": "native_valid",
+      "role": "native_sampled_forecast",
+      "ohlcv_mode": "channel_independent_univariate",
+      "native_context": {"minimum": 1, "maximum": "model_config", "selection": "official_tokenizer"},
+      "native_preprocessing": "official_chronos_tokenizer_scaling_and_missing_mask",
+      "official_outputs": {"forecast": "sample_derived_quantiles", "representation": "public_unpooled_encoder_embeddings_and_tokenizer_state"},
+      "adaptation_routes": ["official_fit_if_exposed", "supervised_barrier_experimental_task"],
+      "tracks": {
+        "F": {"status": "native_valid", "reason": "seeded public quantile API passed tensor/list and finite-output parity", "evidence_id": "chronos_v1:F:2026-07-18"},
+        "R": {"status": "native_valid", "reason": "concrete pinned ChronosPipeline public embed API preserves unpooled tokens and tokenizer state", "evidence_id": "chronos_v1:R:2026-07-18"},
+        "C": {"status": "blocked", "reason": "arbitrary_hidden_state_pooling_is_custom"},
+        "B": {"status": "blocked", "reason": "requires_admitted_forecast_or_embedding_interface"},
+        "D": {"status": "blocked", "reason": "not_a_downstream_only_model"}
+      }
+    },
+    "chronos_bolt": {
+      "family": "chronos_bolt",
+      "model_id": "amazon/chronos-bolt-tiny",
+      "model_revision": "a0e552de83495b5c28c14c71c374f3e33280b340",
+      "source_url": "https://github.com/amazon-science/chronos-forecasting.git",
+      "source_revision": "chronos-forecasting==2.3.1",
+      "package": {"name": "chronos-forecasting", "version": "2.3.1"},
+      "tokenizer": {"id": "bundled_patchifier", "revision": "model_revision"},
+      "license": {"id": "Apache-2.0", "deployment": "allowed_after_admission"},
+      "pin_complete": true,
+      "parameters": 8652672,
+      "overall_status": "native_valid",
+      "role": "native_quantile_forecast",
+      "ohlcv_mode": "channel_independent_univariate",
+      "native_context": {"minimum": 1, "maximum": "model_config", "selection": "official_patchifier"},
+      "native_preprocessing": "official_bolt_scaling_and_missing_mask",
+      "official_outputs": {"forecast": "native_quantiles", "representation": "public_unpooled_patch_embeddings_and_loc_scale"},
+      "adaptation_routes": ["official_fit_or_supported_tuning", "supervised_barrier_experimental_task"],
+      "tracks": {
+        "F": {"status": "native_valid", "reason": "public quantile API passed tensor/list, scaling, and finite-output parity", "evidence_id": "chronos_bolt:F:2026-07-18"},
+        "R": {"status": "native_valid", "reason": "concrete pinned ChronosBoltPipeline public embed API preserves unpooled tokens and location/scale state", "evidence_id": "chronos_bolt:R:2026-07-18"},
+        "C": {"status": "blocked", "reason": "mean_reg_meanreg_and_locscale_fusions_are_custom_until_admitted"},
+        "B": {"status": "blocked", "reason": "requires_admitted_official_interface"},
+        "D": {"status": "blocked", "reason": "not_a_downstream_only_model"}
+      }
+    },
+    "chronos_v2": {
+      "family": "chronos_2",
+      "model_id": "autogluon/chronos-2-small",
+      "model_revision": "ddec01313e50b6bc58ebaa92ede81bc24a3d9f9a",
+      "source_url": "https://github.com/amazon-science/chronos-forecasting.git",
+      "source_revision": "chronos-forecasting==2.3.1",
+      "package": {"name": "chronos-forecasting", "version": "2.3.1"},
+      "tokenizer": {"id": "bundled_patchifier_with_reg_and_output_tokens", "revision": "model_revision"},
+      "license": {"id": "Apache-2.0", "deployment": "allowed_after_admission"},
+      "pin_complete": true,
+      "parameters": 27934624,
+      "overall_status": "native_valid",
+      "role": "native_joint_multivariate_forecast_and_embedding",
+      "ohlcv_mode": "grouped_joint_multivariate",
+      "native_context": {"minimum": 1, "maximum": "model_config", "selection": "official_grouped_input"},
+      "native_preprocessing": "official_grouped_multivariate_scaling_covariates_reg_and_output_tokens",
+      "official_outputs": {"forecast": "joint_native_quantiles", "representation": "embed_context_reg_output_tokens"},
+      "adaptation_routes": ["official_fit_full", "official_fit_lora", "supervised_barrier_experimental_task"],
+      "tracks": {
+        "F": {"status": "native_valid", "reason": "public grouped quantile API passed batch and finite-output parity", "evidence_id": "chronos_v2:F:2026-07-18"},
+        "R": {"status": "native_valid", "reason": "public embed API tokens and scaling state passed shape and finite-output parity", "evidence_id": "chronos_v2:R:2026-07-18"},
+        "C": {"status": "blocked", "reason": "custom_token_pooling_requires_track_c"},
+        "B": {"status": "blocked", "reason": "requires_admitted_official_interface"},
+        "D": {"status": "blocked", "reason": "not_a_downstream_only_model"}
+      }
+    },
+    "timesfm25": {
+      "family": "timesfm",
+      "model_id": "google/timesfm-2.5-200m-transformers",
+      "model_revision": "5a9806b9b291fad9233b5249d88263f1846304d3",
+      "source_url": "https://github.com/google-research/timesfm.git",
+      "source_revision": "3dae50b20d7a724981e8ea36cda75578f80dd2dc",
+      "package": {"name": "transformers", "version": "5.13.1", "parity_package": {"name": "timesfm", "version": "2.0.2"}},
+      "native_parity": {
+        "required_artifacts": ["reference_model"],
+        "reference_model_id": "google/timesfm-2.5-200m-pytorch",
+        "reference_model_revision": "1d952420fba87f3c6dee4f240de0f1a0fbc790e3"
+      },
+      "tokenizer": null,
+      "license": {"id": "Apache-2.0", "deployment": "allowed_after_admission"},
+      "pin_complete": true,
+      "overall_status": "native_valid",
+      "role": "native_point_quantile_forecast_teacher",
+      "ohlcv_mode": "channel_independent_ohlcv",
+      "native_context": {"minimum": 1, "maximum": "model_config", "selection": "official_wrapper"},
+      "native_preprocessing": "raw_series_official_normalization_frequency_agnostic_no_external_frequency_input",
+      "official_outputs": {"forecast": "native_point_and_quantiles", "representation": null},
+      "adaptation_routes": ["official_lora_forecast", "supervised_barrier_experimental_task"],
+      "tracks": {
+        "F": {"status": "native_valid", "reason": "official TimesFM wrapper and pinned Transformers wrapper matched for point and raw quantile outputs", "evidence_id": "timesfm25:F:2026-07-18"},
+        "R": {"status": "blocked", "reason": "no_official_representation_contract"},
+        "C": {"status": "blocked", "reason": "last_hidden_state_pooling_is_custom"},
+        "B": {"status": "blocked", "reason": "forecast_features_first_after_track_f_admission"},
+        "D": {"status": "blocked", "reason": "not_a_downstream_only_model"}
+      }
+    },
+    "ttm_r2": {
+      "family": "ttm",
+      "model_id": "ibm-granite/granite-timeseries-ttm-r2",
+      "model_revision": "b972f0c22190b7502764526004d16e2b4ed39e8c",
+      "source_url": "https://github.com/ibm-granite/granite-tsfm.git",
+      "source_revision": "743e709b9edbfe1b59e31adb1621bdc98a57b91b",
+      "package": {"name": "granite-tsfm_source_checkout", "version": "743e709b9edbfe1b59e31adb1621bdc98a57b91b"},
+      "tokenizer": null,
+      "license": {"id": "Apache-2.0", "deployment": "allowed_after_admission"},
+      "pin_complete": true,
+      "overall_status": "native_valid",
+      "role": "native_forecast_after_checkpoint_selection_repair",
+      "ohlcv_mode": "channel_independent_ohlcv",
+      "native_context": {"minimum": 512, "maximum": 512, "selection": "official_context_horizon_frequency_selector"},
+      "native_preprocessing": "official_scaler_frequency_prefix_channel_independent_no_artificial_padding",
+      "official_outputs": {"forecast": "native_point_forecast", "representation": null},
+      "selector": {
+        "official_model_key": "512-48-ft-r2.1",
+        "exact_revision": "b972f0c22190b7502764526004d16e2b4ed39e8c",
+        "context_length": 512,
+        "native_prediction_length": 48,
+        "prediction_filter_length": 16,
+        "resolution_prefix_tuning": true,
+        "forecast_channel_mixing": false
+      },
+      "adaptation_routes": [],
+      "tracks": {
+        "F": {"status": "native_valid", "reason": "official selector, raw native scaler, frequency prefix, no-padding, and channel-independence parity passed", "evidence_id": "ttm_r2:F:2026-07-18"},
+        "R": {"status": "blocked", "reason": "no_official_representation_contract"},
+        "C": {"status": "blocked", "reason": "backbone_hidden_state_pooling_blocked_until_forecast_parity"},
+        "B": {"status": "blocked", "reason": "blocked_until_track_f_parity"},
+        "D": {"status": "blocked", "reason": "not_a_downstream_only_model"}
+      }
+    },
+    "moirai2_small": {
+      "family": "moirai2",
+      "model_id": "Salesforce/moirai-2.0-R-small",
+      "model_revision": "30f43ff08c8494f4943ae1521e9d4e94a0fbb389",
+      "source_url": "https://github.com/SalesforceAIResearch/uni2ts.git",
+      "source_revision": "cfd46d4510ed8896f263116f32928eede05b0a75",
+      "package": {"name": "uni2ts_source_checkout", "version": "cfd46d4510ed8896f263116f32928eede05b0a75"},
+      "tokenizer": null,
+      "license": {"id": "CC-BY-NC-4.0", "deployment": "research_only_noncommercial"},
+      "pin_complete": true,
+      "overall_status": "research_only",
+      "role": "research_only_native_packed_multivariate_forecast",
+      "ohlcv_mode": "packed_joint_multivariate",
+      "native_context": {"minimum": 1, "maximum": "model_config", "selection": "official_packed_input"},
+      "native_preprocessing": "official_packed_multivariate_scaler_masks_and_token_indexing",
+      "official_outputs": {"forecast": "native_quantiles", "representation": null},
+      "adaptation_routes": ["verified_native_loss_research_only", "supervised_barrier_research_only"],
+      "tracks": {
+        "F": {"status": "research_only", "reason": "packed native quantiles passed after masked-value zero fill; CC-BY-NC-4.0 restricts use to noncommercial research", "evidence_id": "moirai2_small:F:2026-07-18"},
+        "R": {"status": "blocked", "reason": "no_official_representation_contract"},
+        "C": {"status": "blocked", "reason": "token_mean_pooling_is_custom"},
+        "B": {"status": "blocked", "reason": "research_only_and_requires_track_f_admission"},
+        "D": {"status": "blocked", "reason": "not_a_downstream_only_model"}
+      }
+    },
+    "toto2_22m": {
+      "family": "toto2",
+      "model_id": "Datadog/Toto-2.0-22m",
+      "model_revision": "685e4ae3e2be8d8998025e53dd98e7fdcb296a89",
+      "source_url": "https://github.com/DataDog/toto.git",
+      "source_revision": "44ea4e88852228039564aa3e76fac26aafac0803",
+      "package": {"name": "toto_source_checkout", "version": "44ea4e88852228039564aa3e76fac26aafac0803"},
+      "tokenizer": null,
+      "license": {"id": "Apache-2.0", "deployment": "allowed_after_admission"},
+      "pin_complete": true,
+      "overall_status": "native_valid",
+      "role": "zero_shot_joint_multivariate_forecast_only",
+      "ohlcv_mode": "joint_multivariate_masks_and_group_ids",
+      "native_context": {"minimum": 1, "maximum": "model_config", "selection": "official_masked_input"},
+      "native_preprocessing": "official_internal_scaling_masks_group_ids_decode_block_size_none_for_short_horizon",
+      "official_outputs": {"forecast": "native_quantiles", "representation": null},
+      "adaptation_routes": [],
+      "tracks": {
+        "F": {"status": "native_valid", "reason": "zero-shot quantile, mask, group-ID, native scaling, and short-horizon decode parity passed", "evidence_id": "toto2_22m:F:2026-07-18"},
+        "R": {"status": "blocked", "reason": "no_official_representation_contract"},
+        "C": {"status": "blocked", "reason": "internal_state_mean_is_custom_and_not_admitted"},
+        "B": {"status": "blocked", "reason": "forecast_features_only_after_track_f_admission"},
+        "D": {"status": "blocked", "reason": "not_a_downstream_only_model"}
+      }
+    },
+    "sundial_base": {
+      "family": "sundial",
+      "model_id": "thuml/sundial-base-128m",
+      "model_revision": "3212e42564493f520593e5414af4367fc4b49226",
+      "source_url": "https://github.com/thuml/Sundial.git",
+      "source_revision": "3ef03b8c3804f64a506e57101a173470040aaece",
+      "package": {"name": "isolated_sundial_environment", "version": "transformers==4.40.1;torch==2.10.0;huggingface-hub==0.36.2"},
+      "tokenizer": null,
+      "license": {"id": "Apache-2.0", "deployment": "allowed_after_admission"},
+      "pin_complete": true,
+      "overall_status": "native_valid",
+      "role": "isolated_zero_shot_forecast_only",
+      "ohlcv_mode": "channel_independent_univariate",
+      "native_context": {"minimum": 1, "maximum": "model_config", "selection": "isolated_official_pipeline"},
+      "native_preprocessing": "official_normalization_sampling_and_inverse_transform_in_isolated_environment",
+      "official_outputs": {"forecast": "finite_seeded_samples", "representation": null},
+      "adaptation_routes": [],
+      "tracks": {
+        "F": {"status": "native_valid", "reason": "isolated official generator passed seeded finite-sample and inverse-scaling parity", "evidence_id": "sundial_base:F:2026-07-18"},
+        "R": {"status": "blocked", "reason": "hidden_state_extraction_numerically_invalid_and_excluded"},
+        "C": {"status": "blocked", "reason": "hidden_states_excluded"},
+        "B": {"status": "blocked", "reason": "forecast_features_only_after_track_f_admission"},
+        "D": {"status": "blocked", "reason": "not_a_downstream_only_model"}
+      }
+    },
+    "tabpfn_ts": {
+      "family": "tabpfn_ts",
+      "model_id": "tabpfn-v3-regressor-v3_20260506_timeseries.ckpt",
+      "model_revision": "license_gated_unresolved_sha256",
+      "source_url": "https://github.com/PriorLabs/tabpfn-time-series.git",
+      "source_revision": "a756ae3fb3af82c903c39e1cd71864ff5252bc4d",
+      "package": {"name": "tabpfn_time_series", "version": "1.1.0-compatible", "requires": "tabpfn>=8.0.0"},
+      "tokenizer": null,
+      "license": {"id": "Apache-2.0/model-terms", "deployment": "blocked_until_terms_and_version_verified"},
+      "pin_complete": false,
+      "overall_status": "blocked",
+      "role": "nested_downstream_in_context_control",
+      "ohlcv_mode": "decomposed_univariate_or_tabular_support_set",
+      "native_context": {"minimum": null, "maximum": null, "selection": "support_set_inside_training_fold"},
+      "native_preprocessing": "nested_support_set_fit_inside_each_training_fold",
+      "official_outputs": {"forecast": "in_context_control", "representation": null},
+      "adaptation_routes": [],
+      "tracks": {
+        "F": {"status": "blocked", "reason": "control_only_not_native_persistent_forecast_training"},
+        "R": {"status": "blocked", "reason": "no_official_representation_contract"},
+        "C": {"status": "blocked", "reason": "not_applicable"},
+        "B": {"status": "blocked", "reason": "downstream_control_only"},
+        "D": {"status": "blocked", "reason": "fold-containment guard is repaired, but local TabPFN-TS-3 terms, artifact hash, and native output parity remain unavailable", "evidence_id": "tabpfn_ts:D:2026-07-18"}
+      }
+    }
+  },
+  "historical_dispositions": {
+    "kronos_mini": {
+      "default_status": "invalid_contract",
+      "reason": "historical_runs_used_Kronos-Tokenizer-base_instead_of_Kronos-Tokenizer-2k"
+    },
+    "kronos_small": {
+      "default_status": "configuration_specific",
+      "reason": "forecast_outputs_may_be_retained_but_hidden_state_pooling_is_not_official_representation"
+    },
+    "ttm_r2": {
+      "default_status": "invalid_contract",
+      "reason": "historical_runs_bypassed_a_proven_selector_contract_enabled_a_random_forecast_channel_mixer_and_representation_views_appended_256_artificial_normalized_zeros"
+    },
+    "toto2_22m": {
+      "default_status": "invalid_contract",
+      "reason": "historical_trained_stages_used_an_unsupported_custom_adaptation_surface"
+    },
+    "sundial_base": {
+      "default_status": "blocked",
+      "reason": "hidden_state_extraction_was_non_finite_or_numerically_invalid"
+    },
+    "mantis_v1": {
+      "default_status": "configuration_specific",
+      "reason": "external_per_window_channel_zscore_is_not_canonical_raw_Mantis_preprocessing"
+    },
+    "mantis_v2": {
+      "default_status": "configuration_specific",
+      "reason": "external_zscore_and_final_cls_are_not_the_primary_enhanced_V2_contract"
+    },
+    "moment_small": {
+      "default_status": "configuration_specific",
+      "reason": "historical_per_channel_pooled_concat_is_not_yet_proven_as_official_representation"
+    },
+    "chronos_v1": {
+      "default_status": "configuration_specific",
+      "reason": "arbitrary_hidden_state_pooling_cannot_be_presented_as_official_representation"
+    },
+    "chronos_bolt": {
+      "default_status": "configuration_specific",
+      "reason": "pooling_and_channel_fusion_require_exact_embed_API_parity"
+    },
+    "chronos_v2": {
+      "default_status": "configuration_specific",
+      "reason": "custom_token_pooling_requires_separate_track_C_reporting"
+    },
+    "timesfm25": {
+      "default_status": "configuration_specific",
+      "reason": "hidden_state_mean_is_custom_feature_transfer"
+    },
+    "moirai2_small": {
+      "default_status": "research_only",
+      "reason": "CC-BY-NC_weights_and_custom_token_pooling_prohibit_deployment_native_representation_claims"
+    },
+    "tabpfn_ts": {
+      "default_status": "blocked",
+      "reason": "downstream_only_control_not_a_staged_encoder_arm"
+    }
+  }
+}

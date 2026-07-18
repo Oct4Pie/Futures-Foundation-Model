@@ -25,6 +25,15 @@ from futures_foundation.finetune.kronos_eval import (
     build_forecast_windows, evaluate_predictions, window_fingerprint,
 )
 from futures_foundation.finetune import kronos_eval, ssl_data
+from futures_foundation.finetune.foundation_roster import get_arm
+from futures_foundation.finetune.native_contracts import (
+    add_admission_argument,
+    require_admission_from_args,
+    technical_runtime_contract,
+    validate_identity,
+    validate_runtime_contract,
+)
+from scripts.predict_foundation_forecasts import _forecast_runtime_facts
 
 
 KRONOS_SOURCE_REVISION = "67b630e67f6a18c9e9be918d9b4337c960db1e9a"
@@ -176,6 +185,43 @@ def _predict(predictor, windows, *, cache_dir, signature, batch_size, horizon,
 
 
 def benchmark(args):
+    validate_identity(
+        args.arm,
+        model_id=args.model_id,
+        model_revision=args.model_revision,
+        source_revision=args.source_revision,
+        tokenizer_id=args.tokenizer_id,
+        tokenizer_revision=args.tokenizer_revision,
+    )
+    admission = require_admission_from_args(
+        args, arm_key=args.arm, track="F", route=None, require_training=False,
+    )
+    decoding = {
+        "temperature": float(args.temperature),
+        "top_k": int(args.top_k),
+        "top_p": float(args.top_p),
+        "sample_count": int(args.sample_count),
+    }
+    runtime_contract = validate_runtime_contract(
+        args.arm, "F", _forecast_runtime_facts(
+            args.arm,
+            context_length=args.context,
+            prediction_length=args.horizon,
+            dtype="float32",
+            samples=args.sample_count,
+            kronos_decoding=decoding,
+        ),
+    )
+    if decoding not in runtime_contract["decoding"]:
+        raise ValueError(
+            f"Kronos decoding is outside the evidence-covered configurations: {decoding}"
+        )
+    if args.input_mode != "ohlcv":
+        raise ValueError("current Kronos native evidence covers joint OHLCVA input only")
+    timeframe_minutes = sorted(int(value.removesuffix("min")) for value in args.timeframes)
+    unsupported = sorted(set(timeframe_minutes) - set(runtime_contract["timeframes_minutes"]))
+    if unsupported:
+        raise ValueError(f"Kronos timeframe minutes are outside technical evidence: {unsupported}")
     repo, source = _validate_source(args.kronos_repo, args.source_revision)
     windows = build_forecast_windows(
         args.data_dir, args.tickers, args.timeframes, context=args.context,
@@ -186,6 +232,14 @@ def benchmark(args):
     fingerprint = window_fingerprint(windows)
     config = {
         "schema_version": "ffm_kronos_zero_shot_v1",
+        "admission": {
+            "integrity": admission["integrity"],
+            "registry_sha256": admission["registry_sha256"],
+            "dossier_sha256": admission["dossier_sha256"],
+            "evidence_registry_sha256": admission["evidence_registry_sha256"],
+            "technical_evidence_id": admission["technical_evidence_id"],
+        },
+        "technical_runtime_contract": technical_runtime_contract(args.arm, "F"),
         "window_fingerprint": fingerprint,
         "source_revision": args.source_revision,
         "source_sha256": _sha256(source),
@@ -286,16 +340,24 @@ def _parser():
     p.add_argument("--sample-count", type=int, default=1)
     p.add_argument("--input-mode", choices=("ohlcv", "ohlc"), default="ohlcv")
     p.add_argument("--seed", type=int, default=123)
+    p.add_argument("--arm", choices=("kronos_mini", "kronos_small"),
+                   default="kronos_small")
     p.add_argument("--source-revision", default=KRONOS_SOURCE_REVISION)
-    p.add_argument("--model-id", default=MODEL_ID)
-    p.add_argument("--model-revision", default=MODEL_REVISION)
-    p.add_argument("--tokenizer-id", default=TOKENIZER_ID)
-    p.add_argument("--tokenizer-revision", default=TOKENIZER_REVISION)
+    p.add_argument("--model-id")
+    p.add_argument("--model-revision")
+    p.add_argument("--tokenizer-id")
+    p.add_argument("--tokenizer-revision")
+    add_admission_argument(p)
     return p
 
 
 def main():
     args = _parser().parse_args()
+    arm = get_arm(args.arm)
+    args.model_id = args.model_id or arm.model_id
+    args.model_revision = args.model_revision or arm.model_revision
+    args.tokenizer_id = args.tokenizer_id or arm.tokenizer_id
+    args.tokenizer_revision = args.tokenizer_revision or arm.tokenizer_revision
     args.tickers = tuple(x.strip() for x in args.tickers.split(",") if x.strip())
     args.timeframes = tuple(x.strip() for x in args.timeframes.split(",") if x.strip())
     benchmark(args)

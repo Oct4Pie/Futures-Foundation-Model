@@ -26,6 +26,9 @@ if str(ROOT) not in sys.path:
 
 from futures_foundation.finetune import tournament, tournament_data
 from futures_foundation.finetune.foundation_roster import get_arm
+from futures_foundation.finetune.native_contracts import (
+    add_admission_argument, require_admission_from_args,
+)
 from futures_foundation.finetune.tournament import (
     FORECAST_HORIZON, MAX_CONTEXT, OOS_START, TRAIN_START, VALIDATION_START,
 )
@@ -217,6 +220,10 @@ def _archive_sources(output, args, source):
 def train(args):
     import torch
     arm = get_arm(args.family)
+    require_admission_from_args(
+        args, arm_key=args.family, track="F",
+        route="historical_universal_stage_chain", require_training=True,
+    )
     if (args.model_id, args.model_revision, args.source_revision) != (
             arm.model_id, arm.model_revision, arm.source_revision):
         raise ValueError("model/source pins do not match admitted arm")
@@ -440,6 +447,7 @@ def _parser():
     parser.add_argument("--stop-after-step", type=int)
     parser.add_argument("--model-id"); parser.add_argument("--model-revision")
     parser.add_argument("--source-revision")
+    add_admission_argument(parser)
     return parser
 
 

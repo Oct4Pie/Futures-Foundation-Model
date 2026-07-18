@@ -19,6 +19,9 @@ if str(ROOT) not in sys.path:
 
 from futures_foundation.finetune import tournament, tournament_data
 from futures_foundation.finetune.foundation_roster import get_arm
+from futures_foundation.finetune.native_contracts import (
+    add_admission_argument, require_admission_from_args,
+)
 from futures_foundation.finetune.tournament import (
     OOS_START, TRAIN_START, VALIDATION_START,
 )
@@ -31,7 +34,7 @@ from scripts.train_ttm_tournament import (
     _normalize_parent, _sha256, _snapshot, _validate_source,
 )
 
-PAIR_LENGTH = CONTEXT
+PAIR_LENGTH = CONTEXT * 2
 
 
 def _seed(seed):
@@ -55,6 +58,22 @@ def _encode(model, context, freq):
     if output is None or output.ndim != 4:
         raise RuntimeError("TTM did not expose [batch,channel,patch,feature] backbone states")
     return output.mean(dim=2).flatten(1)
+
+
+def _native_contrastive_views(raw):
+    """Return two real, full-length native TTM contexts with no synthetic padding."""
+    raw = np.asarray(raw, np.float32)
+    expected = (PAIR_LENGTH, 5)
+    if raw.ndim != 3 or raw.shape[1:] != expected:
+        raise ValueError(
+            f"TTM contrastive parents must have shape [batch,{PAIR_LENGTH},5], "
+            f"got {raw.shape}"
+        )
+    first = _normalize_parent(raw[:, :CONTEXT], 0, CONTEXT)[0]
+    second = _normalize_parent(raw[:, CONTEXT:], 0, CONTEXT)[0]
+    if first.shape[1:] != (CONTEXT, 5) or second.shape[1:] != (CONTEXT, 5):
+        raise RuntimeError("TTM native views lost the checkpoint context contract")
+    return first, second
 
 
 def _load_parent(path, arm, model):
@@ -85,6 +104,10 @@ def _archive_sources(output):
 def train(args):
     import torch
     arm = get_arm("ttm_r2")
+    require_admission_from_args(
+        args, arm_key="ttm_r2", track="C",
+        route="historical_hidden_state_contrastive", require_training=True,
+    )
     if (args.model_id, args.model_revision, args.source_revision) != (
             arm.model_id, arm.model_revision, arm.source_revision):
         raise ValueError("TTM model/source pins do not match the admitted arm")
@@ -107,7 +130,7 @@ def train(args):
         val_starts, groups["val_bounds"], args.val_batches * args.batch_size,
         args.validation_seed,
     )
-    model = _load_model(args).to(args.device)
+    model = _load_model(args, source=source).to(args.device)
     parent = _load_parent(args.warm_checkpoint, arm, model)
     with torch.no_grad():
         probe = torch.zeros(2, CONTEXT, 5, device=args.device)
@@ -137,11 +160,7 @@ def train(args):
     def loss_for(schedule, schedule_groups, step):
         lo = step * args.batch_size
         raw = gather_parent(big, schedule[lo:lo + args.batch_size], PAIR_LENGTH)
-        half = CONTEXT // 2
-        first = _normalize_parent(raw[:, :half], 0, half)[0]
-        second = _normalize_parent(raw[:, half:], 0, half)[0]
-        first = np.pad(first, ((0, 0), (0, half), (0, 0)))
-        second = np.pad(second, ((0, 0), (0, half), (0, 0)))
+        first, second = _native_contrastive_views(raw)
         freq = torch.as_tensor(
             _frequency_tokens(schedule_groups[lo:lo + args.batch_size], streams),
             device=args.device,
@@ -198,8 +217,8 @@ def train(args):
                     "projection_state": _snapshot(projection), "arm": arm.manifest(),
                     "parent": parent,
                     "input": {"context": CONTEXT, "channels": "joint_ohlcv_representation",
-                              "positive_pair": "adjacent_nonoverlapping_256_bar_views",
-                              "view_padding": "256_trailing_normalized_zeros"},
+                              "positive_pair": "adjacent_nonoverlapping_512_bar_views",
+                              "view_padding": "none"},
                 })
             _atomic_save(state_path, {
                 "schema_version": "ffm_ttm_stage2_training_state_v1", "step": completed,
@@ -263,6 +282,7 @@ def _parser():
     parser.add_argument("--source-revision", default=arm.source_revision)
     parser.add_argument("--model-id", default=arm.model_id)
     parser.add_argument("--model-revision", default=arm.model_revision)
+    add_admission_argument(parser)
     return parser
 
 

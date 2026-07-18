@@ -28,6 +28,7 @@ from futures_foundation.finetune.downstream_sample import (
     purged_interval_splits,
 )
 from futures_foundation.finetune.downstream_trading import load_policy_events
+from futures_foundation.finetune.native_contracts import verify_admission_report
 from scripts.benchmark_downstream_embedding import load_bound_embedding, reduce_embedding_fold
 
 
@@ -568,6 +569,23 @@ def choose_calibrated_threshold(
 
 
 def run(args) -> dict:
+    embedding_paths = tuple(Path(value).resolve() for value in args.embedding)
+    if len(args.admission_report) != len(embedding_paths):
+        raise ValueError("one --admission-report is required for each --embedding in order")
+    embedding_admissions = {}
+    for path, report_path in zip(embedding_paths, args.admission_report):
+        sidecar = json.loads(Path(str(path) + ".manifest.json").read_text())
+        stamped = sidecar.get("admission")
+        if not isinstance(stamped, dict):
+            raise ValueError(f"embedding lacks native-admission provenance: {path}")
+        admission = verify_admission_report(
+            report_path, arm_key=str(sidecar.get("arm")),
+            track=str(stamped.get("track")), route=stamped.get("route"),
+            require_training=False,
+        )
+        if admission["integrity"] != stamped.get("integrity"):
+            raise ValueError(f"embedding admission differs from supplied report: {path}")
+        embedding_admissions[str(path)] = admission
     sample, sample_manifest = load_balanced_sample(args.sample)
     selection, selection_manifest = load_row_selection(
         args.row_selection, sample_manifest=sample_manifest,
@@ -581,7 +599,6 @@ def run(args) -> dict:
     if not np.all(np.isin(events["context_row"], selected_rows)):
         raise ValueError("policy event is outside the sealed row selection")
 
-    embedding_paths = tuple(Path(value).resolve() for value in args.embedding)
     embeddings, embedding_manifests = {}, {}
     for path in embedding_paths:
         value, manifest = load_bound_embedding(
@@ -1000,8 +1017,15 @@ def run(args) -> dict:
             ),
         },
         "embeddings": {
-            name: {"path": str(embedding_paths[index]),
-                   "sha256": embedding_manifests[name]["artifact"]["sha256"]}
+            name: {
+                "path": str(embedding_paths[index]),
+                "sha256": embedding_manifests[name]["artifact"]["sha256"],
+                "admission": {
+                    "integrity": embedding_admissions[str(embedding_paths[index])]["integrity"],
+                    "registry_sha256": embedding_admissions[str(embedding_paths[index])]["registry_sha256"],
+                    "dossier_sha256": embedding_admissions[str(embedding_paths[index])]["dossier_sha256"],
+                },
+            }
             for index, name in enumerate(embeddings)
         },
         "fold_contracts": fold_contracts, "inner_fold_contracts": inner_fold_contracts,
@@ -1031,6 +1055,8 @@ def main() -> None:
         "--policy-events", default="output/foundation_tournament/downstream_gate_v1/screen/policy_events.npz",
     )
     parser.add_argument("--embedding", action="append", default=[])
+    parser.add_argument("--admission-report", action="append", default=[],
+                        help="repeat once per embedding in the same order")
     parser.add_argument(
         "--output-dir", default="output/foundation_tournament/downstream_gate_v1/screen/trading",
     )

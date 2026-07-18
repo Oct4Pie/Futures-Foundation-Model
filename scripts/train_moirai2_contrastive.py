@@ -19,6 +19,9 @@ if str(ROOT) not in sys.path:
 
 from futures_foundation.finetune import tournament, tournament_data
 from futures_foundation.finetune.foundation_roster import get_arm
+from futures_foundation.finetune.native_contracts import (
+    add_admission_argument, require_admission_from_args,
+)
 from futures_foundation.finetune.tournament import (
     MAX_CONTEXT, OOS_START, TRAIN_START, VALIDATION_START,
 )
@@ -99,6 +102,10 @@ def _archive_sources(output):
 def train(args):
     import torch
     arm = get_arm("moirai2_small")
+    require_admission_from_args(
+        args, arm_key="moirai2_small", track="C",
+        route="historical_hidden_state_contrastive", require_training=True,
+    )
     if (args.model_id, args.model_revision, args.source_revision) != (
             arm.model_id, arm.model_revision, arm.source_revision):
         raise ValueError("Moirai-2 model/source pins do not match the admitted arm")
@@ -260,6 +267,7 @@ def _parser():
     parser.add_argument("--source-revision", default=arm.source_revision)
     parser.add_argument("--model-id", default=arm.model_id)
     parser.add_argument("--model-revision", default=arm.model_revision)
+    add_admission_argument(parser)
     return parser
 
 

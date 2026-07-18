@@ -27,6 +27,9 @@ if str(ROOT) not in sys.path:
 
 from futures_foundation.finetune import ssl_probe
 from futures_foundation.finetune.foundation_roster import ARMS, get_arm
+from futures_foundation.finetune.native_contracts import (
+    add_admission_argument, require_admission_from_args,
+)
 from futures_foundation.finetune.kronos_eval import (
     build_forecast_windows, window_fingerprint,
 )
@@ -199,8 +202,23 @@ def _save_embedding(args, arm, stage, checkpoint, embedding, config, window_mani
         raise ValueError(f"{arm}/{stage} returned invalid embeddings {embedding.shape}")
     output = Path(args.output_dir).resolve() / "embeddings" / arm / f"{stage}.npz"
     checkpoint_sha = _sha256(checkpoint) if checkpoint else None
+    row_index = getattr(args, "row_index", None)
+    selection_manifest = getattr(args, "row_selection_manifest", None)
+    context_manifest = getattr(args, "context_manifest", None)
+    if row_index is not None and (selection_manifest is None or context_manifest is None):
+        raise ValueError("row-bound embeddings require selection and context manifests")
+    admission = getattr(args, "native_admission", None)
+    if not isinstance(admission, dict):
+        raise ValueError("embedding extraction requires verified native admission metadata")
     metadata = {
         "schema_version": SCHEMA, "arm": arm, "stage": stage,
+        "admission": {
+            "integrity": admission["integrity"],
+            "registry_sha256": admission["registry_sha256"],
+            "dossier_sha256": admission["dossier_sha256"],
+            "track": admission["track"],
+            "route": admission["route"],
+        },
         "checkpoint": str(Path(checkpoint).resolve()) if checkpoint else None,
         "checkpoint_sha256": checkpoint_sha,
         "window_fingerprint": window_manifest["window_fingerprint"],
@@ -208,15 +226,10 @@ def _save_embedding(args, arm, stage, checkpoint, embedding, config, window_mani
         "shape": list(embedding.shape), "config": config, "oos_read": False,
     }
     values = {"embedding": np.asarray(embedding, np.float32)}
-    row_index = getattr(args, "row_index", None)
     if row_index is not None:
         row_index = np.asarray(row_index, np.int32)
         if row_index.shape != (len(embedding),) or len(np.unique(row_index)) != len(row_index):
             raise ValueError("embedding row identity must be unique and aligned")
-        selection_manifest = getattr(args, "row_selection_manifest", None)
-        context_manifest = getattr(args, "context_manifest", None)
-        if selection_manifest is None or context_manifest is None:
-            raise ValueError("row-bound embeddings require selection and context manifests")
         metadata["row_selection"] = {
             "sha256": selection_manifest["artifact"]["sha256"],
             "content_fingerprint": selection_manifest["content_fingerprint"],
@@ -247,9 +260,10 @@ def _extract_kronos(args, arm, stages, windows, manifest):
     )
     admitted = get_arm(arm)
     ns = SimpleNamespace(
-        tokenizer_id="NeoQuasar/Kronos-Tokenizer-base",
-        tokenizer_revision="0e0117387f39004a9016484a186a908917e22426",
-        model_id=admitted.model_id, model_revision=admitted.model_revision,
+        tokenizer_id=admitted.tokenizer_id,
+        tokenizer_revision=admitted.tokenizer_revision,
+        model_id=admitted.model_id,
+        model_revision=admitted.model_revision,
     )
     repo = Path(args.kronos_repo).resolve()
     if _git_revision(repo) != admitted.source_revision:
@@ -401,12 +415,22 @@ def _extract_ttm(args, arm, stages, windows, manifest):
     sys.path.insert(0, str(repo))
     try:
         from scripts.train_ttm_contrastive import _encode
-        from scripts.train_ttm_tournament import FREQUENCY_TOKEN, _load_model, _normalize_parent
+        from scripts.train_ttm_tournament import (
+            CONTEXT as TTM_CONTEXT,
+            FREQUENCY_TOKEN,
+            _load_model,
+            _normalize_parent,
+        )
         admitted = get_arm(arm)
         ns = SimpleNamespace(model_id=admitted.model_id, model_revision=admitted.model_revision)
+        if windows["context"].shape[1] != TTM_CONTEXT:
+            raise ValueError(
+                "TTM native extraction requires 512 real causal bars; rebuild the shared "
+                f"windows instead of padding {windows['context'].shape[1]} bars"
+            )
         frequency = np.asarray([FREQUENCY_TOKEN[str(tf)] for tf in windows["timeframe"]])
         for stage in stages:
-            model = _load_model(ns).to(args.device).eval()
+            model = _load_model(ns, source=repo).to(args.device).eval()
             checkpoint = None if stage == "vanilla" else _checkpoint_path(args, arm, stage)
             if checkpoint:
                 bundle = _load_typed_bundle(
@@ -417,22 +441,22 @@ def _extract_ttm(args, arm, stages, windows, manifest):
             pieces = []
             with torch.inference_mode():
                 for lo, hi, context in _batched(windows["context"], args.ttm_batch):
-                    normalized = _normalize_parent(context, 0, CONTEXT)[0]
-                    padded = np.pad(normalized, ((0, 0), (0, 512 - CONTEXT), (0, 0)))
+                    normalized = _normalize_parent(context, 0, TTM_CONTEXT)[0]
                     with torch.autocast(
                         "cuda", dtype=torch.bfloat16,
                         enabled=args.device.startswith("cuda") and getattr(args, "amp", True),
                     ):
                         value = _encode(
-                            model, torch.as_tensor(padded, device=args.device),
+                            model, torch.as_tensor(normalized, device=args.device),
                             torch.as_tensor(frequency[lo:hi], device=args.device),
                         )
                     pieces.append(value.float().cpu().numpy())
                     print(f"[{arm}] {stage} {lo}:{hi}", flush=True)
             _save_embedding(args, arm, stage, checkpoint, np.concatenate(pieces), {
-                "pooling": "native backbone patch mean then OHLCV concatenate",
-                "input": "causally normalized 256 bars plus 256 trailing zeros",
-                "projector": "excluded", "context": CONTEXT,
+                "pooling": "custom backbone patch mean then OHLCV concatenate",
+                "input": "512 real causal bars with official scaler and frequency prefix",
+                "projector": "excluded", "context": TTM_CONTEXT,
+                "track": "C", "native_forecast_required_first": True,
             }, manifest)
             del model; gc.collect(); torch.cuda.empty_cache()
     finally:
@@ -584,6 +608,11 @@ EXTRACTORS = {
 
 
 def extract(args):
+    args.native_admission = require_admission_from_args(
+        args, arm_key=args.arm, track="C",
+        route="historical_custom_representation_extraction",
+        require_training=False,
+    )
     windows, manifest = _load_windows(args.windows)
     stages = tuple(part.strip() for part in args.stages.split(",") if part.strip())
     unknown = set(stages) - {"vanilla", "stage1", "stage2", "stage3"}
@@ -799,6 +828,7 @@ def _parser():
     parser.add_argument("--mantis-batch", type=int, default=256)
     parser.add_argument("--toto-batch", type=int, default=256)
     parser.add_argument("--kronos-clip", type=float, default=3.0)
+    add_admission_argument(parser)
     return parser
 
 
