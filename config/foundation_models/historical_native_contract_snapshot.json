@@ -6,7 +6,7 @@
     "native_ranking_eligible_count": 0,
     "registered_model_count": 14
   },
-  "evidence_sha256": "494d435d3c39742ca721043c1d24a393dcf387bb17df555f69e8fe38783b6809",
+  "evidence_sha256": "f05270be3039d6f096cfa82a6fa353323eba94e9a8ca1d7d3ceeaacaee64600a",
   "methodology": "Historical scores remain evidence under their exact adapter contracts. No row in this snapshot is eligible for a native cross-family ranking.",
   "models": {
     "chronos_bolt": {
@@ -164,7 +164,7 @@
       "status": "invalid_contract"
     }
   },
-  "registry_sha256": "3ea14b86ee50ac89c3eb27d9413d8bd45494b2fb2c2dbae6ab7a669ecd16edc0",
+  "registry_sha256": "28b87acf8f4a5ad7ea680b85856b2f0613f948f28e4960b5d4e29b860353b63f",
   "schema_version": "ffm_historical_native_contract_snapshot_v1",
   "source_index": {
     "created_utc": "2026-07-16T03:06:39.661324+00:00",

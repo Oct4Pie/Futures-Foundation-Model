@@ -1,6 +1,6 @@
 {
   "schema_version": "ffm_native_contract_registry_v1",
-  "methodology_commit": "fa1f933023adba165b572f0ef5a1076094c6940a",
+  "methodology_commit": "753be8bcbcb412c558f607e41010afe784561534",
   "evidence_schema": "ffm_native_contract_evidence_v1",
   "native_parity_tolerances": {"atol": 0.00001, "rtol": 0.00001},
   "status_vocabulary": [
