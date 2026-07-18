@@ -68,7 +68,7 @@
     }
   },
   "generated_utc": "2026-07-18T05:53:54Z",
-  "methodology_commit": "fa0e3774e0c77029c92d9f975238ae5458c45f6d",
+  "methodology_commit": "8e2bd47d8fd6dc333dfa74ad0eea3d3613e63469",
   "policy": {
     "aggregate_schema": "ffm_native_parity_aggregate_v1",
     "complete_for_installation": true,
