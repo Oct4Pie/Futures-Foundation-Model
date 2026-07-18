@@ -12,7 +12,7 @@ factor, win rate, model prediction or holdout outcome may influence this matrix 
 ## Current evidence
 
 - Pilot producer: AlphaForge `0a955b4`.
-- Scale-safety branch: AlphaForge `corpus-v3-scale-safety` at local commit `27cfb0c`.
+- Scale-safety branch: AlphaForge `corpus-v3-scale-safety` at local commit `2a39ed5`.
 - Scale-safety exporter changes: full verification before atomic publication, destination-keyed
   staging, stale-stage scavenging under the exact destination lock, and post-rename recovery.
 - Process tests: 14 exporter tests and 20 exporter-plus-coverage tests pass.
@@ -20,6 +20,25 @@ factor, win rate, model prediction or holdout outcome may influence this matrix 
   strict non-finite-JSON rejection and lexical/final symlink rejection to the earlier reviewed
   mechanism.
   Two independent adversarial reviews cleared the implementation after trust-boundary repairs.
+- AlphaForge `8afa458` replaces path reopens with component-wise no-follow, descriptor-backed raw
+  source consumption. Two live red-team failures were repaired: ancestor-directory replacement and
+  lexical `..` receipt paths. The narrow mechanism passes 43 focused exporter/coverage tests,
+  including boundary rejection before open, same-day non-overlap no-open, inode and namespace
+  mutation, special files, descriptor cleanup and warm-cache no-raw access. It is not production
+  admitted because the legacy lake-wide manifest still consumes unrelated/future path metadata.
+- AlphaForge `15f372b` adds a provider-metadata-only candidate-universe verifier. It passed a
+  three-round adversarial review only after exact bundle-role closure, receipt-to-response pairing,
+  real path-based reopen, manifest/artifact/boundary identity continuity, prohibited-root no-follow
+  checks and aggregate resource limits were added. Its synthetic receipts, claimed upstream hashes
+  and caller-supplied prohibited roots force `production_admitted=false`; it is mechanism evidence
+  only.
+- AlphaForge `2a39ed5` adds detached producer-governance and split/use verification. It freezes the
+  exact 2011-01-01 through 2026-07-01 protocol using **exchange session day**, not UTC calendar day.
+  The first draft was rejected because a July 1 holdout session begins on June 30 UTC. The repaired
+  evaluator path-reopens both parents, blocks all holdout uses, and never declares a raw leaf safe;
+  an eligible request returns `requires_session_denominator`. Its 39 focused tests and independent
+  re-review pass. Provider identity, immutable publication, official session geometry and
+  materialization authority remain explicitly unproved.
 - Evidence commit `27cfb0c` seals two independently reviewed, fail-closed snapshots. CME official
   v2 binds 25 inherited responses and 28 scoped notice/report facts; every fact is explicitly
   `production_admitted=false` (manifest SHA-256
@@ -42,6 +61,11 @@ factor, win rate, model prediction or holdout outcome may influence this matrix 
 
 The scale-safety AlphaForge commits are local-only. They are research evidence, not durable producer
 provenance, until pushed to an authorized remote or stored in a hash-pinned source archive.
+
+The repository-wide AlphaForge commit hook is not green: unrelated pre-existing direct-Parquet
+scripts violate the loader chokepoint and the burn ledger is already over budget. The three local
+mechanism commits above were therefore preserved with focused verification and independent review,
+not represented as a full-repository admission.
 
 The denominator implementation is admitted as a mechanism, not as market-calendar evidence.
 Production rules, source artifacts, all 43 effective-date histories, exceptional sessions, the
@@ -277,11 +301,15 @@ For representatives `ES, CL, GC, 6E, ZN, BTC, ZC`:
    complete schema/DST matrix.
 5. Make AlphaForge export consume exact denominator segments and make FFM independently verify
    full root-date coverage and segmented raw membership.
-6. Complete the provider candidate-universe capability, then rebuild and independently review the
-   contract lifecycle with exact official eligibility and half-open trading-end semantics. Only
-   afterward may the expected denominator, inventory and plan be built. The rejected first
-   implementations are not evidence.
-7. Push or archive AlphaForge `27cfb0c` durably.
+6. Replace synthetic provider receipts with authentic, complete provider/exchange reference-data
+   evidence, then rebuild and independently review the contract lifecycle with exact official
+   eligibility and half-open trading-end semantics. [CME identifies its Reference Data
+   service](https://www.cmegroup.com/trading/market-tech-and-data-services/cme-reference-data-api.html)
+   as the authoritative source for symbols, schedules and first/last trade dates; no credentials or
+   complete historical reference snapshot are currently available in the workspace. Current public
+   FPRF listings are useful source candidates but do not establish complete 2011-2025 history.
+   Only afterward may the expected denominator, inventory and plan be built.
+7. Push or archive AlphaForge through local commit `2a39ed5` durably.
 8. Implement and independently review the four scale artifacts above.
 
 Only after those gates and the complete schema matrix pass may the project build the sessionized

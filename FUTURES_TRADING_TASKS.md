@@ -293,11 +293,18 @@ verification item is also checked.
   all 2024 and 2025 H1; PMC, observed inactivity and generic clearing notices are not substitutes.
 - [ ] Resolve or quarantine pre-2017 `RTY` provider history. Official CME RTY starts on
   `2017-07-10`; older files cannot silently inherit that product identity.
-- [ ] Build and independently admit the producer governance/split capability, metadata-only
-  provider candidate universe, official lifecycle/provider identity, expected request denominator
-  and only then the exact split-scoped leaf inventory. Two consumer-only prototypes were
-  constructively rejected; neither may be committed or used as authority. Full UTC-day leaves that
-  straddle OOS are blocked before open/hash unless a separate split-safe namespace is admitted.
+- [x] Implement and independently review the detached producer-governance/split mechanism and the
+  synthetic provider-candidate-universe mechanism. AlphaForge local commits `15f372b` and
+  `2a39ed5` are deliberately non-production: provider authenticity, official identity, immutable
+  evidence publication and authoritative prohibited-root boundaries are not supplied. Split
+  assignment uses exchange session day; raw UTC-leaf safety always requires the later official
+  session denominator.
+- [ ] Supply authentic complete provider/exchange reference evidence, then build and independently
+  admit official lifecycle/provider identity, expected request denominator and only then the exact
+  split-scoped leaf inventory. Consumer-only lifecycle/plan/inventory prototypes were
+  constructively rejected and cannot be used as authority. Full UTC-day leaves that straddle a
+  split/OOS session segment are blocked before open/hash unless a separate split-safe namespace is
+  admitted.
 - [ ] Define official contract-eligibility and half-open trading-end semantics separately from the
   root/venue denominator so observed files/ticks and legitimate expiring-contract inactivity never
   define eligibility.
