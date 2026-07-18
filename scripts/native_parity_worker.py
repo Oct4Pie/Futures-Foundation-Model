@@ -1516,7 +1516,7 @@ def execute(args: argparse.Namespace) -> None:
         license_evidence=license_evidence,
         official_evidence=_invariant(
             bool(parity["public_pairs"])
-            and all(np.asarray(outcome["arrays"][pair["official"]]).size > 0 for pair in parity["public_pairs"]),
+            and all(_numpy(outcome["arrays"][pair["official"]]).size > 0 for pair in parity["public_pairs"]),
             f"executed and persisted {len(parity['public_pairs'])} pinned public output surface(s)",
         ),
     )
