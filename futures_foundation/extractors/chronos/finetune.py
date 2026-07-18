@@ -169,6 +169,12 @@ def _train_ssl(contexts, cfg, seed):
     """Option A: self-supervised contrastive FT (NO labels). Returns (m, None).
     The FT only adapts bolt-tiny into a discriminative feature extractor; the
     downstream classifier (XGBoost) owns the trend label. Leak-immune."""
+    from futures_foundation.finetune.native_training_routes import (
+        block_unadmitted_optimizer,
+    )
+    block_unadmitted_optimizer(
+        "futures_foundation.extractors.chronos.finetune._train_ssl"
+    )
     import torch
     _seed(seed)
     dev = os.environ.get('FFM_FT_DEVICE') or (
@@ -208,6 +214,12 @@ def train(contexts, labels, cfg=FTConfig(), seed=0):
       - cfg.self_supervised (Option A): MoCo/SimCLR contrastive, NO labels ->
         bolt-tiny becomes a discriminative extractor; XGBoost owns the label.
       - else (Option B): loss = CE + λ_supcon·SupCon + λ_proto·ProtoCE."""
+    from futures_foundation.finetune.native_training_routes import (
+        block_unadmitted_optimizer,
+    )
+    block_unadmitted_optimizer(
+        "futures_foundation.extractors.chronos.finetune.train"
+    )
     if cfg.self_supervised:
         return _train_ssl(contexts, cfg, seed)             # labels ignored
     import torch

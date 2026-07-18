@@ -198,14 +198,21 @@ verification item is also checked.
   no resolved vanilla-Mantis lift over the causal selector and the adapted Stage 2 controls were
   worse. Reopen only for a genuinely new, predeclared representation hypothesis and fresh ruler.
 
-## Gate 6 — full cross-family training, blocked until pilots pass
+## Gate 6 — full cross-family training, blocked until route admission
 
-- [x] Freeze the canonical 14-arm/10-family roster and distinguish native forecast/representation
-  parity from training admission. See
-  [FOUNDATION_MODEL_TRAINING_ROSTER.md](FOUNDATION_MODEL_TRAINING_ROSTER.md).
-- [x] Audit every declared family's actual upstream training methodology and retire the universal
-  Stage 1→2→3 assumption. The evidence-bound routes and exclusions are frozen in
-  [FOUNDATION_MODEL_NATIVE_TRAINING_AUDIT.md](FOUNDATION_MODEL_NATIVE_TRAINING_AUDIT.md).
+- [ ] Re-freeze the roster as 15 arms. The previous 14-arm roster incorrectly conflated the
+  official TabPFN-TS3 forecast checkpoint with the separate generic TabPFN V3 downstream model.
+  Both replacement arms remain blocked on terms, exact local checkpoints and hashes.
+- [x] Independently audit every declared family's actual upstream training methodology and retire
+  the universal Stage 1→2→3 assumption. The audit found the current v1 free-text route matrix is
+  not authoritative: Kronos phases are collapsed, several provenance labels are wrong, and native
+  optimizer routes are mixed with project extensions. All optimizer entrypoints remain disabled.
+- [ ] Replace the v1 free-text profiles with strict architecture route templates, data/session-bound
+  route instances, and separately hash-bound pipeline DAGs. A project Stage 1→2→3 pipeline may use
+  compatible route nodes, but it is not a native contract shared by all model families.
+- [ ] Add raw route-evidence bundles keyed by arm, track, route, template hash and route-instance
+  hash. Require route-specific FP32 smokes, controls, exact next-batch/loss resume and deployment
+  parity before any optimizer can be authorized.
 - [ ] Admit or explicitly exclude each arm through its architecture-specific training contract;
   do not force forecast-only families through the Mantis Stage 1→2→3 lineage.
 
@@ -222,8 +229,13 @@ verification item is also checked.
 - [ ] **RESEARCH-ONLY/BLOCKED:** Moirai-2 small has no pinned official trainer; any custom pinball
   route requires separate mathematical and numerical admission.
 - [ ] **EXCLUDED:** Toto-2 fine-tuning is not released upstream; Toto 1 would be a separate arm.
-- [ ] **EXCLUDED:** Sundial fine-tuning is not released and hidden states remain non-finite.
-- [ ] TabPFN-TS retained as a downstream head/control, not forced into an artificial Stage 1-3 chain.
+- [ ] **BLOCKED/RESEARCH-ONLY:** Sundial official fine-tuning is not released; a separate custom
+  TimeFlow-loss route may be tested only after its exact loss/mask/export contract passes. Hidden
+  states remain non-finite and excluded.
+- [ ] **BLOCKED:** TabPFN-TS3 official support/query forecasting control, separate from persistent
+  model training.
+- [ ] **BLOCKED:** generic TabPFN V3 nested downstream support/query control, with all preprocessing
+  fit on purged support rows only.
 
 ## Gate 7 — confirmation and deployment
 
@@ -270,10 +282,16 @@ verification item is also checked.
   bytes, supports segmented/closed/prelisting/delisted/shortened/extended/irregular sessions, and
   reload-verifies crash-safe publication. Official effective-dated rules—not a calendar library's
   historically backfilled timestamps—own normal geometry; the pinned library is an open/closed and
-  early/late-exception diagnostic only. The focused suite passes 26/26; calendar/export/coverage
-  tests pass 46/46 at the frozen producer commit; the independent authority-boundary review found
-  no remaining code blocker. Subsequent strict-JSON/symlink hardening adds one focused producer
-  regression and remains uncommitted on the scale worktree.
+  early/late-exception diagnostic only. AlphaForge commit `b849257` adds partitioned session and
+  expected-request authority bundles, exact lifecycle clipping, pre-append row/byte envelopes,
+  atomic no-replace publication, path-reopened parent-chain verification before and after stream
+  consumption, and explicit-close verification. The current scoped suite passes 93/93. An
+  independent adversarial review passed parent replacement, shard mutation, orphan injection and
+  partial-stream-close attacks. The synthetic 43-root request envelope completed in 48.88 seconds
+  at 147,100 KiB peak RSS; the full-date session envelope contains 227,685 dispositions in 129
+  shards. This validates the production-blocked mechanism only. Authentic official-calendar,
+  provider-universe and lifecycle evidence, immutable whole-chain storage and the real full-date
+  request bundle remain required for production admission.
 - [x] Implement an independent FFM denominator verifier without importing AlphaForge or a calendar
   library. It binds the exact pretty-printed consumer contract by physical SHA without rewriting
   it, reconstructs every root/date/status/UTC segment from canonical official rules, rejects OOS,

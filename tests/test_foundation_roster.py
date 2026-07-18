@@ -18,7 +18,8 @@ def test_roster_is_registry_backed_and_separates_native_from_training_admission(
     assert not any(arm.training_admitted for arm in ARMS.values())
     assert get_arm("moment_small").ohlcv_mode == "channel_independent_ohlcv"
     assert not get_arm("ttm_r2").supported_training
-    assert get_arm("timesfm25").adaptation == "official_lora_forecast"
+    assert get_arm("timesfm25").adaptation == "none"
+    assert not get_arm("timesfm25").supported_training
     assert get_arm("moirai2_small").license == "CC-BY-NC-4.0"
     assert not get_arm("toto2_22m").supported_training
     assert not get_arm("sundial_base").supported_training

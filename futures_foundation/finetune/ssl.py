@@ -436,6 +436,10 @@ def loop_ssl(data_dir=None, *, tickers=None, tfs=None, controls=('shuffle', 'ran
     modeling; pretext='forecast' = stage-2 multi-horizon / variable-context candle seq2seq
     (warm-started from stage-1 via backbone_ckpt). Then PROBE vs vanilla + shuffle/random controls
     as diagnostics (gate = report-only), and write the encoder + report."""
+    # This legacy universal stage chain predates route-scoped native training evidence.
+    # Fail before data loading, torch import, optimizer construction, or output mutation.
+    from .native_training_routes import block_unadmitted_optimizer
+    block_unadmitted_optimizer("futures_foundation.finetune.ssl.loop_ssl")
     cfg = _base_cfg(**cfg_over)
     cfg['ckpt_path'] = out_path              # progressive best-save target (crash-safe); real run only
     verbose = cfg['verbose']

@@ -126,6 +126,10 @@ def fit_predict_torch(Xtr, ytr, Xval, yval, Xeval, *, new_channels=10, ft_mode='
     """Returns (p_val, p_eval, best_val_auc, best_epoch). Xtr/Xval/Xeval: arrays or
     memmaps. standardize_mu/sd: per-channel arrays applied per-chunk (None = already
     standardized)."""
+    from ...native_training_routes import block_unadmitted_optimizer
+    block_unadmitted_optimizer(
+        "futures_foundation.finetune.classifiers.mantis._torch.fit_predict_torch"
+    )
     os.environ.setdefault('PYTORCH_ENABLE_MPS_FALLBACK', '1')
     torch.set_num_threads(int(threads))
     dev = device or ('mps' if torch.backends.mps.is_available() else 'cpu')

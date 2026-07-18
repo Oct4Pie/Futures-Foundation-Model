@@ -753,16 +753,26 @@ class FoundationArm:
 
     @property
     def training_admitted(self) -> bool:
-        return self.overall_status in ADMITTED_STATUSES and any(
-            capability.training_admitted for capability in self.tracks
-        )
+        # This is registry/evidence readiness, not runtime authorization.  Execution still
+        # requires a current hash-bound report and two authenticated approvals.
+        return self.supported_training
 
 
 def _arm_from_dossier(
     key: str, dossier: Mapping[str, Any], path: str | Path
 ) -> FoundationArm:
     tokenizer = dossier.get("tokenizer") or {}
-    routes = tuple(str(value) for value in dossier.get("adaptation_routes") or ())
+    # The legacy flat route strings remain in the inference dossier as historical metadata.
+    # Only independently admitted production routes are exposed as executable adaptation.
+    from . import native_training_routes
+
+    training_registry_path = native_training_routes.route_registry_path(path)
+    admitted_routes = (
+        native_training_routes.admitted_routes_for_arm(key, path)
+        if training_registry_path.is_file()
+        else ()
+    )
+    routes = tuple(str(route["route_id"]) for route in admitted_routes)
     return FoundationArm(
         key=key,
         family=str(dossier["family"]),
@@ -774,7 +784,7 @@ def _arm_from_dossier(
         role=str(dossier["role"]),
         adaptation=(routes[0] if routes else "none"),
         ohlcv_mode=str(dossier["ohlcv_mode"]),
-        supported_training=bool(routes),
+        supported_training=bool(admitted_routes),
         overall_status=str(dossier["overall_status"]),
         pin_complete=bool(dossier["pin_complete"]),
         tokenizer_id=tokenizer.get("id"),
@@ -785,13 +795,8 @@ def _arm_from_dossier(
                 status=str(capability["status"]),
                 reason=str(capability["reason"]),
                 evidence_id=capability.get("evidence_id"),
-                training_admitted=(
-                    capability["status"] in ADMITTED_STATUSES
-                    and all(
-                        item["status"] == "pass"
-                        for name, item in technical_evidence(key, track, path)[2].items()
-                        if name in TRAINING_CHECKS
-                    )
+                training_admitted=any(
+                    route["track"] == track for route in admitted_routes
                 ),
             )
             for track, capability in dossier["tracks"].items()
@@ -1274,6 +1279,7 @@ def build_admission_request(
     checks: Mapping[str, bool | Mapping[str, Any]],
     environment: Mapping[str, Any],
     route: str | None = None,
+    require_training: bool = False,
     artifacts: Mapping[str, str | Path] | None = None,
     created_utc: str,
     path: str | Path = REGISTRY_PATH,
@@ -1283,15 +1289,38 @@ def build_admission_request(
     arm = get_arm(arm_key, path)
     if track not in {"F", "R", "C", "B", "D"}:
         raise NativeContractError(f"unknown track {track!r}")
-    if status not in ADMITTED_STATUSES:
-        raise NativeContractError(f"admission report status {status!r} is not admissible")
+    training_authorization: tuple[
+        dict[str, Any], str, dict[str, Any], str, str
+    ] | None = None
+    if require_training:
+        from . import native_training_routes
+
+        training_authorization = native_training_routes.authorize_route(
+            arm_key=arm.key,
+            track=track,
+            route_id=route,
+            use_scope=environment.get("use_scope"),
+            path=path,
+        )
+        if status != training_authorization[0]["status"]:
+            raise NativeContractError("report status does not match training-route status")
+        evidence_track = str(training_authorization[0]["base_inference_track"])
+        schema_version = native_training_routes.TRAINING_REPORT_SCHEMA
+    else:
+        if status not in ADMITTED_STATUSES:
+            raise NativeContractError(f"admission report status {status!r} is not admissible")
+        evidence_track = track
+        schema_version = REPORT_SCHEMA
     normalized = normalize_check_results(checks, path=path)
-    evidence_id, evidence_record, evidence_checks = technical_evidence(arm.key, track, path)
-    technical_artifacts = _technical_runtime_artifacts(arm.key, track, path)
-    expected_evidence_status = (
-        "research_only_pass" if status == "research_only" else "pass"
+    evidence_id, evidence_record, evidence_checks = technical_evidence(
+        arm.key, evidence_track, path
     )
-    if evidence_record.get("status") != expected_evidence_status:
+    technical_artifacts = _technical_runtime_artifacts(arm.key, evidence_track, path)
+    expected_evidence_statuses = (
+        {"pass", "research_only_pass"} if require_training else
+        {"research_only_pass" if status == "research_only" else "pass"}
+    )
+    if evidence_record.get("status") not in expected_evidence_statuses:
         raise NativeContractError(
             f"technical evidence {evidence_id!r} is not admissible for status {status!r}"
         )
@@ -1300,10 +1329,14 @@ def build_admission_request(
     environment_value = measure_runtime_environment(evidence_environment, environment)
     runtime_controls = _validated_runtime_controls(
         evidence_environment,
-        {name: environment[name] for name in RUNTIME_CONTROL_FIELDS if name in environment},
+        {
+            name: environment[name]
+            for name in RUNTIME_CONTROL_FIELDS
+            if name in evidence_environment and name in environment
+        },
     )
     use_scope = environment.get("use_scope")
-    if status == "research_only" and use_scope != "research_noncommercial":
+    if status in {"research_only"} and use_scope != "research_noncommercial":
         raise NativeContractError(
             "research-only admission requires environment.use_scope='research_noncommercial'"
         )
@@ -1312,7 +1345,7 @@ def build_admission_request(
     )
     trust_store = load_trusted_approvers(path)
     value = {
-        "schema_version": REPORT_SCHEMA,
+        "schema_version": schema_version,
         "request_created_utc": created_utc,
         "arm_key": arm.key,
         "track": track,
@@ -1336,6 +1369,24 @@ def build_admission_request(
         "use_scope": use_scope,
         "artifacts": normalized_artifacts,
     }
+    if training_authorization is not None:
+        from . import native_training_routes
+
+        (
+            training_route,
+            training_evidence_id,
+            training_evidence,
+            training_registry_sha256,
+            training_evidence_registry_sha256,
+        ) = training_authorization
+        value.update({
+            "training_route_registry_sha256": training_registry_sha256,
+            "training_route_evidence_registry_sha256": training_evidence_registry_sha256,
+            "training_route_sha256": content_sha256(training_route),
+            "training_evidence_id": training_evidence_id,
+            "training_evidence_sha256": content_sha256(training_evidence),
+            "training_checks_sha256": content_sha256(training_evidence["checks"]),
+        })
     value["approval_target_sha256"] = content_sha256(_approval_target_payload(value))
     return value
 
@@ -1349,6 +1400,7 @@ def build_admission_report(
     approvals: list[Mapping[str, Any]],
     environment: Mapping[str, Any],
     route: str | None = None,
+    require_training: bool = False,
     artifacts: Mapping[str, str | Path] | None = None,
     created_utc: str,
     path: str | Path = REGISTRY_PATH,
@@ -1361,6 +1413,7 @@ def build_admission_report(
         checks=checks,
         environment=environment,
         route=route,
+        require_training=require_training,
         artifacts=artifacts,
         created_utc=created_utc,
         path=path,
@@ -1403,8 +1456,26 @@ def verify_admission_report(
 ) -> dict[str, Any]:
     """Verify an admission report against the current registry and requested execution path."""
     value = _read_report(report)
-    if value.get("schema_version") != REPORT_SCHEMA:
-        raise NativeContractError(f"admission report schema must be {REPORT_SCHEMA!r}")
+    training_authorization: tuple[
+        dict[str, Any], str, dict[str, Any], str, str
+    ] | None = None
+    if require_training:
+        # This check intentionally precedes every legacy report/check path: neither a null
+        # route nor a flat inference-dossier string can inherit training authority.
+        from . import native_training_routes
+
+        training_authorization = native_training_routes.authorize_route(
+            arm_key=arm_key,
+            track=track,
+            route_id=route,
+            use_scope=value.get("use_scope"),
+            path=path,
+        )
+        expected_schema = native_training_routes.TRAINING_REPORT_SCHEMA
+    else:
+        expected_schema = REPORT_SCHEMA
+    if value.get("schema_version") != expected_schema:
+        raise NativeContractError(f"admission report schema must be {expected_schema!r}")
     integrity = value.get("integrity") or {}
     if integrity.get("algorithm") != "sha256":
         raise NativeContractError("admission report must use sha256 integrity")
@@ -1431,8 +1502,14 @@ def verify_admission_report(
         raise NativeContractError("admission report dossier hash is stale")
     if value.get("evidence_registry_sha256") != evidence_sha256(path):
         raise NativeContractError("admission report technical-evidence registry is stale")
-    evidence_id, evidence_record, evidence_checks = technical_evidence(arm.key, track, path)
-    verify_technical_evidence_bundle(arm.key, track, path)
+    evidence_track = (
+        str(training_authorization[0]["base_inference_track"])
+        if training_authorization is not None else track
+    )
+    evidence_id, evidence_record, evidence_checks = technical_evidence(
+        arm.key, evidence_track, path
+    )
+    verify_technical_evidence_bundle(arm.key, evidence_track, path)
     if value.get("technical_evidence_id") != evidence_id:
         raise NativeContractError("admission report technical-evidence ID mismatch")
     if value.get("technical_evidence_sha256") != content_sha256(evidence_record):
@@ -1452,38 +1529,61 @@ def verify_admission_report(
         raise NativeContractError("admission report trusted-approver registry is stale")
     if not arm.pin_complete:
         raise NativeContractError(f"{arm.key} has unresolved package/model/source pins")
-    if arm.overall_status not in ADMITTED_STATUSES:
+    if not require_training and arm.overall_status not in ADMITTED_STATUSES:
         raise NativeContractError(
             f"{arm.key} registry status is {arm.overall_status!r}; update the reviewed dossier "
             "only after parity evidence passes"
         )
-    if capability.status not in ADMITTED_STATUSES:
+    if not require_training and capability.status not in ADMITTED_STATUSES:
         raise NativeContractError(
             f"{arm.key} track {track} is {capability.status!r}: {capability.reason}"
         )
-    if value.get("status") != capability.status:
+    if require_training:
+        assert training_authorization is not None
+        (
+            training_route,
+            training_evidence_id,
+            training_evidence,
+            training_registry_sha256,
+            training_evidence_registry_sha256,
+        ) = training_authorization
+        if value.get("status") != training_route["status"]:
+            raise NativeContractError("report status does not match training-route status")
+        from . import native_training_routes
+
+        expected_training_bindings = {
+            "training_route_registry_sha256": training_registry_sha256,
+            "training_route_evidence_registry_sha256": training_evidence_registry_sha256,
+            "training_route_sha256": content_sha256(training_route),
+            "training_evidence_id": training_evidence_id,
+            "training_evidence_sha256": content_sha256(training_evidence),
+            "training_checks_sha256": content_sha256(training_evidence["checks"]),
+        }
+        mismatches = {
+            name: {"expected": expected, "actual": value.get(name)}
+            for name, expected in expected_training_bindings.items()
+            if value.get(name) != expected
+        }
+        if mismatches:
+            raise NativeContractError(
+                f"training report route/evidence binding mismatch: {mismatches}"
+            )
+    elif value.get("status") != capability.status:
         raise NativeContractError("report status does not match the admitted track status")
-    if route is not None and route not in arm.adaptation_routes:
-        raise NativeContractError(f"route {route!r} is not declared for {arm.key}")
+    if not require_training and route is not None:
+        legacy_inference_routes = tuple(
+            load_registry(path)["models"][arm.key].get("adaptation_routes") or ()
+        )
+        if route not in legacy_inference_routes:
+            raise NativeContractError(f"route {route!r} is not declared for {arm.key}")
 
     checks = normalize_check_results(value.get("checks") or {}, path=path)
     failed = [name for name, item in checks.items() if item["status"] == "fail"]
     if failed:
         raise NativeContractError(f"admission report has failed checks: {failed}")
-    if require_training:
-        nonpassing = [
-            name for name in sorted(TRAINING_CHECKS)
-            if checks[name]["status"] != "pass"
-        ]
-        technical_nonpassing = [
-            name for name in sorted(TRAINING_CHECKS)
-            if evidence_checks[name]["status"] != "pass"
-        ]
-        if nonpassing or technical_nonpassing:
-            raise NativeContractError(
-                "training requires explicit report and technical-evidence passes: "
-                f"report={nonpassing}, technical={technical_nonpassing}"
-            )
+    # Route-specific mandatory checks are validated by native_training_routes before
+    # reaching this point.  The four legacy inference-profile placeholders are neither
+    # necessary nor sufficient for training admission.
 
     request_created = _parse_utc(
         value.get("request_created_utc"), "request_created_utc"
@@ -1520,14 +1620,20 @@ def verify_admission_report(
     )
     if value.get("runtime_controls") != actual_controls:
         raise NativeContractError("admission report runtime controls are stale")
-    if capability.status == "research_only" and value.get("use_scope") != "research_noncommercial":
+    research_training = (
+        training_authorization is not None
+        and training_authorization[0]["status"] == "research_only"
+    )
+    if (capability.status == "research_only" or research_training) and value.get(
+        "use_scope"
+    ) != "research_noncommercial":
         raise NativeContractError(
             "research-only admission requires environment.use_scope='research_noncommercial'"
         )
     admitted_artifacts = value.get("artifacts") or {}
     if not isinstance(admitted_artifacts, Mapping):
         raise NativeContractError("admission report artifacts must be an object")
-    technical_artifacts = _technical_runtime_artifacts(arm.key, track, path)
+    technical_artifacts = _technical_runtime_artifacts(arm.key, evidence_track, path)
     supplied_artifacts = dict(required_artifacts or {})
     expected_names = set(admitted_artifacts)
     provided_names = set(supplied_artifacts) | {"runner"}

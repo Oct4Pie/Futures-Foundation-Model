@@ -154,6 +154,12 @@ def fit_and_infer(tokens, y, train_mask, *, depth=2, heads=4, mlp=512, epochs=80
     Backbone-agnostic: tokens [N,T,d], y [N] in {0,1}, train_mask [N] bool. proj_dim
     projects raw per-bar feature seqs -> work dim. Minority oversampled. Defaults
     (proto OFF, lr 2e-3) are the diagnosed-best for raw feature sequences."""
+    from futures_foundation.finetune.native_training_routes import (
+        block_unadmitted_optimizer,
+    )
+    block_unadmitted_optimizer(
+        "futures_foundation.extractors.chronos.shape_adapter.fit_and_infer"
+    )
     import copy
     from torch.utils.data import TensorDataset, DataLoader, WeightedRandomSampler
     from sklearn.metrics import roc_auc_score

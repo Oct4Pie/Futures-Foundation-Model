@@ -1,0 +1,200 @@
+{
+  "schema_version": "ffm_native_training_route_registry_v1",
+  "evidence_schema": "ffm_native_training_route_evidence_v1",
+  "inference_methodology_commit": "8e2bd47d8fd6dc333dfa74ad0eea3d3613e63469",
+  "training_methodology_source": {"kind":"pending_git_commit","revision":null},
+  "admission_policy": "phase_a_blocked_pending_raw_bundle_v1",
+  "status_vocabulary": ["blocked", "admitted", "research_only"],
+  "disposition_vocabulary": ["upstream_native", "native_derived", "custom_research", "unsupported"],
+  "use_scope_vocabulary": ["production", "research_noncommercial"],
+  "required_checks": [
+    "upstream_wrapper_input_target_loss_parity",
+    "causal_prefix_invariance",
+    "channel_group_semantics",
+    "context_horizon_boundaries",
+    "scaling_mask_behavior",
+    "batch_partition_parity",
+    "gradient_freeze_surface",
+    "repeated_batch_loss_decrease",
+    "shuffled_label_control",
+    "corrupted_target_control",
+    "constant_input_control",
+    "exact_full_trajectory_sampler_resume",
+    "save_reload_state",
+    "deployment_preprocessing_parity",
+    "deployment_output_parity",
+    "fp32_finite"
+  ],
+  "contract_profiles": {
+    "mantis_v1_info_nce": {
+      "objective": "official_crop_resize_two_view_info_nce",
+      "input_layout": "univariate_raw_channel_passes",
+      "channel_semantics": "shared_encoder_independent_ohlcv_channels",
+      "scaling_masking": "official_mantis_v1_raw_patch_statistics_and_view_sampling",
+      "trainable_surface": "official_encoder_and_projector_as_declared_by_route_evidence",
+      "deployment_output": "per_channel_final_cls"
+    },
+    "mantis_v2_info_nce": {
+      "objective": "official_compatible_output_crop_resize_two_view_info_nce",
+      "input_layout": "univariate_channel_passes_length_divisible_by_32",
+      "channel_semantics": "shared_encoder_independent_ohlcv_channels",
+      "scaling_masking": "official_mantis_v2_interpolation_and_raw_patch_statistics",
+      "trainable_surface": "official_encoder_and_projector_as_declared_by_route_evidence",
+      "deployment_output": "per_channel_layer2_cls_plus_mean"
+    },
+    "mantis_supervised": {
+      "objective": "separate_supervised_classification_head",
+      "input_layout": "per_channel_native_mantis_representations",
+      "channel_semantics": "fusion_only_at_declared_supervised_head",
+      "scaling_masking": "versioned_mantis_native_preprocessing",
+      "trainable_surface": "native_derived_head_and_explicitly_declared_encoder_surface",
+      "deployment_output": "classification_logits"
+    },
+    "custom_barrier": {
+      "objective": "custom_supervised_barrier_or_path_task",
+      "input_layout": "route_specific_causal_context",
+      "channel_semantics": "route_specific_and_not_inherited_from_inference",
+      "scaling_masking": "route_specific_causal_contract",
+      "trainable_surface": "route_specific_custom_surface",
+      "deployment_output": "custom_barrier_or_path_output"
+    },
+    "moment_reconstruction": {
+      "objective": "native_masked_patch_reconstruction",
+      "input_layout": "B_C_512_folded_to_B_times_C",
+      "channel_semantics": "shared_channel_independent_encoder",
+      "scaling_masking": "native_revin_and_valid_timestamp_mask",
+      "trainable_surface": "native_reconstruction_head_and_declared_encoder_surface",
+      "deployment_output": "official_masked_embedding_mean"
+    },
+    "moment_classification": {
+      "objective": "native_classification_task_head",
+      "input_layout": "B_C_512_folded_to_B_times_C",
+      "channel_semantics": "shared_channel_independent_encoder",
+      "scaling_masking": "native_revin_and_valid_timestamp_mask",
+      "trainable_surface": "separately_initialized_native_classification_head",
+      "deployment_output": "classification_logits"
+    },
+    "moment_forecast": {
+      "objective": "native_forecast_task_head",
+      "input_layout": "B_C_512_folded_to_B_times_C",
+      "channel_semantics": "shared_channel_independent_encoder",
+      "scaling_masking": "native_revin_and_valid_timestamp_mask",
+      "trainable_surface": "separately_initialized_native_forecast_head",
+      "deployment_output": "forecast_output"
+    },
+    "custom_contrastive": {
+      "objective": "custom_contrastive_representation_task",
+      "input_layout": "route_specific_causal_context",
+      "channel_semantics": "route_specific_and_not_inherited_from_inference",
+      "scaling_masking": "route_specific_causal_contract",
+      "trainable_surface": "route_specific_custom_surface",
+      "deployment_output": "custom_representation"
+    },
+    "kronos_native": {
+      "objective": "tokenizer_reconstruction_bsq_then_hierarchical_autoregressive_prediction",
+      "input_layout": "joint_ordered_ohlcva_plus_timestamps",
+      "channel_semantics": "joint_multivariate_kronos_contract",
+      "scaling_masking": "causal_context_only_normalization",
+      "trainable_surface": "tokenizer_then_frozen_tokenizer_predictor",
+      "deployment_output": "joint_ohlcva_forecast"
+    },
+    "chronos_v1_forecast": {
+      "objective": "direct_t5_token_forecast_cross_entropy",
+      "input_layout": "five_independent_univariate_channel_passes",
+      "channel_semantics": "shared_channel_independent_model",
+      "scaling_masking": "native_mean_scale_tokenization_eos_and_label_mask",
+      "trainable_surface": "native_derived_manual_loop_with_declared_t5_surface",
+      "deployment_output": "forecast_distribution_and_public_unpooled_tokens"
+    },
+    "chronos_bolt_forecast": {
+      "objective": "direct_native_quantile_pinball",
+      "input_layout": "five_independent_univariate_channel_passes",
+      "channel_semantics": "shared_channel_independent_model",
+      "scaling_masking": "native_internal_normalization_and_short_horizon_mask",
+      "trainable_surface": "official_or_supported_bolt_tuning_surface",
+      "deployment_output": "quantile_forecast_and_unpooled_tokens_location_scale"
+    },
+    "chronos2_forecast": {
+      "objective": "official_grouped_multivariate_quantile",
+      "input_layout": "joint_ohlcv_shared_group_ids",
+      "channel_semantics": "grouped_multivariate_interaction",
+      "scaling_masking": "official_chronos2_scaling_and_masks",
+      "trainable_surface": "explicit_full_or_fail_closed_lora_surface",
+      "deployment_output": "grouped_quantile_forecast_and_public_tokens_scaling"
+    },
+    "timesfm_lora": {
+      "objective": "direct_official_forecast_lora",
+      "input_layout": "raw_channel_independent_512_context_passes",
+      "channel_semantics": "shared_channel_independent_model",
+      "scaling_masking": "internal_revin_with_explicit_flip_and_truncation",
+      "trainable_surface": "official_lora_targets_fp32_first",
+      "deployment_output": "point_and_raw_quantile_forecast"
+    },
+    "ttm_native": {
+      "objective": "direct_raw_value_forecast_finetuning_hf_trainer",
+      "input_layout": "B_512_C",
+      "channel_semantics": "shared_channel_independent_weights_cross_channel_mixer_off",
+      "scaling_masking": "native_scaler_no_external_zscore_official_frequency_prefix",
+      "trainable_surface": "official_selected_ttm_surface",
+      "deployment_output": "native_forecast"
+    },
+    "moirai_custom": {
+      "objective": "custom_scaled_pinball_research_task",
+      "input_layout": "packed_joint_multivariate_sample_time_variate_ids",
+      "channel_semantics": "joint_multivariate",
+      "scaling_masking": "custom_audited_quantile_and_mask_contract",
+      "trainable_surface": "custom_noncommercial_research_surface",
+      "deployment_output": "research_only_probabilistic_forecast"
+    },
+    "unsupported_training": {
+      "objective": "unsupported",
+      "input_layout": "not_admitted",
+      "channel_semantics": "not_admitted",
+      "scaling_masking": "not_admitted",
+      "trainable_surface": "none",
+      "deployment_output": "inference_control_only"
+    },
+    "tabpfn_support_query": {
+      "objective": "nested_support_query_in_context_control",
+      "input_layout": "support_query_rows_with_complete_label_end_and_parent_interval_purge",
+      "channel_semantics": "downstream_tabular_features",
+      "scaling_masking": "support_only_preprocessing",
+      "trainable_surface": "no_persistent_ssl_training",
+      "deployment_output": "downstream_in_context_prediction"
+    }
+  },
+  "routes": {
+    "mantis_v1:R:official_crop_resize_contrastive": {"arm_key":"mantis_v1","track":"R","route_id":"official_crop_resize_contrastive","disposition":"upstream_native","status":"blocked","allowed_use_scopes":["production","research_noncommercial"],"contract_profile":"mantis_v1_info_nce","base_inference_track":"R","evidence_id":null,"reason":"route-specific view, loss, resume, and deployment evidence is absent"},
+    "mantis_v1:C:supervised_classification_head": {"arm_key":"mantis_v1","track":"C","route_id":"supervised_classification_head","disposition":"native_derived","status":"blocked","allowed_use_scopes":["production","research_noncommercial"],"contract_profile":"mantis_supervised","base_inference_track":"R","evidence_id":null,"reason":"classification branch requires independent route evidence"},
+    "mantis_v1:B:supervised_barrier_experimental_task": {"arm_key":"mantis_v1","track":"B","route_id":"supervised_barrier_experimental_task","disposition":"custom_research","status":"blocked","allowed_use_scopes":["research_noncommercial"],"contract_profile":"custom_barrier","base_inference_track":"R","evidence_id":null,"reason":"custom barrier route has no training evidence"},
+    "mantis_v2:R:official_crop_resize_contrastive": {"arm_key":"mantis_v2","track":"R","route_id":"official_crop_resize_contrastive","disposition":"upstream_native","status":"blocked","allowed_use_scopes":["production","research_noncommercial"],"contract_profile":"mantis_v2_info_nce","base_inference_track":"R","evidence_id":null,"reason":"route-specific V2 view, interpolation, loss, resume, and output evidence is absent"},
+    "mantis_v2:C:supervised_classification_head": {"arm_key":"mantis_v2","track":"C","route_id":"supervised_classification_head","disposition":"native_derived","status":"blocked","allowed_use_scopes":["production","research_noncommercial"],"contract_profile":"mantis_supervised","base_inference_track":"R","evidence_id":null,"reason":"classification branch requires independent route evidence"},
+    "mantis_v2:B:supervised_barrier_experimental_task": {"arm_key":"mantis_v2","track":"B","route_id":"supervised_barrier_experimental_task","disposition":"custom_research","status":"blocked","allowed_use_scopes":["research_noncommercial"],"contract_profile":"custom_barrier","base_inference_track":"R","evidence_id":null,"reason":"custom barrier route has no training evidence"},
+    "moment_small:R:masked_patch_reconstruction": {"arm_key":"moment_small","track":"R","route_id":"masked_patch_reconstruction","disposition":"upstream_native","status":"blocked","allowed_use_scopes":["production","research_noncommercial"],"contract_profile":"moment_reconstruction","base_inference_track":"R","evidence_id":null,"reason":"continued reconstruction route lacks upstream-wrapper and trajectory evidence"},
+    "moment_small:C:classification": {"arm_key":"moment_small","track":"C","route_id":"classification","disposition":"upstream_native","status":"blocked","allowed_use_scopes":["production","research_noncommercial"],"contract_profile":"moment_classification","base_inference_track":"R","evidence_id":null,"reason":"classification head route lacks independent evidence"},
+    "moment_small:F:forecast": {"arm_key":"moment_small","track":"F","route_id":"forecast","disposition":"upstream_native","status":"blocked","allowed_use_scopes":["production","research_noncommercial"],"contract_profile":"moment_forecast","base_inference_track":"R","evidence_id":null,"reason":"forecast head route lacks independent evidence"},
+    "moment_small:C:adjacent_half_contrastive": {"arm_key":"moment_small","track":"C","route_id":"adjacent_half_contrastive","disposition":"custom_research","status":"blocked","allowed_use_scopes":["research_noncommercial"],"contract_profile":"custom_contrastive","base_inference_track":"R","evidence_id":null,"reason":"custom adjacent-half contrastive route is not native"},
+    "moment_small:B:supervised_barrier_experimental_task": {"arm_key":"moment_small","track":"B","route_id":"supervised_barrier_experimental_task","disposition":"custom_research","status":"blocked","allowed_use_scopes":["research_noncommercial"],"contract_profile":"custom_barrier","base_inference_track":"R","evidence_id":null,"reason":"custom barrier route has no training evidence"},
+    "kronos_mini:F:native_tokenizer_and_hierarchical_autoregressive": {"arm_key":"kronos_mini","track":"F","route_id":"native_tokenizer_and_hierarchical_autoregressive","disposition":"upstream_native","status":"blocked","allowed_use_scopes":["production","research_noncommercial"],"contract_profile":"kronos_native","base_inference_track":"F","evidence_id":null,"reason":"Tokenizer-2k two-component route lacks exact resume and export evidence"},
+    "kronos_mini:C:adjacent_half_contrastive": {"arm_key":"kronos_mini","track":"C","route_id":"adjacent_half_contrastive","disposition":"custom_research","status":"blocked","allowed_use_scopes":["research_noncommercial"],"contract_profile":"custom_contrastive","base_inference_track":"F","evidence_id":null,"reason":"foreign contrastive route is not native Kronos training"},
+    "kronos_mini:B:supervised_barrier_experimental_task": {"arm_key":"kronos_mini","track":"B","route_id":"supervised_barrier_experimental_task","disposition":"custom_research","status":"blocked","allowed_use_scopes":["research_noncommercial"],"contract_profile":"custom_barrier","base_inference_track":"F","evidence_id":null,"reason":"custom barrier route has no training evidence"},
+    "kronos_small:F:native_tokenizer_and_hierarchical_autoregressive": {"arm_key":"kronos_small","track":"F","route_id":"native_tokenizer_and_hierarchical_autoregressive","disposition":"upstream_native","status":"blocked","allowed_use_scopes":["production","research_noncommercial"],"contract_profile":"kronos_native","base_inference_track":"F","evidence_id":null,"reason":"Tokenizer-base two-component route lacks exact resume and export evidence"},
+    "kronos_small:C:adjacent_half_contrastive": {"arm_key":"kronos_small","track":"C","route_id":"adjacent_half_contrastive","disposition":"custom_research","status":"blocked","allowed_use_scopes":["research_noncommercial"],"contract_profile":"custom_contrastive","base_inference_track":"F","evidence_id":null,"reason":"foreign contrastive route is not native Kronos training"},
+    "kronos_small:B:supervised_barrier_experimental_task": {"arm_key":"kronos_small","track":"B","route_id":"supervised_barrier_experimental_task","disposition":"custom_research","status":"blocked","allowed_use_scopes":["research_noncommercial"],"contract_profile":"custom_barrier","base_inference_track":"F","evidence_id":null,"reason":"custom barrier route has no training evidence"},
+    "chronos_v1:F:direct_t5_token_forecast_cross_entropy": {"arm_key":"chronos_v1","track":"F","route_id":"direct_t5_token_forecast_cross_entropy","disposition":"native_derived","status":"blocked","allowed_use_scopes":["production","research_noncommercial"],"contract_profile":"chronos_v1_forecast","base_inference_track":"F","evidence_id":null,"reason":"manual loop requires public token, EOS, label-mask, resume, and output parity"},
+    "chronos_v1:B:supervised_barrier_experimental_task": {"arm_key":"chronos_v1","track":"B","route_id":"supervised_barrier_experimental_task","disposition":"custom_research","status":"blocked","allowed_use_scopes":["research_noncommercial"],"contract_profile":"custom_barrier","base_inference_track":"R","evidence_id":null,"reason":"custom barrier route has no training evidence"},
+    "chronos_bolt:F:direct_native_quantile_pinball": {"arm_key":"chronos_bolt","track":"F","route_id":"direct_native_quantile_pinball","disposition":"native_derived","status":"blocked","allowed_use_scopes":["production","research_noncommercial"],"contract_profile":"chronos_bolt_forecast","base_inference_track":"F","evidence_id":null,"reason":"supported tuning surface and native short-horizon loss require route evidence"},
+    "chronos_bolt:B:supervised_barrier_experimental_task": {"arm_key":"chronos_bolt","track":"B","route_id":"supervised_barrier_experimental_task","disposition":"custom_research","status":"blocked","allowed_use_scopes":["research_noncommercial"],"contract_profile":"custom_barrier","base_inference_track":"R","evidence_id":null,"reason":"custom barrier route has no training evidence"},
+    "chronos_v2:F:official_fit_full": {"arm_key":"chronos_v2","track":"F","route_id":"official_fit_full","disposition":"upstream_native","status":"blocked","allowed_use_scopes":["production","research_noncommercial"],"contract_profile":"chronos2_forecast","base_inference_track":"F","evidence_id":null,"reason":"official grouped full-tuning route lacks exact resume and export evidence"},
+    "chronos_v2:F:official_fit_lora": {"arm_key":"chronos_v2","track":"F","route_id":"official_fit_lora","disposition":"upstream_native","status":"blocked","allowed_use_scopes":["production","research_noncommercial"],"contract_profile":"chronos2_forecast","base_inference_track":"F","evidence_id":null,"reason":"LoRA route must prove exact target modules and fail closed without PEFT"},
+    "chronos_v2:B:supervised_barrier_experimental_task": {"arm_key":"chronos_v2","track":"B","route_id":"supervised_barrier_experimental_task","disposition":"custom_research","status":"blocked","allowed_use_scopes":["research_noncommercial"],"contract_profile":"custom_barrier","base_inference_track":"R","evidence_id":null,"reason":"custom barrier route has no training evidence"},
+    "timesfm25:F:official_lora_forecast": {"arm_key":"timesfm25","track":"F","route_id":"official_lora_forecast","disposition":"upstream_native","status":"blocked","allowed_use_scopes":["production","research_noncommercial"],"contract_profile":"timesfm_lora","base_inference_track":"F","evidence_id":null,"reason":"FP32 LoRA route lacks flip, truncation, resume, and output evidence"},
+    "timesfm25:B:supervised_barrier_experimental_task": {"arm_key":"timesfm25","track":"B","route_id":"supervised_barrier_experimental_task","disposition":"custom_research","status":"blocked","allowed_use_scopes":["research_noncommercial"],"contract_profile":"custom_barrier","base_inference_track":"F","evidence_id":null,"reason":"custom barrier route has no training evidence"},
+    "ttm_r2:F:direct_raw_hf_trainer_forecast": {"arm_key":"ttm_r2","track":"F","route_id":"direct_raw_hf_trainer_forecast","disposition":"upstream_native","status":"blocked","allowed_use_scopes":["production","research_noncommercial"],"contract_profile":"ttm_native","base_inference_track":"F","evidence_id":null,"reason":"native raw-value Trainer route lacks selector, frequency, mixer, resume, and deployment evidence"},
+    "moirai2_small:F:custom_scaled_pinball_research": {"arm_key":"moirai2_small","track":"F","route_id":"custom_scaled_pinball_research","disposition":"custom_research","status":"blocked","allowed_use_scopes":["research_noncommercial"],"contract_profile":"moirai_custom","base_inference_track":"F","evidence_id":null,"reason":"no official pinned Moirai-2 trainer; custom noncommercial route is unadmitted"},
+    "toto2_22m:F:no_released_toto2_finetuning": {"arm_key":"toto2_22m","track":"F","route_id":"no_released_toto2_finetuning","disposition":"unsupported","status":"blocked","allowed_use_scopes":[],"contract_profile":"unsupported_training","base_inference_track":"F","evidence_id":null,"reason":"Toto-2 fine-tuning pathway is not released"},
+    "sundial_base:F:no_released_sundial_finetuning": {"arm_key":"sundial_base","track":"F","route_id":"no_released_sundial_finetuning","disposition":"unsupported","status":"blocked","allowed_use_scopes":[],"contract_profile":"unsupported_training","base_inference_track":"F","evidence_id":null,"reason":"Sundial fine-tuning pathway is not released"},
+    "sundial_base:R:nonfinite_hidden_state_representation": {"arm_key":"sundial_base","track":"R","route_id":"nonfinite_hidden_state_representation","disposition":"unsupported","status":"blocked","allowed_use_scopes":[],"contract_profile":"unsupported_training","base_inference_track":"F","evidence_id":null,"reason":"hidden-state representation produced non-finite outputs"},
+    "tabpfn_ts:D:nested_support_query_control": {"arm_key":"tabpfn_ts","track":"D","route_id":"nested_support_query_control","disposition":"unsupported","status":"blocked","allowed_use_scopes":[],"contract_profile":"tabpfn_support_query","base_inference_track":"D","evidence_id":null,"reason":"terms, checkpoint hash, parity, and complete interval containment are unresolved"}
+  }
+}

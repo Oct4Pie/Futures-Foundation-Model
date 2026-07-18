@@ -109,6 +109,12 @@ def run(steps=1000, context_length=128, prediction_length=64, stride=32,
     Two unavoidable bridges vs the Chronos-2 recipe: (1) fused AdamW is CUDA-only
     so MPS uses plain adamw_torch (same math); (2) LoRA target names mapped to
     bolt's module names. Everything else is the documented recipe — no deviation."""
+    from futures_foundation.finetune.native_training_routes import (
+        block_unadmitted_optimizer,
+    )
+    block_unadmitted_optimizer(
+        "futures_foundation.extractors.chronos.bolt_finetune.run"
+    )
     import torch
     from torch.utils.data import Dataset
     from transformers import Trainer, TrainingArguments

@@ -610,6 +610,10 @@ class BaseTrainer:
         artifact accepted by ``resume=True``. It restores the objective head, optimizer,
         scheduler, AMP scaler, epoch, early-stop counters, history, and RNG streams.
         """
+        from ...native_training_routes import block_unadmitted_optimizer
+        block_unadmitted_optimizer(
+            "futures_foundation.finetune.pretext._torch.common.BaseTrainer.fit"
+        )
         self.build_net()
         save_ok = bool(self.ckpt_path) and self.control == 'real'   # controls never touch artifacts
         if self.resume and not save_ok:

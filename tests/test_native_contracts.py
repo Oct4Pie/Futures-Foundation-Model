@@ -168,14 +168,17 @@ def _runtime_artifacts(tmp_path: Path, monkeypatch):
 
 def _signed_report(
     *, registry_path, registry, artifacts, private_keys, approvals_mutator=None,
-    environment=None, extra_artifacts=None,
+    environment=None, extra_artifacts=None, route=None, require_training=False,
+    status="native_valid", arm_key="kronos_small", track="F",
 ):
     all_artifacts = {**artifacts, **(extra_artifacts or {})}
     kwargs = dict(
-        arm_key="kronos_small", track="F", status="native_valid",
+        arm_key=arm_key, track=track, status=status,
         checks=_all_passing_checks(registry),
         environment=environment or _measured_test_environment(),
         artifacts=all_artifacts,
+        route=route,
+        require_training=require_training,
         created_utc="2026-07-17T00:00:00Z", path=registry_path,
     )
     request = build_admission_request(**kwargs)
@@ -213,6 +216,59 @@ def _admitted_registry(tmp_path, arm_key="kronos_small", track="F"):
     private_keys = _write_trust_store(path)
     load_registry.cache_clear(); load_evidence.cache_clear()
     return path, registry, private_keys
+
+
+def _copy_training_route_contracts(registry_path: Path):
+    from futures_foundation.finetune import native_training_routes
+
+    registry_path.with_name("native_training_routes.json").write_bytes(
+        native_training_routes.route_registry_path(REGISTRY_PATH).read_bytes()
+    )
+    registry_path.with_name("native_training_route_evidence.json").write_bytes(
+        native_training_routes.route_evidence_path(REGISTRY_PATH).read_bytes()
+    )
+    native_training_routes.load_route_registry.cache_clear()
+    native_training_routes.load_route_evidence.cache_clear()
+
+
+def _admit_training_route(registry_path: Path, key: str):
+    from futures_foundation.finetune import native_training_routes
+
+    _copy_training_route_contracts(registry_path)
+    route_path = registry_path.with_name("native_training_routes.json")
+    evidence_path = registry_path.with_name("native_training_route_evidence.json")
+    routes = json.loads(route_path.read_text(encoding="utf-8"))
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    source = {"kind": "git_commit", "revision": "a" * 40}
+    routes["training_methodology_source"] = source
+    route = routes["routes"][key]
+    route["status"] = "admitted"
+    evidence_id = f"{key}:fixture"
+    route["evidence_id"] = evidence_id
+    evidence["training_methodology_source"] = source
+    evidence["records"] = {
+        evidence_id: {
+            "arm_key": route["arm_key"],
+            "track": route["track"],
+            "route_id": route["route_id"],
+            "route_key": key,
+            "route_sha256": native_contracts.content_sha256(route),
+            "status": "pass",
+            "checks": {
+                name: {"status": "pass", "evidence": f"fixture:{name}"}
+                for name in native_training_routes.TRAINING_CHECKS
+            },
+            "environment": {"python": "fixture", "dtype": "float32"},
+            "artifacts": {"trainer": {"sha256": "b" * 64}},
+            "reason": "synthetic admitted-route fixture",
+        }
+    }
+    evidence["route_registry_sha256"] = native_contracts.content_sha256(routes)
+    route_path.write_text(json.dumps(routes), encoding="utf-8")
+    evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+    native_training_routes.load_route_registry.cache_clear()
+    native_training_routes.load_route_evidence.cache_clear()
+    return route["route_id"]
 
 
 def test_registry_resolution_uses_installed_fallback_when_source_is_absent(tmp_path):
@@ -256,7 +312,67 @@ def test_default_registry_cannot_admit_training_without_training_evidence():
     } == set(native_contracts.TRAINING_CHECKS)
 
 
-def test_hash_bound_report_requires_current_registry_two_approvals_and_all_training_checks(tmp_path, monkeypatch):
+def test_training_gate_rejects_previous_null_and_flat_custom_false_admissions(
+    tmp_path, monkeypatch
+):
+    registry_path, registry, private_keys = _admitted_registry(tmp_path)
+    _copy_training_route_contracts(registry_path)
+    artifacts = _runtime_artifacts(tmp_path, monkeypatch)
+    report = _signed_report(
+        registry_path=registry_path,
+        registry=registry,
+        artifacts=artifacts,
+        private_keys=private_keys,
+    )
+
+    with pytest.raises(NativeContractError, match="requires a non-null route"):
+        verify_admission_report(
+            report,
+            arm_key="kronos_small",
+            track="F",
+            route=None,
+            require_training=True,
+            path=registry_path,
+        )
+    with pytest.raises(NativeContractError, match="undeclared training route"):
+        verify_admission_report(
+            report,
+            arm_key="kronos_small",
+            track="F",
+            route="adjacent_half_contrastive",
+            require_training=True,
+            path=registry_path,
+        )
+    with pytest.raises(NativeContractError, match="is blocked"):
+        verify_admission_report(
+            report,
+            arm_key="kronos_small",
+            track="C",
+            route="adjacent_half_contrastive",
+            require_training=True,
+            path=registry_path,
+        )
+
+
+def test_phase_a_rejects_self_authored_route_before_training_report_build(tmp_path):
+    registry_path, registry, _ = _admitted_registry(
+        tmp_path, arm_key="moment_small", track="R"
+    )
+    route = _admit_training_route(
+        registry_path, "moment_small:C:classification"
+    )
+    environment = {**_measured_test_environment(), "use_scope": "production"}
+    with pytest.raises(NativeContractError, match="Phase A forbids nonblocked"):
+        build_admission_request(
+            arm_key="moment_small", track="C", status="admitted",
+            checks=_all_passing_checks(registry), environment=environment,
+            route=route,
+            require_training=True,
+            artifacts={}, created_utc="2026-07-17T00:00:00Z", path=registry_path,
+        )
+
+
+def test_hash_bound_inference_report_requires_current_registry_and_two_approvals(tmp_path, monkeypatch):
     registry_path, registry, private_keys = _admitted_registry(tmp_path)
     artifacts = _runtime_artifacts(tmp_path, monkeypatch)
     checkpoint = tmp_path / "checkpoint.pt"
@@ -266,7 +382,7 @@ def test_hash_bound_report_requires_current_registry_two_approvals_and_all_train
         private_keys=private_keys, extra_artifacts={"checkpoint": checkpoint},
     )
     verified = verify_admission_report(
-        report, arm_key="kronos_small", track="F", require_training=True,
+        report, arm_key="kronos_small", track="F", require_training=False,
         required_artifacts={**artifacts, "checkpoint": checkpoint},
         runtime_controls=_test_runtime_controls(), path=registry_path,
     )
@@ -274,13 +390,13 @@ def test_hash_bound_report_requires_current_registry_two_approvals_and_all_train
 
     with pytest.raises(NativeContractError, match="runtime controls must be supplied"):
         verify_admission_report(
-            report, arm_key="kronos_small", track="F", require_training=True,
+            report, arm_key="kronos_small", track="F", require_training=False,
             required_artifacts={**artifacts, "checkpoint": checkpoint},
             path=registry_path,
         )
     with pytest.raises(NativeContractError, match="runtime controls must be supplied"):
         verify_admission_report(
-            report, arm_key="kronos_small", track="F", require_training=True,
+            report, arm_key="kronos_small", track="F", require_training=False,
             required_artifacts={**artifacts, "checkpoint": checkpoint},
             runtime_controls={**_test_runtime_controls(), "device": "cpu"},
             path=registry_path,
@@ -290,7 +406,7 @@ def test_hash_bound_report_requires_current_registry_two_approvals_and_all_train
     replacement.write_bytes(b"different checkpoint")
     with pytest.raises(NativeContractError, match="artifact 'checkpoint' tree hash mismatch"):
         verify_admission_report(
-                report, arm_key="kronos_small", track="F", require_training=True,
+                report, arm_key="kronos_small", track="F", require_training=False,
                 required_artifacts={**artifacts, "checkpoint": replacement},
                 runtime_controls=_test_runtime_controls(), path=registry_path,
         )
@@ -299,7 +415,7 @@ def test_hash_bound_report_requires_current_registry_two_approvals_and_all_train
     tampered["checks"]["fp32_finite"]["status"] = "fail"
     with pytest.raises(NativeContractError, match="integrity mismatch"):
         verify_admission_report(
-            tampered, arm_key="kronos_small", track="F", require_training=True,
+            tampered, arm_key="kronos_small", track="F", require_training=False,
             path=registry_path,
         )
 
@@ -308,7 +424,7 @@ def test_hash_bound_report_requires_current_registry_two_approvals_and_all_train
     })
     with pytest.raises(NativeContractError, match="independent approvals"):
         verify_admission_report(
-            one_reviewer, arm_key="kronos_small", track="F", require_training=True,
+            one_reviewer, arm_key="kronos_small", track="F", require_training=False,
             path=registry_path,
         )
 
@@ -318,12 +434,12 @@ def test_hash_bound_report_requires_current_registry_two_approvals_and_all_train
     with pytest.raises(NativeContractError, match="not trusted for reviewer"):
         verify_admission_report(
             aliased_reviewer, arm_key="kronos_small", track="F",
-            require_training=True, path=registry_path,
+            require_training=False, path=registry_path,
         )
 
     with pytest.raises(NativeContractError, match="floor cannot be lower than 2"):
         verify_admission_report(
-            report, arm_key="kronos_small", track="F", require_training=True,
+            report, arm_key="kronos_small", track="F", require_training=False,
             minimum_approvals=0, path=registry_path,
         )
 
@@ -333,7 +449,7 @@ def test_hash_bound_report_requires_current_registry_two_approvals_and_all_train
     with pytest.raises(NativeContractError, match="latest authenticated approval"):
         verify_admission_report(
             invalid_finalization, arm_key="kronos_small", track="F",
-            require_training=True, path=registry_path,
+            require_training=False, path=registry_path,
         )
 
 
@@ -412,7 +528,7 @@ def test_verification_remeasures_environment_and_runtime_artifact_trees(tmp_path
     monkeypatch.setattr(platform, "python_version", lambda: "0.0.0")
     with pytest.raises(NativeContractError, match="measured runtime environment drift"):
         verify_admission_report(
-            report, arm_key="kronos_small", track="F", require_training=True,
+            report, arm_key="kronos_small", track="F", require_training=False,
             required_artifacts=execution_artifacts,
             runtime_controls=_test_runtime_controls(), path=registry_path,
         )
@@ -447,7 +563,7 @@ def test_verification_remeasures_environment_and_runtime_artifact_trees(tmp_path
     )
     with pytest.raises(NativeContractError, match="complete runtime lock drifted"):
         verify_admission_report(
-            report, arm_key="kronos_small", track="F", require_training=True,
+            report, arm_key="kronos_small", track="F", require_training=False,
             required_artifacts=execution_artifacts,
             runtime_controls=_test_runtime_controls(), path=registry_path,
         )
@@ -459,7 +575,7 @@ def test_verification_remeasures_environment_and_runtime_artifact_trees(tmp_path
     (artifacts["source"] / "untracked.py").write_text("raise RuntimeError\n")
     with pytest.raises(NativeContractError, match="untracked files"):
         verify_admission_report(
-            report, arm_key="kronos_small", track="F", require_training=True,
+            report, arm_key="kronos_small", track="F", require_training=False,
             required_artifacts=execution_artifacts,
             runtime_controls=_test_runtime_controls(), path=registry_path,
         )
@@ -468,7 +584,7 @@ def test_verification_remeasures_environment_and_runtime_artifact_trees(tmp_path
     artifacts["model"].write_bytes(b"tampered-model")
     with pytest.raises(NativeContractError, match="tree hash mismatch"):
         verify_admission_report(
-            report, arm_key="kronos_small", track="F", require_training=True,
+            report, arm_key="kronos_small", track="F", require_training=False,
             required_artifacts=execution_artifacts,
             runtime_controls=_test_runtime_controls(), path=registry_path,
         )

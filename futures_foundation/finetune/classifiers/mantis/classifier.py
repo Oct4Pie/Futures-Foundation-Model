@@ -42,6 +42,14 @@ class MantisClassifier(Classifier):
         return np.asarray(labeler.mv_contexts(keys), np.float32)
 
     def fit_predict(self, Xtr, ytr, Xval, yval, Xeval, seed=0, keys_tr=None, keys_val=None):
+        # Fail before serializing data or spawning the optimizer-capable worker.  Guarding
+        # only the child process leaves a public parent-side bypass surface and can still
+        # copy large or sensitive datasets before the route is rejected.
+        from ...native_training_routes import block_unadmitted_optimizer
+        block_unadmitted_optimizer(
+            "futures_foundation.finetune.classifiers.mantis."
+            "classifier.MantisClassifier.fit_predict"
+        )
         cfg = dict(self.cfg)
         log_path = cfg.pop('log_path', None)        # parent-side only (not a trainer arg)
         cmd = [sys.executable, '-u', '-m', 'futures_foundation.finetune.classifiers.mantis._worker']
