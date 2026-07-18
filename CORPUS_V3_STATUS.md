@@ -52,7 +52,7 @@ coverage, live-arrival equivalence, or readiness to train.
 Current internal hashes:
 
 ```text
-coverage report payload: db0dd303d23f3d8adf5e35b45dcf592a3ca9a75d129b9a96a261523fb7886047
+coverage report payload: 7ffec841c19c36c4b18d8acd01b0def639a63f28834973c954693d308d830250
 lake hash-of-hashes:      632f859e138d6ad22b67801d8279ac42363a8ededabf79dbb767eb1d649baffe
 leaf-manifest file:       367d5847ccfeae04e085d9fd55664bc6e5f52a2d56be686d1d25e43f46663928
 ```
@@ -69,7 +69,7 @@ The report deliberately has:
 ```text
 candidate_roots: 43
 selected_roots:  0
-selection_status: blocked_pending_sessionized_foundation_export
+selection_status: blocked_pending_sessionized_liquidity_matrix_and_scale_admission
 ```
 
 Its five diagnostic flags are report-only. They do not admit or reject MCL, MET, MHG, MNG or ZT.

@@ -57,7 +57,7 @@
     "ZW"
   ],
   "contract_id": "corpus_v3_sierra_ticks_pre2026_v1",
-  "contract_sha256": "00eea927b490815db9dab4515acf9774c5408563a9a623e0e475835668125a8d",
+  "contract_sha256": "e14f370f3c79b1ea7292f3ccd0f47f1f83800e8ea29820bcacd794554d6f131b",
   "diagnostic_flagged_roots": [
     "MCL",
     "MET",
@@ -87,12 +87,13 @@
   },
   "holdout_use": "coverage_report_only_never_training_validation_calibration_or_selection",
   "materialization_status": {
-    "blocker": "missing_alphaforge_foundation_training_stream_and_hash_receipt",
-    "materialization": "blocked",
-    "status": "coverage_audit_only"
+    "full_corpus_materialization": "blocked_pending_corpus_scale_admission_and_verification",
+    "materialization": "representative_shard_only",
+    "scope": "CL/CLK20/2020-04-20 foundation-pretraining interoperability pilot only",
+    "status": "representative_shard_pilot"
   },
   "purpose": "coverage_and_liquidity_only_no_strategy_events_labels_or_outcomes_read",
-  "report_sha256": "db0dd303d23f3d8adf5e35b45dcf592a3ca9a75d129b9a96a261523fb7886047",
+  "report_sha256": "7ffec841c19c36c4b18d8acd01b0def639a63f28834973c954693d308d830250",
   "roots": {
     "6A": {
       "periods": {
@@ -9470,7 +9471,7 @@
     "uses_strategy_outcomes": false
   },
   "selected_roots": [],
-  "selection_status": "blocked_pending_sessionized_foundation_export",
+  "selection_status": "blocked_pending_sessionized_liquidity_matrix_and_scale_admission",
   "source_scope": {
     "coverage_manifest_sha256": "69e89ff938706e34e67e9280a48ce5e08ee80c16e81aa73fd278b1f03c1ee942",
     "ignored": {

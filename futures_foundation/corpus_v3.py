@@ -570,7 +570,7 @@ def build_coverage_audit(contract: Mapping[str, Any]) -> dict[str, Any]:
         "screen": dict(contract["universe_screen"]),
         "candidate_roots": roots,
         "selected_roots": [],
-        "selection_status": "blocked_pending_sessionized_foundation_export",
+        "selection_status": "blocked_pending_sessionized_liquidity_matrix_and_scale_admission",
         "diagnostic_flagged_roots": diagnostic_flagged_roots,
         "roots": reports,
         "artifact_sha256": artifact_hashes,
