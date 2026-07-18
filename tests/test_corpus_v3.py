@@ -8,6 +8,7 @@ import yaml
 
 from futures_foundation.corpus_v3 import (
     CorpusV3Error,
+    REQUIRED_RECEIPT_BINDINGS,
     build_coverage_audit,
     content_sha256,
     contract_root,
@@ -72,6 +73,10 @@ def _fixture(tmp_path: Path) -> dict:
             "owner": "alphaforge",
             "purpose_token": "foundation_training",
             "mode": "streaming_contract_day_shards_without_roll_splicing",
+            "receipt_schema_version": "alphaforge_foundation_export_receipt_v2",
+            "output_bundle_files": ["ticks.parquet", "receipt.json"],
+            "physical_hash_meaning": "sha256_of_exact_ticks_parquet_bytes",
+            "semantic_hash_meaning": "canonical_ordered_rows_plus_bound_semantic_metadata",
             "must_reuse_admitted_loader_internals": True,
             "must_not_use_purpose_tokens": ["qa", "validation", "historical_validation"],
             "missing_event_seq_policy": "reject",
@@ -88,15 +93,7 @@ def _fixture(tmp_path: Path) -> dict:
                 "corpus_contract_sha256", "environment_receipt_sha256",
                 "instrument_spec_sha256", "tick_size", "tick_value",
             ],
-            "required_receipt_bindings": [
-                "request", "roots", "date_range", "window_contract", "loader_sha256",
-                "config_sha256", "governance_sha256", "lake_hash_of_hashes_sha256",
-                "selected_source_file_sha256", "excluded_row_counts", "output_row_counts",
-                "output_shard_sha256", "source_file_index_to_path_and_sha256",
-                "session_bounds_and_internal_gap_evidence", "negative_price_preservation",
-                "trade_row_preservation_independent_of_quote_validity",
-                "environment_receipt_sha256",
-            ],
+            "required_receipt_bindings": sorted(REQUIRED_RECEIPT_BINDINGS),
             "receipt_verification": "fail_closed_before_any_FFM_bar_or_label_materialization",
         },
         "derived_views": {

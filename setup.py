@@ -32,6 +32,7 @@ setup(
         ("config/corpus_v3", [
             "config/corpus_v3/contract.json",
             "config/corpus_v3/coverage_audit.json",
+            "config/corpus_v3/pilot_verification.json",
         ]),
         *_data_tree("output/native_parity_evidence_v2_canonical"),
     ],

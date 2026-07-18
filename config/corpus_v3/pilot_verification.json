@@ -1,0 +1,59 @@
+{
+  "schema_version": "ffm_corpus_v3_pilot_verification_v1",
+  "status": "passed_single_representative_shard_only",
+  "request": {
+    "contract_id": "CLK20",
+    "purpose": "foundation_training",
+    "root": "CL",
+    "session_day": "2020-04-20",
+    "split_use": "foundation_pretraining"
+  },
+  "session": {
+    "end_utc_ns_exclusive": 1587416400000000000,
+    "start_utc_ns": 1587333600000000000
+  },
+  "producer": {
+    "alphaforge_git_commit": "0a955b46081daf6adb17e823eea5b814a1d5df62",
+    "exporter_sha256": "3432789867ebcbfd2f8bdbdecc7cf3ed367775b7f518c5ff5fbeea6436d70cba"
+  },
+  "consumer": {
+    "contract_sha256": "3e3c493a3305e78196d57685537dd85d0f11dd35cf14183fd73802065c0cc504",
+    "label_engine_sha256": "33135e04438c4faa96dd5afc41b4761feb7deab00ea8298c67bca2637a7615bf",
+    "verifier_sha256": "39aacad11c3b200a57a6cef8936266ffab05db7ccd22a22c218db70f31c03b04"
+  },
+  "output": {
+    "physical_parquet_sha256": "9a6413635f7d937e3d703344e7c9091872fa18d188669491ccfcd16813a966dd",
+    "receipt_file_sha256": "7595f40f263817f3b8d8112c59fc7fa04723a8344beb13210de970b5cf93c987",
+    "semantic_shard_sha256": "f5c5e7ab6f1aece30ebc5738af2b3274785f2d21530e89524bd51d943c3f8dce"
+  },
+  "observed": {
+    "invalid_quote_rows_preserved": 0,
+    "minimum_trade_price": -40.32,
+    "negative_trade_rows": 4255,
+    "nonpositive_quote_rows_preserved": 4314,
+    "row_count": 61150,
+    "zero_trade_rows": 42
+  },
+  "source_leaves": [
+    {
+      "path": "sc_v2_ticks/raw/CLK20/20200419/CLK20_20200419T000000Z_20200420T000000Z_ticks.parquet",
+      "sha256": "95d49ec8becd08c655607e6a8bfbb5a9fc2041a8eb1ea058559050fec8638b8d"
+    },
+    {
+      "path": "sc_v2_ticks/raw/CLK20/20200420/CLK20_20200420T000000Z_20200421T000000Z_ticks.parquet",
+      "sha256": "11c617e6daf6eb89006f9174565dbce29a660222068444c99cd0af9eb635a62c"
+    }
+  ],
+  "verification": {
+    "alphaforge_physical_and_semantic_verification": "passed",
+    "ffm_full_raw_row_reconstruction": "passed",
+    "label_index_construction": "passed",
+    "no_roll_splicing": true,
+    "raw_source_rows_omitted_or_invented": 0
+  },
+  "authorization": {
+    "broad_corpus_materialization": "blocked",
+    "model_training": "blocked_pending_corpus_scale_contract_and_checks",
+    "this_artifact_authorizes": "interoperability_evidence_only"
+  }
+}

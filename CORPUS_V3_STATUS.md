@@ -2,13 +2,38 @@
 
 ## Decision
 
-Corpus v3 is admitted for a deterministic, outcome-blind inventory audit only. It is not admitted
-for tick materialization, labels, model training, validation, calibration, economic scoring or
-deployment.
+Corpus v3 has passed one predeclared contract/session interoperability pilot. The admission is
+restricted to `CL / CLK20 / 2020-04-20`; broad materialization, model training, validation,
+calibration, economic scoring and deployment remain blocked.
 
 The canonical contract is
 [`config/corpus_v3/contract.json`](config/corpus_v3/contract.json). The reproducible inventory is
 [`config/corpus_v3/coverage_audit.json`](config/corpus_v3/coverage_audit.json).
+The pilot evidence is
+[`config/corpus_v3/pilot_verification.json`](config/corpus_v3/pilot_verification.json).
+
+## Representative shard result
+
+AlphaForge commit `0a955b4` produced one deterministic Parquet-plus-receipt bundle. FFM then
+independently reopened both sealed source leaves and reconstructed every eligible session row from
+physical source ordinals before exposing a label index.
+
+```text
+request:                     CL / CLK20 / 2020-04-20 / foundation_pretraining
+session:                     [2020-04-19 22:00Z, 2020-04-20 21:00Z)
+verified rows:               61,150
+negative trade rows:         4,255
+zero-price trade rows:       42
+invalid-quote rows retained: 0
+nonpositive-quote rows retained: 4,314
+minimum trade price:         -40.32
+receipt SHA-256:             7595f40f263817f3b8d8112c59fc7fa04723a8344beb13210de970b5cf93c987
+physical Parquet SHA-256:    9a6413635f7d937e3d703344e7c9091872fa18d188669491ccfcd16813a966dd
+semantic shard SHA-256:      f5c5e7ab6f1aece30ebc5738af2b3274785f2d21530e89524bd51d943c3f8dce
+```
+
+This proves the bounded export/verifier seam. It does not prove full-lake session/calendar
+coverage, live-arrival equivalence, or readiness to train.
 
 ## Verified inventory
 
@@ -55,14 +80,14 @@ After the streaming export exists, the root universe will have two frozen tiers:
 - `supplemental_pretraining`: training-only contract/year shards that cannot influence validation,
   thresholds, promotion or OOS composition.
 
-## Materialization blocker
+## Broad-materialization blocker
 
 The current AlphaForge `session_store_v6` must not be called as a Corpus v3 export API. It has a
 narrow purpose/date/window contract, does not retain complete UTC/source-row lineage, can synthesize
 missing `event_seq`, and selects a session contract using activity through a fixed anchor.
 
-AlphaForge must own a new `foundation_training` streaming export that emits unspliced contract-day
-rows. Each row must retain:
+AlphaForge now owns a `foundation_training` streaming export that emits unspliced contract-day
+rows. Each row retains:
 
 ```text
 timestamp_utc_ns, time_us, event_seq,
@@ -86,11 +111,12 @@ tick_size, tick_value
 The physical shard may replace the repeated per-row hash with `source_file_index`; the receipt must
 bind that index to the exact source path and SHA-256.
 
-The export receipt must bind the request, roots, dates, window, loader/config/governance hashes,
+The receipt-v2 contract binds the request, roots, dates, window, producer/governance hashes,
 lake hash, selected leaf hashes, exclusions, row counts, output shard hashes, internal-gap/session
 evidence, preservation of valid negative prices, and preservation of valid trade rows when the
 attached quote is invalid. Missing or duplicate `(timestamp_utc_ns, event_seq)` keys must be
-rejected. FFM must verify the receipt before deriving a single bar or label.
+rejected. FFM verifies the receipt, output bytes, pinned raw leaves, normalization, economics,
+calendar, all eligible source rows and physical lineage before deriving a bar or label.
 
 FFM will then construct two separate views:
 
@@ -108,8 +134,8 @@ strict `ffm_ordered_tick_path_labels_v2` semantics against synthetic governed ro
 - Requires a hash-bound decision/risk manifest and rejects supplied risk-known keys after the
   decision. This binds caller assertions; it does not prove the feature generator was causal.
 - Requires supplied receipt, shard, source-table, environment and Corpus-contract hashes. The
-  engine validates their form and binds them into the artifact; the missing export verifier must
-  prove their content before real use.
+  engine validates their form and binds them into the artifact; the production export verifier
+  independently proves their content before exposing real rows to the label engine.
 - Requires declared source coverage through the horizon and rejects stale entry/endpoints.
 - Preserves valid negative futures prices and performs exact barrier comparisons in integer ticks.
 - Converts fractional R targets to ticks with decimal multiplication and conservative ceiling.
@@ -125,9 +151,10 @@ strict `ffm_ordered_tick_path_labels_v2` semantics against synthetic governed ro
   tampered arrays fail closed.
 - Keeps fees and added slippage outside the gross label artifact.
 
-These tests prove label semantics only. The engine cannot consume real Corpus v3 data until the
-AlphaForge export receipt passes. In particular, scalar coverage bounds cannot prove that no source
-records are missing inside the interval; that evidence must come from the verified export receipt.
+The engine consumed the verified CLK20 pilot through a production capability. Direct mapping
+construction is now a private synthetic-test surface. Production label construction and bundle
+write/load require the matching verified export identity. This is proven for the pilot, not yet for
+a multi-root corpus materialization.
 
 ## Economics still blocked
 
@@ -160,4 +187,5 @@ labels must remain separate from costs.
 9. Deterministic representative-subset rebuild and byte comparison.
 10. Separate MantisV2 training-surface, resume and export admission.
 
-Until those pass, training remains prohibited.
+The representative seam, raw reconstruction and label-index boundary now pass. The remaining list
+must pass at corpus scale before training is authorized.

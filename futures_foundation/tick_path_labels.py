@@ -6,6 +6,7 @@ fill evidence, and fees/added slippage are deliberately outside this gross label
 """
 from __future__ import annotations
 
+from collections.abc import Iterator, Mapping as MappingABC
 from dataclasses import asdict, dataclass
 from datetime import date
 from decimal import Decimal, ROUND_CEILING
@@ -41,6 +42,53 @@ _SESSION_DAY_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 _MONTH_CODES = "FGHJKMNQUVXZ"
 _INT64_MAX = np.iinfo(np.int64).max
 _INT64_MIN = np.iinfo(np.int64).min
+_VERIFIED_LABEL_TOKEN = object()
+
+
+class VerifiedTickPathLabels(MappingABC[str, Any]):
+    """Label mapping produced by the verified export path, not by caller metadata strings."""
+
+    def __init__(self, values: Mapping[str, Any], *, _token: object) -> None:
+        if _token is not _VERIFIED_LABEL_TOKEN:
+            raise TypeError("VerifiedTickPathLabels can only be created by the verified builder")
+        frozen: dict[str, Any] = {}
+        for key, value in values.items():
+            if isinstance(value, np.ndarray):
+                value = value.copy()
+                value.flags.writeable = False
+            frozen[key] = value
+        self._values = frozen
+        self._verified_label_token = _token
+
+    def __getitem__(self, key: str) -> Any:
+        return self._values[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._values)
+
+    def __len__(self) -> int:
+        return len(self._values)
+
+    def is_authentic(self) -> bool:
+        return self._verified_label_token is _VERIFIED_LABEL_TOKEN
+
+
+def _labels_match_verified_export(labels: Mapping[str, Any], verified: Any) -> bool:
+    expected = {
+        "root": verified.root,
+        "contract_id": verified.contract_id,
+        "session_day": verified.session_day,
+        "split_use": verified.split_use,
+        "export_receipt_sha256": verified.receipt_sha256,
+        "source_shard_sha256": verified.output_shard_sha256,
+        "source_file_table_sha256": verified.source_file_table_sha256,
+        "corpus_contract_sha256": verified.contract_sha256,
+        "environment_receipt_sha256": verified.environment_receipt_sha256,
+        "instrument_spec_sha256": verified.instrument_spec_sha256,
+        "tick_size": verified.tick_size,
+        "tick_value": verified.tick_value,
+    }
+    return all(labels.get(key) == value for key, value in expected.items())
 
 
 @dataclass(frozen=True)
@@ -231,7 +279,12 @@ class _ExtremaIndex:
 
 
 class OrderedTickPathIndex:
-    """Validated integer-tick index reusable across timeframe-specific decision sets."""
+    """Validated integer-tick index reusable across timeframe-specific decision sets.
+
+    Direct construction is retained as a low-level/synthetic-test surface. Production
+    Corpus-v3 materialization must enter through ``VerifiedContractDayExport.build_path_index``
+    so receipt hashes cannot be invented by a caller-provided mapping.
+    """
 
     def __init__(
         self, ticks: Mapping[str, Any], *, tick_size: float, config: TickPathLabelConfig
@@ -244,7 +297,7 @@ class OrderedTickPathIndex:
             "source_file_index", "source_row_ordinal",
         }
         required_meta = {
-            "root", "contract_id", "session_day", "session_start_utc_ns",
+            "root", "contract_id", "session_day", "split_use", "session_start_utc_ns",
             "session_end_utc_ns", "coverage_start_utc_ns", "coverage_end_utc_ns",
             "export_receipt_sha256", "source_shard_sha256", "source_file_table_sha256",
             "corpus_contract_sha256", "environment_receipt_sha256",
@@ -311,6 +364,9 @@ class OrderedTickPathIndex:
         self.root = _string_scalar(ticks["root"], "root")
         self.contract_id = _string_scalar(ticks["contract_id"], "contract_id")
         self.session_day = _string_scalar(ticks["session_day"], "session_day")
+        self.split_use = _string_scalar(ticks["split_use"], "split_use")
+        if self.split_use not in {"foundation_pretraining", "supervised_training", "development"}:
+            raise ValueError("split_use is not an admitted materialization split")
         if not _SESSION_DAY_RE.fullmatch(self.session_day):
             raise ValueError("session_day must be an ISO YYYY-MM-DD date")
         try:
@@ -491,8 +547,8 @@ def touches_by_horizon(
     return expanded
 
 
-def build_tick_path_labels(
-    ticks: Mapping[str, Any] | OrderedTickPathIndex,
+def _build_tick_path_labels_impl(
+    ticks: Mapping[str, Any] | OrderedTickPathIndex | Any,
     *,
     decision_time_utc_ns: Any,
     decision_event_seq: Any,
@@ -503,19 +559,32 @@ def build_tick_path_labels(
     tick_size: float | None = None,
     config: TickPathLabelConfig | None = None,
     backend: str = "indexed",
+    _allow_unverified: bool = False,
 ) -> dict[str, Any]:
     """Build normalized path labels with declared endpoints as the sole purge authority."""
     config = config or TickPathLabelConfig()
     config.validate()
     if backend not in {"indexed", "reference"}:
         raise ValueError("backend must be 'indexed' or 'reference'")
-    if isinstance(ticks, OrderedTickPathIndex):
+    source_verification = "verified_contract_day_export"
+    from .corpus_v3_export import VerifiedContractDayExport
+    if type(ticks) is VerifiedContractDayExport and ticks.is_authentic():
+        index = ticks.build_path_index(config=config)
+        if tick_size is not None and float(tick_size) != index.tick_size:
+            raise ValueError("tick_size differs from the verified export")
+    elif isinstance(ticks, OrderedTickPathIndex):
+        if not _allow_unverified:
+            raise ValueError("production labels require a VerifiedContractDayExport capability")
+        source_verification = "synthetic_test_only"
         index = ticks
         if tick_size is not None and float(tick_size) != index.tick_size:
             raise ValueError("tick_size differs from the reusable index")
         if float(config.price_alignment_atol_ticks) != index.price_alignment_atol_ticks:
             raise ValueError("price-alignment policy differs from the reusable index")
     else:
+        if not _allow_unverified:
+            raise ValueError("production labels require a VerifiedContractDayExport capability")
+        source_verification = "synthetic_test_only"
         if tick_size is None:
             raise ValueError("tick_size is required when constructing an index")
         index = OrderedTickPathIndex(ticks, tick_size=float(tick_size), config=config)
@@ -735,6 +804,7 @@ def build_tick_path_labels(
         "root": index.root,
         "contract_id": index.contract_id,
         "session_day": index.session_day,
+        "split_use": index.split_use,
         "tick_size": index.tick_size,
         "tick_value": index.tick_value,
         "export_receipt_sha256": index.export_receipt_sha256,
@@ -804,11 +874,27 @@ def build_tick_path_labels(
         "marketable_at_trade_is_fill_proof": False,
         "fees_included": False,
         "added_slippage_included": False,
+        "source_verification": source_verification,
     }
     semantic = tick_label_fingerprint(result)
     result["semantic_fingerprint_sha256"] = semantic
     result["artifact_fingerprint_sha256"] = tick_label_artifact_fingerprint(result)
+    if source_verification == "verified_contract_day_export":
+        return VerifiedTickPathLabels(result, _token=_VERIFIED_LABEL_TOKEN)
     return result
+
+
+def build_tick_path_labels(ticks: Any, **kwargs: Any) -> VerifiedTickPathLabels:
+    """Build production labels only from an authentic, raw-verified export capability."""
+    result = _build_tick_path_labels_impl(ticks, _allow_unverified=False, **kwargs)
+    if type(result) is not VerifiedTickPathLabels or not result.is_authentic():
+        raise ValueError("production label construction did not retain verified provenance")
+    return result
+
+
+def _build_tick_path_labels_for_test(ticks: Any, **kwargs: Any) -> dict[str, Any]:
+    """Synthetic oracle surface; deliberately private and never accepted by production writers."""
+    return _build_tick_path_labels_impl(ticks, _allow_unverified=True, **kwargs)
 
 
 def tick_label_artifact_fingerprint(labels: Mapping[str, Any]) -> str:
@@ -872,8 +958,21 @@ def _sha256_path(path: Path) -> str:
     return digest.hexdigest()
 
 
-def write_tick_label_bundle(labels: Mapping[str, Any], destination: str | Path) -> Path:
+def _write_tick_label_bundle_impl(
+    labels: Mapping[str, Any], destination: str | Path, *,
+    verified_export: Any = None, _allow_unverified: bool = False,
+) -> Path:
     """Write a canonical, hash-verified directory bundle; refuse overwrite or object arrays."""
+    if not _allow_unverified:
+        from .corpus_v3_export import VerifiedContractDayExport
+        if not (
+            type(labels) is VerifiedTickPathLabels
+            and labels.is_authentic()
+            and type(verified_export) is VerifiedContractDayExport
+            and verified_export.is_authentic()
+            and _labels_match_verified_export(labels, verified_export)
+        ):
+            raise ValueError("production label bundles require the matching verified export capability")
     semantic = tick_label_fingerprint(labels)
     if labels.get("semantic_fingerprint_sha256") != semantic:
         raise ValueError("label semantic fingerprint is missing or stale")
@@ -919,7 +1018,22 @@ def write_tick_label_bundle(labels: Mapping[str, Any], destination: str | Path) 
     return root
 
 
-def load_tick_label_bundle(source: str | Path) -> dict[str, Any]:
+def write_tick_label_bundle(
+    labels: VerifiedTickPathLabels, destination: str | Path, *, verified_export: Any,
+) -> Path:
+    """Persist labels only when the matching verified export capability is supplied."""
+    return _write_tick_label_bundle_impl(
+        labels, destination, verified_export=verified_export, _allow_unverified=False,
+    )
+
+
+def _write_tick_label_bundle_for_test(labels: Mapping[str, Any], destination: str | Path) -> Path:
+    return _write_tick_label_bundle_impl(labels, destination, _allow_unverified=True)
+
+
+def _load_tick_label_bundle_impl(
+    source: str | Path, *, verified_export: Any = None, _allow_unverified: bool = False,
+) -> dict[str, Any]:
     """Load and fully verify a canonical label bundle before returning immutable arrays."""
     root = Path(source)
     manifest_path = root / "manifest.json"
@@ -967,4 +1081,30 @@ def load_tick_label_bundle(source: str | Path) -> dict[str, Any]:
         raise ValueError("label semantic fingerprint mismatch after load")
     if tick_label_artifact_fingerprint(labels) != manifest.get("artifact_fingerprint_sha256"):
         raise ValueError("label artifact fingerprint mismatch after load")
-    return labels
+    if _allow_unverified:
+        return labels
+    from .corpus_v3_export import VerifiedContractDayExport
+    if not (
+        type(verified_export) is VerifiedContractDayExport
+        and verified_export.is_authentic()
+        and labels.get("source_verification") == "verified_contract_day_export"
+        and _labels_match_verified_export(labels, verified_export)
+    ):
+        raise ValueError("production label bundle load requires the matching verified export capability")
+    return VerifiedTickPathLabels(labels, _token=_VERIFIED_LABEL_TOKEN)
+
+
+def load_tick_label_bundle(
+    source: str | Path, *, verified_export: Any,
+) -> VerifiedTickPathLabels:
+    """Load a production bundle only against its matching verified export capability."""
+    result = _load_tick_label_bundle_impl(
+        source, verified_export=verified_export, _allow_unverified=False,
+    )
+    if type(result) is not VerifiedTickPathLabels or not result.is_authentic():
+        raise ValueError("production label load did not retain verified provenance")
+    return result
+
+
+def _load_tick_label_bundle_for_test(source: str | Path) -> dict[str, Any]:
+    return _load_tick_label_bundle_impl(source, _allow_unverified=True)

@@ -31,12 +31,19 @@ REQUIRED_SHARD_METADATA = {
     "environment_receipt_sha256", "instrument_spec_sha256", "tick_size", "tick_value",
 }
 REQUIRED_RECEIPT_BINDINGS = {
-    "request", "roots", "date_range", "window_contract", "loader_sha256", "config_sha256",
-    "governance_sha256", "lake_hash_of_hashes_sha256", "selected_source_file_sha256",
-    "excluded_row_counts", "output_row_counts", "output_shard_sha256",
-    "source_file_index_to_path_and_sha256", "session_bounds_and_internal_gap_evidence",
-    "negative_price_preservation", "trade_row_preservation_independent_of_quote_validity",
-    "environment_receipt_sha256",
+    "schema_version", "status", "purpose", "request", "request_sha256", "roots",
+    "date_range", "window_contract", "output_format", "output_file",
+    "output_shard_sha256", "semantic_shard_sha256", "output_schema_sha256",
+    "semantic_metadata", "producer_source_manifest", "producer_source_manifest_sha256",
+    "environment", "environment_receipt_sha256", "instrument_spec",
+    "instrument_spec_sha256", "governance", "governance_sha256",
+    "lake_hash_of_hashes_sha256", "leaf_manifest_sha256", "consumer_contract_sha256",
+    "source_file_table", "source_file_table_sha256", "selected_source_file_sha256",
+    "session_bounds_and_internal_gap_evidence", "excluded_row_counts", "output_row_counts",
+    "source_rows_read", "negative_price_preservation",
+    "trade_row_preservation_independent_of_quote_validity", "source_ordering_evidence",
+    "market_path_completeness_claim", "continuous_market_completeness",
+    "receipt_payload_sha256",
 }
 REQUIRED_PROHIBITIONS = {
     "strategy_outcome_based_universe_selection", "random_train_validation_splits",
@@ -97,10 +104,12 @@ def verify_contract(contract: Mapping[str, Any], *, verify_artifacts: bool = Fal
     if set(roots) & set((contract.get("blocked_roots") or {}).keys()):
         raise CorpusV3Error("a root cannot be both admitted and blocked")
     admission = contract.get("current_admission") or {}
-    if admission.get("status") != "coverage_audit_only":
-        raise CorpusV3Error("current Corpus v3 contract is admitted only for coverage audit")
-    if admission.get("materialization") != "blocked":
-        raise CorpusV3Error("materialization must remain blocked until the export seam passes")
+    admission_pair = (admission.get("status"), admission.get("materialization"))
+    if admission_pair not in {
+        ("coverage_audit_only", "blocked"),
+        ("representative_shard_pilot", "representative_shard_only"),
+    }:
+        raise CorpusV3Error("Corpus v3 admission state is unsupported or too broad")
     source = contract.get("source") or {}
     source_end = _parse_day(source.get("max_date_exclusive"), "source.max_date_exclusive")
     _require_sha(source.get("hash_of_hashes_sha256"), "source.hash_of_hashes_sha256")
@@ -129,6 +138,29 @@ def verify_contract(contract: Mapping[str, Any], *, verify_artifacts: bool = Fal
         raise CorpusV3Error("export receipt verification must remain fail-closed")
     if export.get("mode") != "streaming_contract_day_shards_without_roll_splicing":
         raise CorpusV3Error("Corpus v3 export must emit unspliced contract-day shards")
+    if export.get("receipt_schema_version") != "alphaforge_foundation_export_receipt_v2":
+        raise CorpusV3Error("Corpus v3 requires the reconciled AlphaForge receipt-v2 schema")
+    if export.get("output_bundle_files") != ["ticks.parquet", "receipt.json"]:
+        raise CorpusV3Error("Corpus v3 export bundle must contain exactly Parquet plus receipt")
+    if export.get("physical_hash_meaning") != "sha256_of_exact_ticks_parquet_bytes":
+        raise CorpusV3Error("physical output hash meaning has drifted")
+    if export.get("semantic_hash_meaning") != "canonical_ordered_rows_plus_bound_semantic_metadata":
+        raise CorpusV3Error("semantic output hash meaning has drifted")
+    if admission_pair == ("representative_shard_pilot", "representative_shard_only"):
+        _require_sha(export.get("producer_exporter_sha256"), "producer_exporter_sha256")
+        if not re.fullmatch(r"[0-9a-f]{40}", str(export.get("producer_git_commit"))):
+            raise CorpusV3Error("pilot producer_git_commit must be a full lowercase Git SHA")
+        pilot = export.get("pilot_request") or {}
+        if (
+            set(pilot) != {"root", "contract_id", "session_day", "split_use", "purpose"}
+            or pilot.get("root") not in roots
+            or contract_root(str(pilot.get("contract_id")), roots) != pilot.get("root")
+            or pilot.get("purpose") != "foundation_training"
+            or pilot.get("split_use") not in {
+                "foundation_pretraining", "supervised_training", "development",
+            }
+        ):
+            raise CorpusV3Error("representative pilot request is invalid")
     if set(export.get("required_row_fields") or []) != REQUIRED_EXPORT_ROWS:
         raise CorpusV3Error("Corpus v3 export row schema does not match the sealed contract")
     if set(export.get("required_shard_metadata") or []) != REQUIRED_SHARD_METADATA:

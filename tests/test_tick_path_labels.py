@@ -13,11 +13,11 @@ from futures_foundation.tick_path_labels import (
     PATH_NEITHER,
     OrderedTickPathIndex,
     TickPathLabelConfig,
-    build_tick_path_labels,
+    _build_tick_path_labels_for_test,
     decision_manifest_sha256,
-    load_tick_label_bundle,
+    _load_tick_label_bundle_for_test,
     touches_by_horizon,
-    write_tick_label_bundle,
+    _write_tick_label_bundle_for_test,
 )
 
 
@@ -67,6 +67,7 @@ def _ticks(
         "root": root,
         "contract_id": contract_id,
         "session_day": "2025-01-02",
+        "split_use": "development",
         "session_start_utc_ns": np.int64(session_start * SECOND),
         "session_end_utc_ns": np.int64(session_end * SECOND),
         "coverage_start_utc_ns": np.int64(coverage_start * SECOND),
@@ -113,7 +114,7 @@ def _labels(
     expected = decision_manifest_sha256(
         index, decision_ts, decision_seq, risks, known_ts, known_seq
     )
-    return build_tick_path_labels(
+    return _build_tick_path_labels_for_test(
         index,
         decision_time_utc_ns=decision_ts,
         decision_event_seq=decision_seq,
@@ -247,7 +248,7 @@ def test_tick_alignment_decision_order_and_integral_risk_fail_closed():
         )
     index = OrderedTickPathIndex(ticks, tick_size=0.25, config=_cfg())
     with pytest.raises(ValueError, match="integer array"):
-        build_tick_path_labels(
+        _build_tick_path_labels_for_test(
             index,
             decision_time_utc_ns=np.asarray([0], np.int64),
             decision_event_seq=np.asarray([0], np.uint64),
@@ -527,7 +528,7 @@ def test_reusable_index_rejects_alignment_policy_drift():
         index, decision_ts, decision_seq, risks, decision_ts, decision_seq
     )
     with pytest.raises(ValueError, match="alignment policy"):
-        build_tick_path_labels(
+        _build_tick_path_labels_for_test(
             index,
             decision_time_utc_ns=decision_ts,
             decision_event_seq=decision_seq,
@@ -585,8 +586,8 @@ def test_int64_ordering_checks_do_not_overflow():
 
 def test_canonical_bundle_round_trip_and_tamper_detection(tmp_path):
     labels = _labels(_ticks([100, 100.25, 100.5, 100.75, 101]))
-    bundle = write_tick_label_bundle(labels, tmp_path / "labels")
-    loaded = load_tick_label_bundle(bundle)
+    bundle = _write_tick_label_bundle_for_test(labels, tmp_path / "labels")
+    loaded = _load_tick_label_bundle_for_test(bundle)
     assert loaded["semantic_fingerprint_sha256"] == labels["semantic_fingerprint_sha256"]
     assert loaded["artifact_fingerprint_sha256"] == labels["artifact_fingerprint_sha256"]
     for name, value in labels.items():
@@ -599,4 +600,4 @@ def test_canonical_bundle_round_trip_and_tamper_detection(tmp_path):
     raw[-1] ^= 1
     path.write_bytes(raw)
     with pytest.raises(ValueError, match="array hash mismatch"):
-        load_tick_label_bundle(bundle)
+        _load_tick_label_bundle_for_test(bundle)

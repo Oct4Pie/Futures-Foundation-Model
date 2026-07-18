@@ -3,9 +3,10 @@
   "contract_id": "corpus_v3_sierra_ticks_pre2026_v1",
   "purpose": "Outcome-blind universe selection and deterministic tick-derived foundation research",
   "current_admission": {
-    "status": "coverage_audit_only",
-    "materialization": "blocked",
-    "blocker": "missing_alphaforge_foundation_training_stream_and_hash_receipt"
+    "status": "representative_shard_pilot",
+    "materialization": "representative_shard_only",
+    "scope": "CL/CLK20/2020-04-20 foundation-pretraining interoperability pilot only",
+    "full_corpus_materialization": "blocked_pending_corpus_scale_admission_and_verification"
   },
   "source": {
     "source_id": "sc_historical_ticks_v2",
@@ -39,6 +40,19 @@
     "owner": "alphaforge",
     "purpose_token": "foundation_training",
     "mode": "streaming_contract_day_shards_without_roll_splicing",
+    "receipt_schema_version": "alphaforge_foundation_export_receipt_v2",
+    "output_bundle_files": ["ticks.parquet", "receipt.json"],
+    "physical_hash_meaning": "sha256_of_exact_ticks_parquet_bytes",
+    "semantic_hash_meaning": "canonical_ordered_rows_plus_bound_semantic_metadata",
+    "producer_git_commit": "0a955b46081daf6adb17e823eea5b814a1d5df62",
+    "producer_exporter_sha256": "3432789867ebcbfd2f8bdbdecc7cf3ed367775b7f518c5ff5fbeea6436d70cba",
+    "pilot_request": {
+      "root": "CL",
+      "contract_id": "CLK20",
+      "session_day": "2020-04-20",
+      "split_use": "foundation_pretraining",
+      "purpose": "foundation_training"
+    },
     "must_reuse_admitted_loader_internals": true,
     "must_not_use_purpose_tokens": ["qa", "validation", "historical_validation"],
     "required_row_fields": [
@@ -52,12 +66,19 @@
       "environment_receipt_sha256", "instrument_spec_sha256", "tick_size", "tick_value"
     ],
     "required_receipt_bindings": [
-      "request", "roots", "date_range", "window_contract", "loader_sha256",
-      "config_sha256", "governance_sha256", "lake_hash_of_hashes_sha256",
-      "selected_source_file_sha256", "excluded_row_counts", "output_row_counts",
-      "output_shard_sha256", "source_file_index_to_path_and_sha256",
-      "session_bounds_and_internal_gap_evidence", "negative_price_preservation",
-      "trade_row_preservation_independent_of_quote_validity", "environment_receipt_sha256"
+      "schema_version", "status", "purpose", "request", "request_sha256", "roots",
+      "date_range", "window_contract", "output_format", "output_file",
+      "output_shard_sha256", "semantic_shard_sha256", "output_schema_sha256",
+      "semantic_metadata", "producer_source_manifest", "producer_source_manifest_sha256",
+      "environment", "environment_receipt_sha256", "instrument_spec",
+      "instrument_spec_sha256", "governance", "governance_sha256",
+      "lake_hash_of_hashes_sha256", "leaf_manifest_sha256", "consumer_contract_sha256",
+      "source_file_table", "source_file_table_sha256", "selected_source_file_sha256",
+      "session_bounds_and_internal_gap_evidence", "excluded_row_counts", "output_row_counts",
+      "source_rows_read", "negative_price_preservation",
+      "trade_row_preservation_independent_of_quote_validity", "source_ordering_evidence",
+      "market_path_completeness_claim", "continuous_market_completeness",
+      "receipt_payload_sha256"
     ],
     "ordering_must_be_strict_and_unique": ["timestamp_utc_ns", "event_seq"],
     "missing_event_seq_policy": "reject",
