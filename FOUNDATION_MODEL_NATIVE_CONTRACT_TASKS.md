@@ -4,6 +4,26 @@ This checklist is governed by
 [FOUNDATION_MODEL_NATIVE_CONTRACT_PLAN.md](FOUNDATION_MODEL_NATIVE_CONTRACT_PLAN.md). No training or
 new ranking is authorized until the relevant admission items pass.
 
+## Hardened native F/R evidence checkpoint — 2026-07-17 PDT / 2026-07-18 UTC
+
+- Methodology source: `8e2bd47d8fd6dc333dfa74ad0eea3d3613e63469`.
+- Registry content SHA-256: `e51b6a32a92ac96bf5d7b93cc0cca1fbb53dd3dc5db25e99e98aeca20a2fa5a1`.
+- Canonical evidence content SHA-256:
+  `1fd3115ae6bccf82136380bb24d540034899dc261f0f8dad852ba09825265edc`.
+- All 16 admitted native forecast/representation tracks passed canonical execution and an
+  independent replay; every output key, dtype, shape and array byte matched. The replay comparison
+  is sealed in
+  [`output/native_parity_evidence_v2_replay/replay_attestation.json`](output/native_parity_evidence_v2_replay/replay_attestation.json).
+- A fresh wheel unpacked outside the source checkout verified all 16 archived bundles. A fresh clone
+  from the project remote reproduced the registry/evidence hashes and replay comparison.
+- Verification suite: 1,035 passed, 96 skipped and 8 existing warnings.
+- Trusted reviewer keys: 0. Runtime-authorized tracks: 0. Training-admitted tracks: 0. Independent
+  agent reviews are technical rubber-duck evidence, not organizational approvals and were not
+  converted into signatures.
+- Scope is deliberately narrow: 512-context, 16-horizon, FP32 synthetic native F/R parity. This is
+  not classification, custom pooling, fine-tuning, SSL, barrier-task, market-data, trading-quality,
+  resume/export, deployment, or OOS evidence.
+
 ## Phase 0 — historical evidence and registry
 
 - [x] Snapshot and hash the current historical tournament index in
