@@ -267,12 +267,26 @@ verification item is also checked.
   reload-verifies crash-safe publication. Official effective-dated rules—not a calendar library's
   historically backfilled timestamps—own normal geometry; the pinned library is an open/closed and
   early/late-exception diagnostic only. The focused suite passes 26/26; calendar/export/coverage
-  tests pass 46/46; the independent authority-boundary review found no remaining code blocker.
+  tests pass 46/46 at the frozen producer commit; the independent authority-boundary review found
+  no remaining code blocker. Subsequent strict-JSON/symlink hardening adds one focused producer
+  regression and remains uncommitted on the scale worktree.
+- [x] Implement an independent FFM denominator verifier without importing AlphaForge or a calendar
+  library. It binds the exact pretty-printed consumer contract by physical SHA without rewriting
+  it, reconstructs every root/date/status/UTC segment from canonical official rules, rejects OOS,
+  omissions, semantic rehashes, non-finite JSON, dependency/source drift and path symlinks, and
+  reopens/reverifies the file at the materialization boundary. Two independent reviews found and
+  closed stale-open-override, empty-provenance, canonical-format and symlink-erasure defects.
 - [ ] Build and review the production `market_calendar_rules_v2` evidence set: exact effective
   dates for all 43 roots, historical product-rule periods, and complete source-backed exceptional
   sessions. Fixture tests do not admit these facts. US equity and NKD require separate histories;
   grain/oilseed requires four regimes; pre/post-2015 metals and energy hours differ; every weekday
   closure and early/late exception must carry an official source ID.
+  The first immutable CME listing/regime bundle is discovery evidence only: an independent review
+  rejected it for production because page-global markers do not prove fact relationships and most
+  listing notices are prospective or pending. A second immutable holiday inventory has acquired
+  annual official CME archives for 2011-2017 and 2019, but archive presence does not prove parsed
+  root/date coverage. Explicit official-source gaps remain for 2018, 2020 Presidents Day, 2023 H2,
+  all 2024 and 2025 H1; PMC, observed inactivity and generic clearing notices are not substitutes.
 - [ ] Resolve or quarantine pre-2017 `RTY` provider history. Official CME RTY starts on
   `2017-07-10`; older files cannot silently inherit that product identity.
 - [ ] Define contract-lifecycle/last-trade semantics separately from the root/venue denominator so

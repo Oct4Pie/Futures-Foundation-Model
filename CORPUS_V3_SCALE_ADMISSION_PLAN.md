@@ -16,11 +16,14 @@ factor, win rate, model prediction or holdout outcome may influence this matrix 
 - Scale-safety exporter changes: full verification before atomic publication, destination-keyed
   staging, stale-stage scavenging under the exact destination lock, and post-rename recovery.
 - Process tests: 14 exporter tests and 20 exporter-plus-coverage tests pass.
-- Session-denominator tests: 26 focused tests and 46 combined calendar/export/coverage tests pass.
+- Session-denominator tests at the frozen producer commit: 26 focused tests and 46 combined
+  calendar/export/coverage tests pass. A later uncommitted strict-JSON/symlink hardening regression
+  raises the focused producer count to 27.
   Two independent adversarial reviews cleared the implementation after trust-boundary repairs.
 - Full AlphaForge suite: 301 pass; the same three pre-existing burn-ledger/trap-oracle failures
   remain and are unrelated to the Corpus v3 scale branch.
-- FFM suite: 1,105 pass and 96 skip.
+- FFM suite with the independent-consumer verifier: 1,125 pass and 96 skip, with 8 existing
+  warnings.
 - Coverage report: rebuilt deterministically against the current pilot contract; still selects
   zero roots pending a sessionized liquidity matrix and scale admission.
 
@@ -30,6 +33,12 @@ provenance, until pushed to an authorized remote or stored in a hash-pinned sour
 The denominator implementation is admitted as a mechanism, not as market-calendar evidence.
 Production rules, source artifacts, all 43 effective-date histories, exceptional sessions, the
 complete pre-OOS artifact and cross-repository consumption are still blocked.
+
+FFM now has an independent outcome-blind consumer verifier. It does not import AlphaForge or a
+calendar package, accepts the existing pretty consumer contract by exact physical hash, and
+reopens/reverifies a denominator at the materialization boundary rather than retaining mutable
+parsed capability state. This is mechanism evidence only because no production 43-root rules,
+scope or denominator artifact exists.
 
 Official effective-dated rules are authoritative for normal geometry. The pinned calendar library
 is only an independent open/closed and early/late-exception diagnostic because it backfills modern
@@ -163,6 +172,10 @@ For representatives `ES, CL, GC, 6E, ZN, BTC, ZC`:
    regimes across 2012, 2013 and 2015 boundaries. Metals/energy require the 2015 close transition.
    Every weekday closure and library-flagged early/late session must have a source-backed override;
    fixture evidence is not production proof.
+   The current proposed listing/regime snapshot is explicitly barred from production consumption:
+   page-global marker matching and prospective launch notices require a new modality-aware,
+   excerpt-bound review artifact. Annual official CME holiday archives are acquired for 2011-2017
+   and 2019 only; 2018, 2020-2025H1 retain explicit gaps, including 2023 H2, all 2024 and 2025 H1.
 3. Generate the contract-derived complete 43-root denominator through the end of development,
    excluding the reserved OOS interval by construction.
 4. Measure full-range wall time, peak RSS, artifact bytes and reload verification, then run the
