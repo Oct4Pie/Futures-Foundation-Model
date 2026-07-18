@@ -9,12 +9,14 @@ successful import from the wrong environment cannot become admission evidence.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.metadata
 import inspect
 import json
 import os
 from pathlib import Path
 import random
+import re
 import socket
 import subprocess
 import sys
@@ -224,6 +226,66 @@ def _max_abs(left: Any, right: Any) -> float:
     return float(np.max(np.abs(a.astype(np.float64) - b.astype(np.float64)), initial=0.0))
 
 
+def _affine_evidence(observed: Any, expected: Any, *, label: str) -> dict[str, Any]:
+    left, right = _numpy(observed), _numpy(expected)
+    error = _max_abs(left, right)
+    passed = bool(np.allclose(left, right, atol=1e-4, rtol=1e-5, equal_nan=False))
+    return _invariant(passed, f"{label} affine input/output max_abs={error:.9g}")
+
+
+def _file_digest(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _license_evidence(
+    args: argparse.Namespace, dossier: Mapping[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Bind the exact model-card and source-license bytes used by this run."""
+    model_card = Path(args.model_snapshot) / "README.md"
+    if not model_card.is_file():
+        return _invariant(False, "exact-revision model card README.md is missing"), {}
+    text = model_card.read_text(encoding="utf-8", errors="replace")
+    match = re.search(r"(?im)^license:\s*([^\s#]+)", text)
+    declared = match.group(1).strip().lower() if match else ""
+    registry_id = str((dossier.get("license") or {}).get("id", ""))
+    expected = {
+        "Apache-2.0": "apache-2.0",
+        "Apache-2.0-code/MIT-weights": "mit",
+        "MIT": "mit",
+        "CC-BY-NC-4.0": "cc-by-nc-4.0",
+    }.get(registry_id)
+    source = Path(args.source_repo)
+    source_candidates = sorted(
+        [path for pattern in ("LICENSE*", "COPYING*") for path in source.glob(pattern)]
+    )
+    if source.name.endswith(".dist-info"):
+        metadata = source / "METADATA"
+        if metadata.is_file():
+            source_candidates.append(metadata)
+    source_candidates = list(dict.fromkeys(source_candidates))
+    source_ok = any(path.is_file() and path.stat().st_size > 0 for path in source_candidates)
+    deployment = str((dossier.get("license") or {}).get("deployment", ""))
+    passed = bool(expected and declared == expected and source_ok and deployment)
+    artifacts = {
+        "model_card": {"path": "README.md", "sha256": _file_digest(model_card), "declared_license": declared},
+        "source_licenses": [
+            {"path": path.name, "sha256": _file_digest(path)}
+            for path in source_candidates if path.is_file()
+        ],
+        "registry_license": registry_id,
+        "deployment": deployment,
+    }
+    return _invariant(
+        passed,
+        f"exact model card declares {declared!r}; registry expects {expected!r}; "
+        f"bound source license artifacts={len(artifacts['source_licenses'])}",
+    ), artifacts
+
+
 def _paired_key(name: str, source: str, target: str) -> str:
     if name == source:
         return target
@@ -419,11 +481,15 @@ def _checks(
     frequency_evidence: Mapping[str, Any] | None,
     scaling_evidence: Mapping[str, Any] | None,
     boundary_evidence: Mapping[str, Any],
-    prefix_evidence: Mapping[str, Any],
+    prefix_evidence: Mapping[str, Any] | None,
     license_evidence: Mapping[str, Any],
+    official_evidence: Mapping[str, Any],
 ) -> dict[str, dict[str, str]]:
     values: dict[str, dict[str, str]] = {
-        "official_example": _check_pass("raw official_output arrays were produced by pinned upstream public APIs"),
+        "official_example": _check_invariant(
+            official_evidence,
+            not_applicable="an official public output is mandatory for native parity",
+        ),
         "adapter_public_api_parity": (
             _check_pass(f"all public native output pairs agree; max_abs={parity_error:.9g}")
             if parity_pass else
@@ -460,7 +526,11 @@ def _checks(
             boundary_evidence, not_applicable="context boundary is always applicable"
         ),
         "prefix_invariance": _check_invariant(
-            prefix_evidence, not_applicable="prefix isolation is always applicable"
+            prefix_evidence,
+            not_applicable=(
+                "base native API receives only the supplied causal context; numerical "
+                "composite-input prefix invariance is a downstream/training gate"
+            ),
         ),
         "gradient_freeze_surface": _check_na("base inference/representation evidence does not admit adaptation"),
         "repeated_batch_loss_decrease": _check_na("base inference/representation evidence does not admit training"),
@@ -880,6 +950,21 @@ def _run_kronos(
         output_shapes[suffix] = list(candidate.shape)
         parity_errors.append(_max_abs(reference, candidate))
         batch_errors.append(_max_abs(candidate, partition))
+    affine_scale, affine_shift = 1.25, 7.0
+    one_minute = base + offsets * 60_000_000_000
+    scaled_frames, scaled_context_times, scaled_future_times = _kronos_inputs(
+        values * affine_scale + affine_shift, one_minute
+    )
+    _seed(args.seed)
+    scaled_raw = kronos_native_forecast(
+        predictor, scaled_frames, scaled_context_times, scaled_future_times,
+        prediction_length=HORIZON, temperature=1.0, top_k=1,
+        top_p=1.0, sample_count=1, verbose=False,
+    )
+    scaled_output = np.stack([frame.to_numpy(np.float32) for frame in scaled_raw])[:, :, :5]
+    expected_scaled = arrays["adapter_1min"][:, :, :5] * affine_scale + affine_shift
+    arrays["scaling_observed"] = scaled_output
+    arrays["scaling_expected"] = expected_scaled
     return {
         "arrays": arrays,
         "parity_error": max(parity_errors),
@@ -903,9 +988,8 @@ def _run_kronos(
             set(output_shapes) == {f"{value}min" for value in TIMEFRAMES_MINUTES},
             "UTC calendar inputs exercised 1/3/5/15/30/60-minute deltas",
         ),
-        "scaling": _invariant(
-            True,
-            "raw-price public outputs were compared directly after upstream normalize/clip/inverse",
+        "scaling": _affine_evidence(
+            scaled_output, expected_scaled, label="Kronos native normalize/inverse"
         ),
     }
 
@@ -1054,6 +1138,17 @@ def _run_ttm(args: argparse.Namespace, values: np.ndarray) -> dict[str, Any]:
             parity_errors.append(_max_abs(reference, candidate))
             batch_errors.append(_max_abs(candidate, partition))
             output_shapes[timeframe] = list(candidate.shape)
+        affine_scale, affine_shift = 1.25, 7.0
+        affine_token = torch.full(
+            (len(values),), TTM_FREQUENCY_TOKENS["1min"],
+            dtype=torch.long, device=args.device,
+        )
+        scaled_output = ttm_native_forecast(
+            model, tensor * affine_scale + affine_shift, affine_token
+        )
+        expected_scaled = arrays["adapter_1min"] * affine_scale + affine_shift
+        arrays["scaling_observed"] = scaled_output
+        arrays["scaling_expected"] = expected_scaled
     return {
         "arrays": arrays,
         "parity_error": max(parity_errors),
@@ -1073,9 +1168,8 @@ def _run_ttm(args: argparse.Namespace, values: np.ndarray) -> dict[str, Any]:
             set(output_shapes) == set(TTM_FREQUENCY_TOKENS),
             "exercised 1/3/5/15/30/60-minute tokens 1/0/3/5/6/7; 3min is OOV=0",
         ),
-        "scaling": _invariant(
-            True,
-            "raw-value public outputs were compared directly after TTM native std scaling",
+        "scaling": _affine_evidence(
+            scaled_output, expected_scaled, label="TTM native std scale/inverse"
         ),
     }
 
@@ -1111,12 +1205,18 @@ def _run_moirai(args: argparse.Namespace, values: np.ndarray) -> dict[str, Any]:
         changed[:, :16, 4] = 12345.0
         masked_reference = moirai2_native_forecast(model, target, missing, pad)
         masked_changed = moirai2_native_forecast(model, changed, missing, pad)
+        affine_scale, affine_shift = 1.25, 7.0
+        scaled_output = moirai2_native_forecast(
+            model, target * affine_scale + affine_shift, observed, pad
+        )
+        expected_scaled = candidate * affine_scale + affine_shift
     masked_error = _max_abs(masked_reference, masked_changed)
     quantile_difference = torch.diff(candidate, dim=1).min().item()
     return {
         "arrays": {
             "official": reference, "adapter": candidate, "partitioned": partition,
             "masked_reference": masked_reference, "masked_changed": masked_changed,
+            "scaling_observed": scaled_output, "scaling_expected": expected_scaled,
         },
         "parity_error": _max_abs(reference, candidate),
         "batch_error": _max_abs(candidate, partition),
@@ -1135,9 +1235,8 @@ def _run_moirai(args: argparse.Namespace, values: np.ndarray) -> dict[str, Any]:
             f"changing explicitly unobserved values produced max_abs={masked_error:.9g} after zero fill",
         ),
         "frequency": None,
-        "scaling": _invariant(
-            True,
-            "public raw quantiles were compared directly after official module scaling",
+        "scaling": _affine_evidence(
+            scaled_output, expected_scaled, label="Moirai native scale/inverse"
         ),
     }
 
@@ -1175,11 +1274,18 @@ def _run_toto(args: argparse.Namespace, values: np.ndarray) -> dict[str, Any]:
         masked_changed = toto2_native_forecast(
             model, changed, missing, groups, prediction_length=16
         )
+        affine_scale, affine_shift = 1.25, 7.0
+        scaled_output = toto2_native_forecast(
+            model, target * affine_scale + affine_shift, mask, groups,
+            prediction_length=16,
+        )
+        expected_scaled = candidate * affine_scale + affine_shift
     masked_error = _max_abs(masked_reference, masked_changed)
     return {
         "arrays": {
             "official": reference, "adapter": candidate, "partitioned": partition,
             "masked_reference": masked_reference, "masked_changed": masked_changed,
+            "scaling_observed": scaled_output, "scaling_expected": expected_scaled,
         },
         "parity_error": _max_abs(reference, candidate),
         "batch_error": _max_abs(candidate, partition),
@@ -1199,9 +1305,8 @@ def _run_toto(args: argparse.Namespace, values: np.ndarray) -> dict[str, Any]:
             f"changing explicitly masked values produced max_abs={masked_error:.9g} after zero fill",
         ),
         "frequency": None,
-        "scaling": _invariant(
-            True,
-            "public raw quantiles were compared directly after Toto native causal scaling",
+        "scaling": _affine_evidence(
+            scaled_output, expected_scaled, label="Toto native causal scale/inverse"
         ),
     }
 
@@ -1371,10 +1476,7 @@ def execute(args: argparse.Namespace) -> None:
         runtime.get("context_length") == 512
         and (not is_forecast or runtime.get("prediction_length") == HORIZON)
     )
-    prefix_inputs = set(outcome.get("input_surfaces") or ("context",))
-    forbidden_inputs = prefix_inputs & {"future", "label", "target", "outcome"}
-    license_record = dossier.get("license") or {}
-    license_pass = bool(license_record.get("id") and license_record.get("deployment"))
+    license_evidence, license_artifacts = _license_evidence(args, dossier)
     batch_evidence_kind = (
         "seeded adapter/repeat" if parity["seeded_repeat"] is not None
         else "full/partitioned"
@@ -1396,15 +1498,15 @@ def execute(args: argparse.Namespace) -> None:
             f"runtime exercised context={runtime.get('context_length')}, "
             f"horizon={runtime.get('prediction_length', 'not_applicable')}",
         ),
-        prefix_evidence=_invariant(
-            not forbidden_inputs,
-            "worker input surfaces=" + ",".join(sorted(prefix_inputs))
-            + f"; forbidden={sorted(forbidden_inputs)}",
-        ),
-        license_evidence=_invariant(
-            license_pass,
-            f"registry license={license_record.get('id')!r}, "
-            f"deployment={license_record.get('deployment')!r}",
+        # A base public API that only accepts context cannot numerically prove the
+        # larger composite-input property.  Report it honestly as not applicable;
+        # downstream/training pipelines own their own prefix-invariance tests.
+        prefix_evidence=None,
+        license_evidence=license_evidence,
+        official_evidence=_invariant(
+            bool(parity["public_pairs"])
+            and all(np.asarray(outcome["arrays"][pair["official"]]).size > 0 for pair in parity["public_pairs"]),
+            f"executed and persisted {len(parity['public_pairs'])} pinned public output surface(s)",
         ),
     )
     failed_checks = sorted(
@@ -1429,6 +1531,7 @@ def execute(args: argparse.Namespace) -> None:
         "source_revision": dossier["source_revision"],
         "model_revision": dossier["model_revision"],
         "license": dossier["license"],
+        "license_artifacts": license_artifacts,
         "worker_source": str(Path(__file__).resolve()),
     }
     _write_result(

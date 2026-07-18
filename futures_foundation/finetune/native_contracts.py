@@ -377,6 +377,21 @@ def _validate_evidence(value: Mapping[str, Any], registry: Mapping[str, Any]) ->
             raise NativeContractError(f"evidence record {evidence_id} tokenizer mismatch")
         if not isinstance(record.get("environment"), Mapping) or not record["environment"]:
             raise NativeContractError(f"evidence record {evidence_id} needs an environment")
+        if record.get("profile") == "generated_bundle":
+            bundle = record.get("bundle")
+            if not isinstance(bundle, Mapping):
+                raise NativeContractError(
+                    f"generated evidence record {evidence_id} needs a raw bundle binding"
+                )
+            if bundle.get("path_base") != "evidence_registry_parent":
+                raise NativeContractError(
+                    f"generated evidence record {evidence_id} has invalid bundle path base"
+                )
+            for field in (
+                "path", "bundle_sha256", "fixture_sha256", "command_sha256",
+                "result_sha256", "stdout_sha256", "stderr_sha256",
+            ):
+                _require_string(bundle.get(field), f"{evidence_id}.bundle.{field}")
         _resolved_evidence_checks(value, record, registry)
 
     for arm_key, dossier in registry["models"].items():
@@ -472,6 +487,76 @@ def technical_runtime_contract(
     if not isinstance(runtime, Mapping) or not runtime:
         raise NativeContractError(f"{arm_key}.{track} has no admitted runtime contract")
     return dict(runtime)
+
+
+def verify_technical_evidence_bundle(
+    arm_key: str,
+    track: str,
+    path: str | Path = REGISTRY_PATH,
+) -> dict[str, Any] | None:
+    """Reopen and verify the raw bundle bound by installed technical evidence.
+
+    Transitional hand-reviewed records have no bundle and return ``None``.  Generated
+    records must resolve relative to the canonical registry/evidence directory.  This
+    function is intentionally called by admission-report build and verification so an
+    installed JSON claim cannot authorize execution after its raw proof is moved,
+    deleted, or tampered with.
+    """
+    evidence_id, record, _ = technical_evidence(arm_key, track, path)
+    bundle = record.get("bundle")
+    if bundle is None:
+        if record.get("profile") == "generated_bundle":
+            raise NativeContractError(
+                f"generated technical evidence {evidence_id!r} has no raw bundle binding"
+            )
+        return None
+    if not isinstance(bundle, Mapping):
+        raise NativeContractError(f"technical evidence {evidence_id!r} bundle is invalid")
+    if bundle.get("path_base") != "evidence_registry_parent":
+        raise NativeContractError(
+            f"technical evidence {evidence_id!r} has unsupported bundle path base"
+        )
+    relative = _require_string(bundle.get("path"), f"{evidence_id}.bundle.path")
+    relative_path = Path(relative)
+    if relative_path.is_absolute():
+        raise NativeContractError(f"technical evidence {evidence_id!r} bundle path is absolute")
+    bundle_path = (evidence_path_for_registry(path).parent / relative_path).resolve()
+    if not (bundle_path / "bundle_manifest.json").is_file():
+        raise NativeContractError(
+            f"technical evidence {evidence_id!r} raw bundle is unavailable: {bundle_path}"
+        )
+    # Lazy import avoids a module cycle: the bundle verifier itself consumes this
+    # registry module.
+    from .native_evidence_bundle import NativeEvidenceError, verify_parity_bundle
+
+    try:
+        manifest, result = verify_parity_bundle(bundle_path, registry_path=path)
+    except NativeEvidenceError as exc:
+        raise NativeContractError(
+            f"technical evidence {evidence_id!r} raw bundle failed verification: {exc}"
+        ) from exc
+    expected = {
+        "bundle_sha256": manifest.get("bundle_sha256"),
+        "fixture_sha256": (manifest.get("fixture") or {}).get("fixture_sha256"),
+        "command_sha256": (manifest.get("command") or {}).get("command_sha256"),
+        "result_sha256": (manifest.get("result") or {}).get("sha256"),
+        "stdout_sha256": ((manifest.get("logs") or {}).get("stdout") or {}).get("sha256"),
+        "stderr_sha256": ((manifest.get("logs") or {}).get("stderr") or {}).get("sha256"),
+    }
+    mismatches = {
+        key: {"expected": value, "recorded": bundle.get(key)}
+        for key, value in expected.items()
+        if bundle.get(key) != value
+    }
+    if mismatches:
+        raise NativeContractError(
+            f"technical evidence {evidence_id!r} bundle binding drift: {mismatches}"
+        )
+    if result.get("admitted_runtime") != record.get("admitted_runtime"):
+        raise NativeContractError(
+            f"technical evidence {evidence_id!r} runtime differs from its raw result"
+        )
+    return {"path": str(bundle_path), "manifest": manifest, "result": result}
 
 
 def validate_runtime_contract(
@@ -782,6 +867,7 @@ def build_admission_report(
         raise NativeContractError(f"admission report status {status!r} is not admissible")
     normalized = normalize_check_results(checks, path=path)
     evidence_id, evidence_record, evidence_checks = technical_evidence(arm.key, track, path)
+    verify_technical_evidence_bundle(arm.key, track, path)
     expected_evidence_status = (
         "research_only_pass" if status == "research_only" else "pass"
     )
@@ -897,6 +983,7 @@ def verify_admission_report(
     if value.get("evidence_registry_sha256") != evidence_sha256(path):
         raise NativeContractError("admission report technical-evidence registry is stale")
     evidence_id, evidence_record, evidence_checks = technical_evidence(arm.key, track, path)
+    verify_technical_evidence_bundle(arm.key, track, path)
     if value.get("technical_evidence_id") != evidence_id:
         raise NativeContractError("admission report technical-evidence ID mismatch")
     if value.get("technical_evidence_sha256") != content_sha256(evidence_record):

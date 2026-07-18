@@ -100,6 +100,14 @@ def test_execute_dispatches_sealed_fixture_and_writes_native_result(tmp_path, mo
         np.arange(4 * 512, dtype=np.int64).reshape(4, 512),
     )
     monkeypatch.setattr(worker, "_load_fixture", lambda: fixture)
+    monkeypatch.setattr(
+        worker,
+        "_license_evidence",
+        lambda args, dossier: (
+            worker._invariant(True, "mock bound license artifacts"),
+            {"mock": True},
+        ),
+    )
     seen = {}
 
     def fake_runner(args, values, *, track):
@@ -161,6 +169,15 @@ def test_execute_fails_and_records_out_of_tolerance_public_output(tmp_path, monk
         np.ones((4, 512, 5), np.float32),
         np.arange(4 * 512, dtype=np.int64).reshape(4, 512),
     ))
+
+    monkeypatch.setattr(
+        worker,
+        "_license_evidence",
+        lambda args, dossier: (
+            worker._invariant(True, "mock bound license artifacts"),
+            {"mock": True},
+        ),
+    )
 
     def bad_runner(args, values, *, track):
         official = np.ones((4, 16, 3), np.float32)

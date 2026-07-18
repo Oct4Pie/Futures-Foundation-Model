@@ -10,7 +10,10 @@ import pytest
 
 from futures_foundation.finetune.native_contracts import (
     EVIDENCE_SCHEMA,
+    NativeContractError,
+    load_evidence,
     load_registry,
+    verify_technical_evidence_bundle,
 )
 from futures_foundation.finetune.native_evidence_bundle import (
     AGGREGATE_SCHEMA,
@@ -319,15 +322,50 @@ def test_aggregate_generates_candidate_but_cannot_install_it(tmp_path):
     assert destination.is_file()
     assert aggregate["candidate_evidence"]["records"][
         "mantis_v1:R:2026-07-18"
-    ]["bundle"]["path"] == "bundle"
+    ]["bundle"]["path"] == "../bundle"
     assert aggregate["candidate_evidence"]["records"][
         "mantis_v1:R:2026-07-18"
-    ]["bundle"]["path_base"] == "aggregate_parent"
+    ]["bundle"]["path_base"] == "evidence_registry_parent"
     with pytest.raises(NativeEvidenceError, match="may not overwrite canonical evidence"):
         aggregate_parity_bundles(
             [bundle], output_path=registry_path.with_name("native_contract_evidence.json"),
             require_all_current=False, registry_path=registry_path,
         )
+
+
+def test_installed_generated_evidence_reopens_bundle_and_fails_closed(tmp_path):
+    registry_path, bundle, _ = _bundle(tmp_path)
+    destination = tmp_path / "candidate.json"
+    aggregate = aggregate_parity_bundles(
+        [bundle], output_path=destination,
+        generated_utc="2026-07-17T13:00:00Z", require_all_current=False,
+        registry_path=registry_path,
+    )
+    evidence_path = registry_path.with_name("native_contract_evidence.json")
+    installed = json.loads(evidence_path.read_text())
+    installed["check_profiles"]["generated_bundle"] = aggregate[
+        "candidate_evidence"
+    ]["check_profiles"]["generated_bundle"]
+    installed["records"]["mantis_v1:R:2026-07-18"] = aggregate[
+        "candidate_evidence"
+    ]["records"]["mantis_v1:R:2026-07-18"]
+    evidence_path.write_text(json.dumps(installed), encoding="utf-8")
+    load_registry.cache_clear()
+    load_evidence.cache_clear()
+    verified = verify_technical_evidence_bundle(
+        "mantis_v1", "R", path=registry_path
+    )
+    assert verified is not None
+    assert Path(verified["path"]) == bundle.resolve()
+
+    raw = bundle / "raw/official_output.npy"
+    raw.write_bytes(raw.read_bytes() + b"tamper")
+    with pytest.raises(NativeContractError, match="raw bundle failed verification"):
+        verify_technical_evidence_bundle("mantis_v1", "R", path=registry_path)
+
+    shutil.rmtree(bundle)
+    with pytest.raises(NativeContractError, match="raw bundle is unavailable"):
+        verify_technical_evidence_bundle("mantis_v1", "R", path=registry_path)
 
 
 def test_aggregate_requires_complete_current_coverage_by_default(tmp_path):

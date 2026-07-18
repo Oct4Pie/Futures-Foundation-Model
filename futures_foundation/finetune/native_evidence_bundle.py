@@ -852,6 +852,8 @@ def aggregate_parity_bundles(
     registry_args = {} if registry_path is None else {"path": registry_path}
     registry = load_registry(**registry_args)
     destination = Path(output_path).resolve()
+    effective_registry_path = Path(registry_path or REGISTRY_PATH).resolve()
+    evidence_parent = effective_registry_path.parent
     verified: dict[tuple[str, str], tuple[dict[str, Any], dict[str, Any], Path]] = {}
     for raw_path in bundle_directories:
         path = Path(raw_path).resolve()
@@ -900,8 +902,11 @@ def aggregate_parity_bundles(
             "admitted_runtime": dict(result["admitted_runtime"]),
             "metrics": dict(result["metrics"]),
             "bundle": {
-                "path": os.path.relpath(path, destination.parent),
-                "path_base": "aggregate_parent",
+                # The candidate is reviewed and then copied out of the aggregate.  Bind
+                # paths to the canonical evidence/registry directory so they remain valid
+                # after installation instead of silently changing meaning.
+                "path": os.path.relpath(path, evidence_parent),
+                "path_base": "evidence_registry_parent",
                 "bundle_sha256": manifest["bundle_sha256"],
                 "fixture_sha256": manifest["fixture"]["fixture_sha256"],
                 "command_sha256": manifest["command"]["command_sha256"],
@@ -940,7 +945,6 @@ def aggregate_parity_bundles(
         "candidate_evidence": candidate,
     }
     aggregate["aggregate_sha256"] = content_sha256(aggregate)
-    effective_registry_path = Path(registry_path or REGISTRY_PATH).resolve()
     canonical_path = effective_registry_path.with_name("native_contract_evidence.json")
     if destination == canonical_path:
         raise NativeEvidenceError(
