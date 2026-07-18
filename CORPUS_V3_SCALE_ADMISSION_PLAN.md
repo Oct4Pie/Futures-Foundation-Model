@@ -69,7 +69,8 @@ files—defines training identity. A separate full-lake hash remains provenance 
 
 ### Tier A — all-root fall-DST canary
 
-Session day `2023-11-06`, split `foundation_pretraining`, purpose `foundation_training`:
+Session day `2023-11-06`, split `foundation_pretraining`, purpose
+`foundation_schema_matrix`:
 
 ```text
 6A=6AZ23   6B=6BZ23   6C=6CZ23   6E=6EZ23   6J=6JZ23   6S=6SZ23
@@ -83,7 +84,9 @@ ZW=ZWZ23
 ```
 
 Two positive-size source containers were verified for every request. Expected non-agriculture
-bounds are `[2023-11-05T23:00Z, 2023-11-06T22:00Z)`; agriculture ends at `19:30Z`.
+bounds are `[2023-11-05T23:00Z, 2023-11-06T22:00Z)`. Agriculture is not one continuous envelope:
+its declared segments are `[2023-11-06T01:00Z, 13:45Z)` and
+`[2023-11-06T14:30Z, 19:20Z)`.
 
 ### Tier B — spring-DST cross-family canaries
 
@@ -93,8 +96,9 @@ Session day `2024-03-11`:
 ES/ESH24  CL/CLJ24  GC/GCJ24  6E/6EH24  ZN/ZNH24  BTC/BTCH24  ZC/ZCH24
 ```
 
-Expected non-agriculture bounds are `[2024-03-10T22:00Z, 2024-03-11T21:00Z)`; agriculture ends at
-`18:30Z`. Required source containers exist for all seven.
+Expected non-agriculture bounds are `[2024-03-10T22:00Z, 2024-03-11T21:00Z)`. Agriculture uses
+`[2024-03-11T00:00Z, 12:45Z)` and `[2024-03-11T13:30Z, 18:20Z)`. Required source containers
+exist for all seven.
 
 ### Tier C — historical schema and multiplier canaries
 
@@ -142,8 +146,8 @@ For representatives `ES, CL, GC, 6E, ZN, BTC, ZC`:
 ## Remaining blockers
 
 1. Add root listing/effective dates; do not count pre-inception sessions.
-2. Represent agriculture session breaks as segments, or explicitly exclude those sessions from
-   continuity claims.
+2. Implement agriculture's official `19:00–07:45 CT` and `08:30–13:20 CT` segments and filter
+   exported rows to those half-open intervals.
 3. Add and pin effective-dated early/shortened-session overrides.
 4. Pin timezone database and calendar dependency versions in producer and verifier evidence.
 5. Run bounded-memory and throughput tests on realistic large contract-days.

@@ -200,6 +200,12 @@ verification item is also checked.
 
 ## Gate 6 — full cross-family training, blocked until pilots pass
 
+- [x] Freeze the canonical 14-arm/10-family roster and distinguish native forecast/representation
+  parity from training admission. See
+  [FOUNDATION_MODEL_TRAINING_ROSTER.md](FOUNDATION_MODEL_TRAINING_ROSTER.md).
+- [ ] Admit or explicitly exclude each arm through its architecture-specific training contract;
+  do not force forecast-only families through the Mantis Stage 1→2→3 lineage.
+
 - [ ] **BLOCKED:** Kronos-mini.
 - [ ] **BLOCKED:** Kronos-small.
 - [ ] **BLOCKED:** MOMENT-small.
