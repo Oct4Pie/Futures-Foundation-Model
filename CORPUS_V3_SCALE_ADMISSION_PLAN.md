@@ -85,6 +85,38 @@ normalizers and scalers cannot cross partitions. Purging uses the complete decla
 timestamp. A split-scoped eligible-leaf hash—not a full-lake hash containing excluded holdout
 files—defines training identity. A separate full-lake hash remains provenance only.
 
+## Contract lifecycle is a separate denominator
+
+The root/session denominator answers only when the venue and product family are officially open.
+It must not be used to infer when a dated contract first traded or ceased trading. Corpus v3 needs
+a second canonical lifecycle artifact bound to the materialization plan and calendar-rules hash.
+
+Each admitted dated contract must declare, from official exchange evidence:
+
+```text
+contract_id, root,
+first_eligible_session_day, first_trade_utc_ns,
+end_session_day_exclusive, last_trade_utc_ns,
+official_contract_source_ids,
+provider_symbol_identity_source_id,
+disposition
+```
+
+The eligible contract window is the exact intersection of those lifecycle bounds with the
+root/session segments. The first or final session may therefore be truncated; the exporter may not
+silently request a full venue session. A request outside that intersection rejects before raw-file
+discovery. Missing or zero activity inside an eligible interval is measured later by the liquidity
+matrix; observed files may never define lifecycle eligibility.
+
+Unknown provider identity is an explicit quarantine, not an inferred mapping. In particular,
+pre-2017 Sierra `RTY` cannot be assigned CME RTY identity merely because the root string matches.
+Contract lifecycle also does not choose a roll: liquidity measurement and any roll/continuation
+policy consume admitted contract-day shards later and remain separate from the physical export.
+
+The producer and FFM consumer must independently verify the lifecycle artifact, its official
+source bytes, the materialization-plan contract set, split/OOS exclusion, and every root/session
+intersection. No month-code expiry heuristic or observed first/last file date is admissible.
+
 ## Outcome-blind schema matrix
 
 ### Tier A — all-root fall-DST canary
