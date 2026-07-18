@@ -248,10 +248,12 @@ def test_kronos_identity_rejects_wrong_native_tokenizer():
 
 def test_default_registry_cannot_admit_training_without_training_evidence():
     assert get_arm("kronos_small").training_admitted is False
-    with pytest.raises(NativeContractError, match="predates the complete runtime lock"):
-        native_contracts._verified_runtime_lock(
-            technical_evidence("kronos_small", "F")[1]
-        )
+    _, record, checks = technical_evidence("kronos_small", "F")
+    assert native_contracts._verified_runtime_lock(record) == record["runtime_lock"]
+    assert {
+        name for name in native_contracts.TRAINING_CHECKS
+        if checks[name]["status"] != "pass"
+    } == set(native_contracts.TRAINING_CHECKS)
 
 
 def test_hash_bound_report_requires_current_registry_two_approvals_and_all_training_checks(tmp_path, monkeypatch):
