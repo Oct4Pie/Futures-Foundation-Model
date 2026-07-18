@@ -3,7 +3,7 @@
 **Status:** technical native-contract repair completed for every locally verifiable family  
 **Registry:** [`config/foundation_models/native_contracts.json`](config/foundation_models/native_contracts.json)  
 **Technical evidence:** [`config/foundation_models/native_contract_evidence.json`](config/foundation_models/native_contract_evidence.json)  
-**Methodology revision:** `777feebab063945c480dda35572f955261bf2795`
+**Methodology revision:** `fa0e3774e0c77029c92d9f975238ae5458c45f6d`
 
 The JSON registry owns identity pins, tokenizer pairings, licenses, tracks, and historical
 dispositions. The evidence file owns the executable parity record and exact runtime surface covered
