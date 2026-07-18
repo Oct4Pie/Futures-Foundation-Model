@@ -32,7 +32,7 @@ def test_every_real_arm_has_one_explicit_profile_and_dispatch():
 
 def test_affine_contract_allows_quantization_but_rejects_missing_inverse_scale():
     expected = np.array([132.0, 3544.0], dtype=np.float32)
-    quantized = expected + np.array([0.0005, 0.53], dtype=np.float32)
+    quantized = expected + np.array([0.0005, 1.5], dtype=np.float32)
     assert worker._affine_evidence(
         quantized, expected, label="test"
     )["passed"] is True

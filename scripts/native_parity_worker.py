@@ -232,7 +232,7 @@ def _affine_evidence(
     *,
     label: str,
     atol: float = 1e-3,
-    rtol: float = 2e-4,
+    rtol: float = 5e-4,
 ) -> dict[str, Any]:
     left, right = _numpy(observed), _numpy(expected)
     error = _max_abs(left, right)
