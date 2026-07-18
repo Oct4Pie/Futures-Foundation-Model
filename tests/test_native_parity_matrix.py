@@ -2,6 +2,7 @@ import json
 import base64
 import hashlib
 from pathlib import Path
+import subprocess
 import sys
 
 import pytest
@@ -311,3 +312,12 @@ def test_worker_and_matrix_are_packaged_console_surfaces():
     )
     from futures_foundation.finetune import native_parity_matrix_cli
     assert callable(native_parity_matrix_cli.main)
+
+
+def test_matrix_package_module_is_directly_executable():
+    completed = subprocess.run(
+        [sys.executable, "-m", "futures_foundation.finetune.native_parity_matrix_cli", "--help"],
+        check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "--runtime-profile" in completed.stdout
