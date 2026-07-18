@@ -11,6 +11,26 @@ with different pretraining tasks through the same objectives.
 
 This audit is source- and architecture-bound. It does not authorize data access or training.
 
+## Current implementation gap
+
+The executable native registry currently proves narrowly scoped forecast/representation parity.
+Its `adaptation_routes` arrays are only candidate route names; they are **not** training
+admissions. Some names still describe historical custom work (for example adjacent-half
+contrastive branches) and must not be presented as native routes merely because they are listed.
+
+Before any training report can be admitted, the registry must replace that flat route vocabulary
+with separately hash-bound route records containing the exact native/custom disposition, input and
+target contract, loss, trainable parameter surface, checkpoint/resume bundle, deployment output,
+and applicable falsification tests. Unsupported upstream routes remain excluded rather than being
+filled with a common three-stage recipe.
+
+The current executable training gate also treats only gradient/freeze behavior, repeated-batch
+loss decrease, exact resume and save/reload/export as mandatory. That is insufficient. A versioned
+training-evidence schema must additionally make causal prefix invariance, channel/group semantics,
+context/horizon boundaries, scaling and mask behavior, batch-partition parity, corrupted-target and
+shuffled-label controls, sampler/next-batch continuity and deployment preprocessing parity mandatory
+where applicable. Existing inference evidence cannot satisfy those route-specific checks.
+
 ## Evidence-bound route matrix
 
 | Arm | Correct candidate route | Native OHLCV semantics | Training disposition |

@@ -289,8 +289,11 @@ verification item is also checked.
   rejected it for production because page-global markers do not prove fact relationships and most
   listing notices are prospective or pending. A second immutable holiday inventory has acquired
   annual official CME archives for 2011-2017 and 2019, but archive presence does not prove parsed
-  root/date coverage. Explicit official-source gaps remain for 2018, 2020 Presidents Day, 2023 H2,
-  all 2024 and 2025 H1; PMC, observed inactivity and generic clearing notices are not substitutes.
+  root/date coverage. AlphaForge `78c6a1c` additionally seals exact 2018/2020-2022 detailed
+  spreadsheet bytes and limited 2023H2/2024/2025 overview evidence with bounded semantic markers;
+  it extracts no production rules. Explicit gaps remain for 2018/2020/2021 Juneteenth, nine 2024
+  holidays and six regular 2025H1 holidays; PMC, observed inactivity and generic clearing notices
+  are not substitutes.
 - [ ] Resolve or quarantine pre-2017 `RTY` provider history. Official CME RTY starts on
   `2017-07-10`; older files cannot silently inherit that product identity.
 - [x] Implement and independently review the detached producer-governance/split mechanism and the
@@ -299,15 +302,21 @@ verification item is also checked.
   evidence publication and authoritative prohibited-root boundaries are not supplied. Split
   assignment uses exchange session day; raw UTC-leaf safety always requires the later official
   session denominator.
+- [x] Implement and independently red-team a non-circular contract-lifecycle mechanism. AlphaForge
+  `b68ce42` closes provider ID/symbol/root/venue, derives dispositions, supports honest no-evidence
+  quarantine and consumes no files, ticks, prices, volume, activity or materialization plan. It is
+  synthetic mechanism evidence only: provider/evidence authenticity, immutable publication and a
+  production mapping authority remain blocked.
 - [ ] Supply authentic complete provider/exchange reference evidence, then build and independently
-  admit official lifecycle/provider identity, expected request denominator and only then the exact
+  admit the lifecycle/provider identity, expected request denominator and only then the exact
   split-scoped leaf inventory. Consumer-only lifecycle/plan/inventory prototypes were
   constructively rejected and cannot be used as authority. Full UTC-day leaves that straddle a
   split/OOS session segment are blocked before open/hash unless a separate split-safe namespace is
   admitted.
-- [ ] Define official contract-eligibility and half-open trading-end semantics separately from the
-  root/venue denominator so observed files/ticks and legitimate expiring-contract inactivity never
-  define eligibility.
+- [x] Define and mechanically enforce official contract-eligibility and half-open trading-end
+  semantics separately from the root/venue denominator. Production use remains blocked until the
+  detached provider and official-source claims are authenticated; observed files/ticks and
+  legitimate expiring-contract inactivity never define eligibility.
 - [ ] Generate the actual consumer-bound 43-root pre-OOS denominator and record wall time, peak RSS,
   artifact size and independent reload-verification time. No observed file may define whether a
   denominator row exists.

@@ -243,6 +243,13 @@ new ranking is authorized until the relevant admission items pass.
 
 - [ ] Fail closed unless the family passed Phase 2, Phase 3 is sealed, and its Phase 4/5 frozen
   baseline and identical downstream ruler are complete.
+- [ ] Replace flat `adaptation_routes` strings with hash-bound, route-specific training contracts;
+  explicitly classify every route as upstream-native, native-derived, custom research-only or
+  unsupported. A listed route is not an admission.
+- [ ] Version the training-evidence gate so prefix invariance, channel/group semantics,
+  context/horizon bounds, scaling/masks, batch partitioning, corrupted/shuffled controls,
+  sampler/next-batch continuity and deployment preprocessing parity cannot be bypassed by the four
+  legacy training checks alone.
 - [ ] Match unique parent-window exposure and record token/patch/compute budgets.
 - [ ] Run every branch directly from pinned vanilla.
 - [ ] Use only supported native objectives and trainable surfaces.

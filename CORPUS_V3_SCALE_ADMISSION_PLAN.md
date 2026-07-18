@@ -12,7 +12,7 @@ factor, win rate, model prediction or holdout outcome may influence this matrix 
 ## Current evidence
 
 - Pilot producer: AlphaForge `0a955b4`.
-- Scale-safety branch: AlphaForge `corpus-v3-scale-safety` at local commit `2a39ed5`.
+- Scale-safety branch: AlphaForge `corpus-v3-scale-safety` at local commit `78c6a1c`.
 - Scale-safety exporter changes: full verification before atomic publication, destination-keyed
   staging, stale-stage scavenging under the exact destination lock, and post-rename recovery.
 - Process tests: 14 exporter tests and 20 exporter-plus-coverage tests pass.
@@ -47,11 +47,25 @@ factor, win rate, model prediction or holdout outcome may influence this matrix 
   (manifest SHA-256 `3a9e8eeb668f7e760d860e47aedf2f94fd3b0f23ece8404b27d03860bc70f475`,
   inventory SHA-256 `71574f769aa4e52717d861f630d2f1cdf39bce1f8121e66ff042b03226dcb9f5`).
   The complete four-bundle evidence suite passes 110 tests.
+- AlphaForge `78c6a1c` adds a repaired, exact-byte holiday-session evidence snapshot for the missing
+  2018/2020-2025 discovery periods. It pins 48 payloads and 61 coverage cells; 37 spreadsheets are
+  bounded-parsed only far enough to bind year, holiday title and sheet identity, five archived
+  indexes are context-only, and six PDFs remain asset-class overviews. Wayback provenance is
+  explicitly attributed rather than called cryptographic CME attestation. The snapshot does not
+  extract schedule rules or product applicability and remains non-production (manifest SHA-256
+  `29aaf56a58d7888ec2174693e23d6316aa07c8b3c1c85b6117dac43326c9aaa8`, coverage SHA-256
+  `cf559adf96f69576d43b55338074923660d9deafb451da9695c020f6aa0e2eb9`). The repaired focused plus
+  calendar evidence suite passes 153 tests; raw archived HTML is preserved byte-for-byte even where
+  its original whitespace would fail a source-format check.
 - Full AlphaForge suite: 301 pass; the same three pre-existing burn-ledger/trap-oracle failures
   remain and are unrelated to the Corpus v3 scale branch.
-- The independent FFM session-denominator verifier is accepted as mechanism evidence. The first
-  contract-lifecycle implementation was adversarially rejected despite its focused and full-suite
-  tests passing; it remains uncommitted and cannot authorize materialization. The first consumer-
+- The independent FFM session-denominator verifier is accepted as mechanism evidence. The rejected
+  first contract-lifecycle prototype has been replaced by AlphaForge `b68ce42`: a non-circular v2
+  mechanism with exact provider/symbol/root/venue closure, provider-symbol-bound contract identity,
+  derived admit/quarantine dispositions, honest all-null no-evidence quarantine, exact half-open
+  bounds and mandatory path reopen. Its producer/provider/lifecycle suite passes 118 tests and two
+  adversarial reviews, but detached provider and official-source authenticity plus immutable
+  publication remain explicit blockers; it cannot authorize production materialization. The first consumer-
   only plan and source-inventory prototypes were also rejected: syntactically valid but nonexistent
   leaves, relabelled OOS paths and scope widening were constructively accepted. They are not
   evidence and will not be committed. The authority chain must begin at the producer's verified
@@ -293,8 +307,12 @@ For representatives `ES, CL, GC, 6E, ZN, BTC, ZC`:
    The repaired listing/regime snapshot is suitable only as a hash-pinned evidence input. It uses
    bounded modality-aware excerpts and conservative notice/report language, but all 28 facts remain
    production-barred pending post-effective corroboration and exact root/product scope. The holiday
-   byte inventory covers annual official CME archives for 2011-2017 and 2019 only; 2018 and
-   2020-2025H1 retain explicit source gaps, including 2023 H2, all 2024 and 2025 H1.
+   byte inventory covers annual official CME archives for 2011-2017 and 2019. The additional v2
+   evidence snapshot binds 2018 and 2020-2022 detailed spreadsheet bytes, 2023H2 overview PDFs,
+   2024 New Year and the January 9, 2025 mourning overview. It deliberately leaves one explicit
+   gap in each of 2018/2020/2021, nine gaps in 2024 and six regular-holiday gaps in 2025H1. Even
+   acquired bytes remain non-production until source-cell rules and exact product applicability are
+   extracted and independently admitted.
 3. Generate the contract-derived complete 43-root denominator through the end of development,
    excluding the reserved OOS interval by construction.
 4. Measure full-range wall time, peak RSS, artifact bytes and reload verification, then run the
@@ -309,7 +327,7 @@ For representatives `ES, CL, GC, 6E, ZN, BTC, ZC`:
    complete historical reference snapshot are currently available in the workspace. Current public
    FPRF listings are useful source candidates but do not establish complete 2011-2025 history.
    Only afterward may the expected denominator, inventory and plan be built.
-7. Push or archive AlphaForge through local commit `2a39ed5` durably.
+7. Push or archive AlphaForge through local commit `78c6a1c` durably.
 8. Implement and independently review the four scale artifacts above.
 
 Only after those gates and the complete schema matrix pass may the project build the sessionized
