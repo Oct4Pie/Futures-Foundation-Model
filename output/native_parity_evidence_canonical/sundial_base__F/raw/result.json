@@ -1,0 +1,147 @@
+{
+  "admitted_runtime": {
+    "context_length": 512,
+    "dtype": "float32",
+    "hidden_states": "forbidden",
+    "isolated_environment": true,
+    "num_samples": 20,
+    "prediction_length": 16
+  },
+  "arm_key": "sundial_base",
+  "checks": {
+    "adapter_public_api_parity": {
+      "evidence": "all public native output pairs agree; max_abs=0",
+      "status": "pass"
+    },
+    "batch_partition_parity": {
+      "evidence": "seeded adapter/repeat arrays agree; max_abs=0",
+      "status": "pass"
+    },
+    "channel_semantics": {
+      "evidence": "independent OHLCV rows retained; minimum sample std=0.0249770936",
+      "status": "pass"
+    },
+    "context_horizon_boundaries": {
+      "evidence": "runtime exercised context=512, horizon=16",
+      "status": "pass"
+    },
+    "exact_resume": {
+      "reason": "base inference/representation evidence does not admit training",
+      "status": "not_applicable"
+    },
+    "fp32_finite": {
+      "evidence": "all persisted native outputs are finite float32",
+      "status": "pass"
+    },
+    "frequency_timezone_covariates": {
+      "reason": "admitted public interface has no frequency/timezone covariate input",
+      "status": "not_applicable"
+    },
+    "gradient_freeze_surface": {
+      "reason": "base inference/representation evidence does not admit adaptation",
+      "status": "not_applicable"
+    },
+    "license_governance": {
+      "evidence": "exact model card declares 'apache-2.0'; registry expects 'apache-2.0'; bound source license artifacts=1",
+      "status": "pass"
+    },
+    "official_example": {
+      "evidence": "executed and persisted 1 pinned public output surface(s)",
+      "status": "pass"
+    },
+    "padding_mask_missing_values": {
+      "reason": "admitted interface requires complete finite input and has no mask",
+      "status": "not_applicable"
+    },
+    "prefix_invariance": {
+      "reason": "base native API receives only the supplied causal context; numerical composite-input prefix invariance is a downstream/training gate",
+      "status": "not_applicable"
+    },
+    "reduced_precision_tolerance": {
+      "reason": "technical admission is explicitly FP32-only",
+      "status": "not_applicable"
+    },
+    "repeated_batch_loss_decrease": {
+      "reason": "base inference/representation evidence does not admit training",
+      "status": "not_applicable"
+    },
+    "save_reload_export": {
+      "reason": "base inference/representation evidence does not admit export",
+      "status": "not_applicable"
+    },
+    "scaling_inverse_scaling": {
+      "evidence": "affine input/inverse output check max_abs=0.00341796875",
+      "status": "pass"
+    }
+  },
+  "environment": {
+    "device": "cuda:0",
+    "dtype": "float32",
+    "executable": "/usr/bin/python3.12",
+    "huggingface-hub": "0.36.2",
+    "network_policy": "python_socket_deny",
+    "profile": "sundial",
+    "python": "3.12.3",
+    "torch": "2.10.0",
+    "transformers": "4.40.1"
+  },
+  "metrics": {
+    "adapter_public_api_allclose": true,
+    "adapter_public_api_max_abs": 0.0,
+    "adapter_public_api_pairs": [
+      {
+        "adapter": "adapter_samples",
+        "allclose": true,
+        "max_abs": 0.0,
+        "official": "official_samples"
+      }
+    ],
+    "affine_inverse_max_abs": 0.00341796875,
+    "batch_partition_allclose": true,
+    "batch_partition_max_abs": 0.0,
+    "batch_partition_pairs": [],
+    "license": {
+      "deployment": "allowed_after_admission",
+      "id": "Apache-2.0"
+    },
+    "license_artifacts": {
+      "deployment": "allowed_after_admission",
+      "model_card": {
+        "declared_license": "apache-2.0",
+        "path": "README.md",
+        "sha256": "067cec6d8736b9f36ed85cf861289c97f434d4577d479a4bdc273e7ca710a65d"
+      },
+      "registry_license": "Apache-2.0",
+      "source_licenses": [
+        {
+          "path": "LICENSE",
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+        }
+      ]
+    },
+    "minimum_sample_std": 0.024977093562483788,
+    "model_revision": "3212e42564493f520593e5414af4367fc4b49226",
+    "native_parity_atol": 1e-05,
+    "native_parity_rtol": 1e-05,
+    "output_shape": [
+      20,
+      20,
+      16
+    ],
+    "seeded_repeat": {
+      "adapter": "adapter_samples",
+      "allclose": true,
+      "max_abs": 0.0,
+      "repeat": "seeded_repeat"
+    },
+    "seeded_repeat_max_abs": 0.0,
+    "source_revision": "3ef03b8c3804f64a506e57101a173470040aaece",
+    "worker_source": "/home/m3hdi/projects/Futures-Foundation-Model/scripts/native_parity_worker.py"
+  },
+  "output_files": [
+    "native_outputs.npz"
+  ],
+  "schema_version": "ffm_native_parity_result_v1",
+  "status": "pass",
+  "track": "F"
+}

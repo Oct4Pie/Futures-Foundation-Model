@@ -1,0 +1,150 @@
+{
+  "admitted_runtime": {
+    "context_length": 512,
+    "cross_learning": false,
+    "dtype": "float32",
+    "prediction_length": 16,
+    "quantile_levels": [
+      0.1,
+      0.5,
+      0.9
+    ]
+  },
+  "arm_key": "chronos_v2",
+  "checks": {
+    "adapter_public_api_parity": {
+      "evidence": "all public native output pairs agree; max_abs=0",
+      "status": "pass"
+    },
+    "batch_partition_parity": {
+      "evidence": "full/partitioned arrays agree; max_abs=0",
+      "status": "pass"
+    },
+    "channel_semantics": {
+      "evidence": "Chronos-2 jointly forecasts five variates within each item",
+      "status": "pass"
+    },
+    "context_horizon_boundaries": {
+      "evidence": "runtime exercised context=512, horizon=16",
+      "status": "pass"
+    },
+    "exact_resume": {
+      "reason": "base inference/representation evidence does not admit training",
+      "status": "not_applicable"
+    },
+    "fp32_finite": {
+      "evidence": "all persisted native outputs are finite float32",
+      "status": "pass"
+    },
+    "frequency_timezone_covariates": {
+      "reason": "admitted public interface has no frequency/timezone covariate input",
+      "status": "not_applicable"
+    },
+    "gradient_freeze_surface": {
+      "reason": "base inference/representation evidence does not admit adaptation",
+      "status": "not_applicable"
+    },
+    "license_governance": {
+      "evidence": "exact model card declares 'apache-2.0'; registry expects 'apache-2.0'; bound source license artifacts=1",
+      "status": "pass"
+    },
+    "official_example": {
+      "evidence": "executed and persisted 1 pinned public output surface(s)",
+      "status": "pass"
+    },
+    "padding_mask_missing_values": {
+      "reason": "admitted interface requires complete finite input and has no mask",
+      "status": "not_applicable"
+    },
+    "prefix_invariance": {
+      "reason": "base native API receives only the supplied causal context; numerical composite-input prefix invariance is a downstream/training gate",
+      "status": "not_applicable"
+    },
+    "reduced_precision_tolerance": {
+      "reason": "technical admission is explicitly FP32-only",
+      "status": "not_applicable"
+    },
+    "repeated_batch_loss_decrease": {
+      "reason": "base inference/representation evidence does not admit training",
+      "status": "not_applicable"
+    },
+    "save_reload_export": {
+      "reason": "base inference/representation evidence does not admit export",
+      "status": "not_applicable"
+    },
+    "scaling_inverse_scaling": {
+      "evidence": "raw-scale public quantiles were compared directly with adapter outputs",
+      "status": "pass"
+    }
+  },
+  "environment": {
+    "chronos-forecasting": "2.3.1",
+    "device": "cuda:0",
+    "dtype": "float32",
+    "executable": "/usr/bin/python3.12",
+    "network_policy": "python_socket_deny",
+    "profile": "common",
+    "python": "3.12.3",
+    "torch": "2.13.0"
+  },
+  "metrics": {
+    "adapter_public_api_allclose": true,
+    "adapter_public_api_max_abs": 0.0,
+    "adapter_public_api_pairs": [
+      {
+        "adapter": "adapter_quantiles",
+        "allclose": true,
+        "max_abs": 0.0,
+        "official": "official_quantiles"
+      }
+    ],
+    "batch_partition_allclose": true,
+    "batch_partition_max_abs": 0.0,
+    "batch_partition_pairs": [
+      {
+        "adapter": "adapter_quantiles",
+        "allclose": true,
+        "max_abs": 0.0,
+        "partitioned": "partitioned_quantiles"
+      }
+    ],
+    "finite": true,
+    "license": {
+      "deployment": "allowed_after_admission",
+      "id": "Apache-2.0"
+    },
+    "license_artifacts": {
+      "deployment": "allowed_after_admission",
+      "model_card": {
+        "declared_license": "apache-2.0",
+        "path": "README.md",
+        "sha256": "c27a3415d8482238aef5c419a7e58ef2f3fd2a45247148f17e5237521059abf7"
+      },
+      "registry_license": "Apache-2.0",
+      "source_licenses": [
+        {
+          "path": "METADATA",
+          "sha256": "056c8e7f5b9015c4d2559092b63ff1a58cae387771cb0c59ac0e416ee2721ba6"
+        }
+      ]
+    },
+    "model_revision": "ddec01313e50b6bc58ebaa92ede81bc24a3d9f9a",
+    "native_parity_atol": 1e-05,
+    "native_parity_rtol": 1e-05,
+    "quantile_shape": [
+      4,
+      5,
+      16,
+      3
+    ],
+    "seeded_repeat": null,
+    "source_revision": "chronos-forecasting==2.3.1",
+    "worker_source": "/home/m3hdi/projects/Futures-Foundation-Model/scripts/native_parity_worker.py"
+  },
+  "output_files": [
+    "native_outputs.npz"
+  ],
+  "schema_version": "ffm_native_parity_result_v1",
+  "status": "pass",
+  "track": "F"
+}

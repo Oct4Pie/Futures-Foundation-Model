@@ -1,0 +1,9 @@
+INFO:p-3828630:t-123481751892096:get_model.py:get_model:Loading model from: ibm-granite/granite-timeseries-ttm-r2
+INFO:p-3828630:t-123481751892096:get_model.py:get_model:Model path type is 2
+WARNING:p-3828630:t-123481751892096:get_model.py:get_model:Requested `prediction_length` (16) is not exactly equal to any of the available TTM prediction lengths. Hence, TTM will forecast using the `prediction_filter_length` argument to provide the requested prediction length. Check the model card to know more about the supported context lengths and forecast/prediction lengths.
+INFO:p-3828630:t-123481751892096:get_model.py:get_model:Would load from ibm-granite/granite-timeseries-ttm-r2, revision = 512-48-ft-r2.1.
+INFO:p-3828630:t-123481751892096:get_model.py:get_model:Loading model from: /home/m3hdi/.cache/huggingface/hub/models--ibm-granite--granite-timeseries-ttm-r2/snapshots/b972f0c22190b7502764526004d16e2b4ed39e8c
+INFO:p-3828630:t-123481751892096:get_model.py:get_model:Model path type is 0
+INFO:p-3828630:t-123481751892096:get_model.py:get_model:Attempting model load from /home/m3hdi/.cache/huggingface/hub/models--ibm-granite--granite-timeseries-ttm-r2/snapshots/b972f0c22190b7502764526004d16e2b4ed39e8c, revision = b972f0c22190b7502764526004d16e2b4ed39e8c.
+INFO:p-3828630:t-123481751892096:get_model.py:get_model:Model loaded successfully from /home/m3hdi/.cache/huggingface/hub/models--ibm-granite--granite-timeseries-ttm-r2/snapshots/b972f0c22190b7502764526004d16e2b4ed39e8c, revision = b972f0c22190b7502764526004d16e2b4ed39e8c.
+INFO:p-3828630:t-123481751892096:get_model.py:get_model:[TTM] context_length = 512, prediction_length = 48

@@ -1,111 +1,1205 @@
 {
-  "schema_version": "ffm_native_contract_evidence_v1",
-  "methodology_commit": "fa0e3774e0c77029c92d9f975238ae5458c45f6d",
-  "generated_utc": "2026-07-18T02:30:01Z",
-  "policy": {
-    "meaning": "Technical parity evidence only. Runtime execution still requires a current hash-bound admission report and two independent approvals.",
-    "research_only": "A research_only pass is noncommercial and cannot authorize deployment.",
-    "fp32_lock": "Reduced precision is not admitted by these records; each admitted adapter is initially locked to FP32 unless a later evidence record replaces it."
-  },
   "check_profiles": {
-    "forecast_fp32": {
-      "official_example": {"status": "pass", "evidence": "public upstream forecast API executed on deterministic synthetic fixtures"},
-      "adapter_public_api_parity": {"status": "pass", "evidence": "candidate adapter matched the public upstream output surface"},
-      "scaling_inverse_scaling": {"status": "pass", "evidence": "native scaling/inverse behavior checked on affine fixtures"},
-      "padding_mask_missing_values": {"status": "not_applicable", "reason": "model-specific record supplies pass or an explicit native-input limitation"},
-      "frequency_timezone_covariates": {"status": "not_applicable", "reason": "model has no frequency/timezone input unless overridden by the record"},
-      "channel_semantics": {"status": "pass", "evidence": "declared independent or grouped channel behavior was exercised"},
-      "batch_partition_parity": {"status": "pass", "evidence": "batched and partitioned outputs agreed within the recorded tolerance"},
-      "fp32_finite": {"status": "pass", "evidence": "all admitted outputs were finite in FP32"},
-      "reduced_precision_tolerance": {"status": "not_applicable", "reason": "this evidence locks the native adapter to FP32"},
-      "context_horizon_boundaries": {"status": "pass", "evidence": "the declared context and 16-step evaluation horizon were exercised"},
-      "prefix_invariance": {"status": "pass", "evidence": "adapter preprocessing consumes only the supplied causal context"},
-      "gradient_freeze_surface": {"status": "not_applicable", "reason": "base inference evidence does not admit adaptation"},
-      "repeated_batch_loss_decrease": {"status": "not_applicable", "reason": "base inference evidence does not admit adaptation"},
-      "exact_resume": {"status": "not_applicable", "reason": "base inference evidence does not admit adaptation"},
-      "save_reload_export": {"status": "not_applicable", "reason": "base inference evidence does not admit adaptation"},
-      "license_governance": {"status": "pass", "evidence": "code and weight licenses were recorded in the dossier"}
-    },
-    "representation_fp32": {
-      "official_example": {"status": "pass", "evidence": "public upstream representation API executed on deterministic synthetic fixtures"},
-      "adapter_public_api_parity": {"status": "pass", "evidence": "candidate adapter matched the public upstream representation output"},
-      "scaling_inverse_scaling": {"status": "not_applicable", "reason": "record uses the upstream representation preprocessing and returns no forecast to inverse-scale"},
-      "padding_mask_missing_values": {"status": "not_applicable", "reason": "record supplies a model-specific pass or the interface has no missing-value mask"},
-      "frequency_timezone_covariates": {"status": "not_applicable", "reason": "official representation interface has no frequency/timezone input"},
-      "channel_semantics": {"status": "pass", "evidence": "native univariate, averaged, or grouped channel semantics are preserved without custom fusion"},
-      "batch_partition_parity": {"status": "pass", "evidence": "batched and partitioned representations agreed within the recorded tolerance"},
-      "fp32_finite": {"status": "pass", "evidence": "all admitted representations were finite in FP32"},
-      "reduced_precision_tolerance": {"status": "not_applicable", "reason": "this evidence locks the native adapter to FP32"},
-      "context_horizon_boundaries": {"status": "pass", "evidence": "the declared representation context boundary was exercised"},
-      "prefix_invariance": {"status": "pass", "evidence": "masked padding and causal input preparation do not read future values"},
-      "gradient_freeze_surface": {"status": "not_applicable", "reason": "base representation evidence does not admit adaptation"},
-      "repeated_batch_loss_decrease": {"status": "not_applicable", "reason": "base representation evidence does not admit adaptation"},
-      "exact_resume": {"status": "not_applicable", "reason": "base representation evidence does not admit adaptation"},
-      "save_reload_export": {"status": "not_applicable", "reason": "base representation evidence does not admit adaptation"},
-      "license_governance": {"status": "pass", "evidence": "code and weight licenses were recorded in the dossier"}
+    "generated_bundle": {
+      "adapter_public_api_parity": {
+        "reason": "overridden by generated bundle",
+        "status": "not_applicable"
+      },
+      "batch_partition_parity": {
+        "reason": "overridden by generated bundle",
+        "status": "not_applicable"
+      },
+      "channel_semantics": {
+        "reason": "overridden by generated bundle",
+        "status": "not_applicable"
+      },
+      "context_horizon_boundaries": {
+        "reason": "overridden by generated bundle",
+        "status": "not_applicable"
+      },
+      "exact_resume": {
+        "reason": "overridden by generated bundle",
+        "status": "not_applicable"
+      },
+      "fp32_finite": {
+        "reason": "overridden by generated bundle",
+        "status": "not_applicable"
+      },
+      "frequency_timezone_covariates": {
+        "reason": "overridden by generated bundle",
+        "status": "not_applicable"
+      },
+      "gradient_freeze_surface": {
+        "reason": "overridden by generated bundle",
+        "status": "not_applicable"
+      },
+      "license_governance": {
+        "reason": "overridden by generated bundle",
+        "status": "not_applicable"
+      },
+      "official_example": {
+        "reason": "overridden by generated bundle",
+        "status": "not_applicable"
+      },
+      "padding_mask_missing_values": {
+        "reason": "overridden by generated bundle",
+        "status": "not_applicable"
+      },
+      "prefix_invariance": {
+        "reason": "overridden by generated bundle",
+        "status": "not_applicable"
+      },
+      "reduced_precision_tolerance": {
+        "reason": "overridden by generated bundle",
+        "status": "not_applicable"
+      },
+      "repeated_batch_loss_decrease": {
+        "reason": "overridden by generated bundle",
+        "status": "not_applicable"
+      },
+      "save_reload_export": {
+        "reason": "overridden by generated bundle",
+        "status": "not_applicable"
+      },
+      "scaling_inverse_scaling": {
+        "reason": "overridden by generated bundle",
+        "status": "not_applicable"
+      }
     }
   },
+  "generated_utc": "2026-07-18T05:53:54Z",
+  "methodology_commit": "fa0e3774e0c77029c92d9f975238ae5458c45f6d",
+  "policy": {
+    "aggregate_schema": "ffm_native_parity_aggregate_v1",
+    "complete_for_installation": true,
+    "registry_sha256": "d3b454b1ee4dca5f8bc8dc95d869090e15ea99e24a6f0f93fd020cd9d1d6cee8",
+    "require_all_current": true,
+    "source": "verified_raw_native_parity_bundles"
+  },
   "records": {
-    "mantis_v1:R:2026-07-18": {
-      "arm_key": "mantis_v1",
-      "track": "R",
-      "status": "pass",
-      "profile": "representation_fp32",
-      "identity": {
-        "model_id": "paris-noah/Mantis-8M",
-        "model_revision": "93a16a52a5e2e6d76c0b823533b5836dd83ca10a",
-        "source_revision": "84350a0dac8518faaf40a021ef1d591f1132065e"
+    "chronos_bolt:F:2026-07-18": {
+      "admitted_runtime": {
+        "context_length": 512,
+        "dtype": "float32",
+        "prediction_length": 16,
+        "quantile_levels": [
+          0.1,
+          0.5,
+          0.9
+        ]
       },
-      "environment": {"python": "3.12", "torch": "2.13.0", "mantis-tsfm": "1.0.0", "device": "RTX 5090", "dtype": "float32"},
+      "arm_key": "chronos_bolt",
+      "bundle": {
+        "bundle_sha256": "d17167d9ae11a59373ac4d1f95a98763f39f8fd73e25ee5c8a619aa3fce92e85",
+        "command_sha256": "c3bb30e362e76f21bd5cf229ed1399859642091fc9ad20b425b543eaa5f2b694",
+        "fixture_sha256": "7527f9c14a63615191c06e6b0e479de03dc84870161a80ab51bdccccdf4291ef",
+        "path": "../../output/native_parity_evidence_canonical/chronos_bolt__F",
+        "path_base": "evidence_registry_parent",
+        "result_sha256": "7df5b971c86b89749afdad5401f0803530394f0848c7d09b79b7b37991a9c498",
+        "stderr_sha256": "d947cd403b097302e8abcff971ac42872466b0a63bb94a2716c98d160bae58ad",
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
       "checks": {
-        "padding_mask_missing_values": {"status": "not_applicable", "reason": "Mantis has no missing-value mask; admitted input is finite raw univariate data"}
+        "adapter_public_api_parity": {
+          "evidence": "all public native output pairs agree; max_abs=0",
+          "status": "pass"
+        },
+        "batch_partition_parity": {
+          "evidence": "full/partitioned arrays agree; max_abs=0.000610351562",
+          "status": "pass"
+        },
+        "channel_semantics": {
+          "evidence": "univariate forecasts preserve five independent OHLCV channel rows",
+          "status": "pass"
+        },
+        "context_horizon_boundaries": {
+          "evidence": "runtime exercised context=512, horizon=16",
+          "status": "pass"
+        },
+        "exact_resume": {
+          "reason": "base inference/representation evidence does not admit training",
+          "status": "not_applicable"
+        },
+        "fp32_finite": {
+          "evidence": "all persisted native outputs are finite float32",
+          "status": "pass"
+        },
+        "frequency_timezone_covariates": {
+          "reason": "admitted public interface has no frequency/timezone covariate input",
+          "status": "not_applicable"
+        },
+        "gradient_freeze_surface": {
+          "reason": "base inference/representation evidence does not admit adaptation",
+          "status": "not_applicable"
+        },
+        "license_governance": {
+          "evidence": "exact model card declares 'apache-2.0'; registry expects 'apache-2.0'; bound source license artifacts=1",
+          "status": "pass"
+        },
+        "official_example": {
+          "evidence": "executed and persisted 1 pinned public output surface(s)",
+          "status": "pass"
+        },
+        "padding_mask_missing_values": {
+          "reason": "admitted interface requires complete finite input and has no mask",
+          "status": "not_applicable"
+        },
+        "prefix_invariance": {
+          "reason": "base native API receives only the supplied causal context; numerical composite-input prefix invariance is a downstream/training gate",
+          "status": "not_applicable"
+        },
+        "reduced_precision_tolerance": {
+          "reason": "technical admission is explicitly FP32-only",
+          "status": "not_applicable"
+        },
+        "repeated_batch_loss_decrease": {
+          "reason": "base inference/representation evidence does not admit training",
+          "status": "not_applicable"
+        },
+        "save_reload_export": {
+          "reason": "base inference/representation evidence does not admit export",
+          "status": "not_applicable"
+        },
+        "scaling_inverse_scaling": {
+          "evidence": "raw-scale public quantiles were compared directly with adapter outputs",
+          "status": "pass"
+        }
       },
-      "admitted_runtime": {"context_length": 512, "dtype": "float32", "output_layout": "B,C,D", "channel_fusion": "forbidden_in_track_R"},
-      "metrics": {"output_shape": [2, 256], "direct_vs_MantisTrainer_transform_max_abs": 0.0000019073486328125, "finite": true},
-      "notes": "Official final CLS only. Per-channel outputs remain [B,C,D]; channel fusion is Track C."
+      "environment": {
+        "chronos-forecasting": "2.3.1",
+        "device": "cuda:0",
+        "dtype": "float32",
+        "executable": "/usr/bin/python3.12",
+        "network_policy": "python_socket_deny",
+        "profile": "common",
+        "python": "3.12.3",
+        "torch": "2.13.0"
+      },
+      "identity": {
+        "model_id": "amazon/chronos-bolt-tiny",
+        "model_revision": "a0e552de83495b5c28c14c71c374f3e33280b340",
+        "source_revision": "chronos-forecasting==2.3.1",
+        "tokenizer_id": "bundled_patchifier",
+        "tokenizer_revision": "model_revision"
+      },
+      "metrics": {
+        "adapter_public_api_allclose": true,
+        "adapter_public_api_max_abs": 0.0,
+        "adapter_public_api_pairs": [
+          {
+            "adapter": "adapter_quantiles",
+            "allclose": true,
+            "max_abs": 0.0,
+            "official": "official_quantiles"
+          }
+        ],
+        "batch_partition_allclose": true,
+        "batch_partition_max_abs": 0.0006103515625,
+        "batch_partition_pairs": [
+          {
+            "adapter": "adapter_quantiles",
+            "allclose": true,
+            "max_abs": 0.0006103515625,
+            "partitioned": "partitioned_quantiles"
+          }
+        ],
+        "finite": true,
+        "license": {
+          "deployment": "allowed_after_admission",
+          "id": "Apache-2.0"
+        },
+        "license_artifacts": {
+          "deployment": "allowed_after_admission",
+          "model_card": {
+            "declared_license": "apache-2.0",
+            "path": "README.md",
+            "sha256": "cc7f60bc7290b5e6146589dae9842a3c9b59d254e9d1d65fc2ef127f3c2498cd"
+          },
+          "registry_license": "Apache-2.0",
+          "source_licenses": [
+            {
+              "path": "METADATA",
+              "sha256": "056c8e7f5b9015c4d2559092b63ff1a58cae387771cb0c59ac0e416ee2721ba6"
+            }
+          ]
+        },
+        "model_revision": "a0e552de83495b5c28c14c71c374f3e33280b340",
+        "native_parity_atol": 1e-05,
+        "native_parity_rtol": 1e-05,
+        "quantile_shape": [
+          20,
+          16,
+          3
+        ],
+        "seeded_repeat": null,
+        "source_revision": "chronos-forecasting==2.3.1",
+        "worker_source": "/home/m3hdi/projects/Futures-Foundation-Model/scripts/native_parity_worker.py"
+      },
+      "profile": "generated_bundle",
+      "status": "pass",
+      "track": "F"
     },
-    "mantis_v2:R:2026-07-18": {
-      "arm_key": "mantis_v2",
-      "track": "R",
-      "status": "pass",
-      "profile": "representation_fp32",
-      "identity": {
-        "model_id": "paris-noah/MantisV2",
-        "model_revision": "99fe0f548960e272fbfa4b82fd9b5b5956779dfd",
-        "source_revision": "84350a0dac8518faaf40a021ef1d591f1132065e"
+    "chronos_bolt:R:2026-07-18": {
+      "admitted_runtime": {
+        "context_length": 512,
+        "dtype": "float32",
+        "output": "unpooled_embeddings_and_location_scale"
       },
-      "environment": {"python": "3.12", "torch": "2.13.0", "mantis-tsfm": "1.0.0", "device": "RTX 5090", "dtype": "float32"},
+      "arm_key": "chronos_bolt",
+      "bundle": {
+        "bundle_sha256": "4735473c9c866fdbdf00d66581d1bb05ffcf681087071db6e29a6bef6ee6b8e2",
+        "command_sha256": "64e56a13acac82b9087516d43e1146bb20cc79a31b2e1e5414f806dabb39d621",
+        "fixture_sha256": "7527f9c14a63615191c06e6b0e479de03dc84870161a80ab51bdccccdf4291ef",
+        "path": "../../output/native_parity_evidence_canonical/chronos_bolt__R",
+        "path_base": "evidence_registry_parent",
+        "result_sha256": "6b9ffda64668cc54005dfad853469b4674b490bccca717bf0b6c357ef0ce1602",
+        "stderr_sha256": "1845c882049bc198c18f077b5d6ead9d723caf6e9614a19116896753ba8343f1",
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
       "checks": {
-        "padding_mask_missing_values": {"status": "not_applicable", "reason": "Mantis has no missing-value mask; admitted input is finite raw univariate data"}
+        "adapter_public_api_parity": {
+          "evidence": "all public native output pairs agree; max_abs=0",
+          "status": "pass"
+        },
+        "batch_partition_parity": {
+          "evidence": "full/partitioned arrays agree; max_abs=0.000122070312",
+          "status": "pass"
+        },
+        "channel_semantics": {
+          "evidence": "five independent OHLCV channel rows were retained without pooling",
+          "status": "pass"
+        },
+        "context_horizon_boundaries": {
+          "evidence": "runtime exercised context=512, horizon=not_applicable",
+          "status": "pass"
+        },
+        "exact_resume": {
+          "reason": "base inference/representation evidence does not admit training",
+          "status": "not_applicable"
+        },
+        "fp32_finite": {
+          "evidence": "all persisted native outputs are finite float32",
+          "status": "pass"
+        },
+        "frequency_timezone_covariates": {
+          "reason": "admitted public interface has no frequency/timezone covariate input",
+          "status": "not_applicable"
+        },
+        "gradient_freeze_surface": {
+          "reason": "base inference/representation evidence does not admit adaptation",
+          "status": "not_applicable"
+        },
+        "license_governance": {
+          "evidence": "exact model card declares 'apache-2.0'; registry expects 'apache-2.0'; bound source license artifacts=1",
+          "status": "pass"
+        },
+        "official_example": {
+          "evidence": "executed and persisted 3 pinned public output surface(s)",
+          "status": "pass"
+        },
+        "padding_mask_missing_values": {
+          "reason": "admitted interface requires complete finite input and has no mask",
+          "status": "not_applicable"
+        },
+        "prefix_invariance": {
+          "reason": "base native API receives only the supplied causal context; numerical composite-input prefix invariance is a downstream/training gate",
+          "status": "not_applicable"
+        },
+        "reduced_precision_tolerance": {
+          "reason": "technical admission is explicitly FP32-only",
+          "status": "not_applicable"
+        },
+        "repeated_batch_loss_decrease": {
+          "reason": "base inference/representation evidence does not admit training",
+          "status": "not_applicable"
+        },
+        "save_reload_export": {
+          "reason": "base inference/representation evidence does not admit export",
+          "status": "not_applicable"
+        },
+        "scaling_inverse_scaling": {
+          "reason": "representation output has no inverse-scaled forecast surface",
+          "status": "not_applicable"
+        }
       },
-      "admitted_runtime": {"context_length": 512, "dtype": "float32", "return_transf_layer": 2, "output_token": "combined", "output_layout": "B,C,D", "channel_fusion": "forbidden_in_track_R"},
-      "metrics": {"return_transf_layer": 2, "output_token": "combined", "output_shape": [2, 512], "direct_vs_MantisTrainer_transform_max_abs": 9.5367431640625e-7, "finite": true},
-      "notes": "Official V2 enhanced layer-2 CLS+mean output. Final-CLS-only and channel fusion remain Track C."
+      "environment": {
+        "chronos-forecasting": "2.3.1",
+        "device": "cuda:0",
+        "dtype": "float32",
+        "executable": "/usr/bin/python3.12",
+        "network_policy": "python_socket_deny",
+        "profile": "common",
+        "python": "3.12.3",
+        "torch": "2.13.0"
+      },
+      "identity": {
+        "model_id": "amazon/chronos-bolt-tiny",
+        "model_revision": "a0e552de83495b5c28c14c71c374f3e33280b340",
+        "source_revision": "chronos-forecasting==2.3.1",
+        "tokenizer_id": "bundled_patchifier",
+        "tokenizer_revision": "model_revision"
+      },
+      "metrics": {
+        "adapter_public_api_allclose": true,
+        "adapter_public_api_max_abs": 0.0,
+        "adapter_public_api_pairs": [
+          {
+            "adapter": "adapter_embedding",
+            "allclose": true,
+            "max_abs": 0.0,
+            "official": "official_embedding"
+          },
+          {
+            "adapter": "adapter_location",
+            "allclose": true,
+            "max_abs": 0.0,
+            "official": "official_location"
+          },
+          {
+            "adapter": "adapter_scale",
+            "allclose": true,
+            "max_abs": 0.0,
+            "official": "official_scale"
+          }
+        ],
+        "batch_partition_allclose": true,
+        "batch_partition_max_abs": 0.0001220703125,
+        "batch_partition_pairs": [
+          {
+            "adapter": "adapter_embedding",
+            "allclose": true,
+            "max_abs": 7.092952728271484e-06,
+            "partitioned": "partitioned_embedding"
+          },
+          {
+            "adapter": "adapter_location",
+            "allclose": true,
+            "max_abs": 7.62939453125e-06,
+            "partitioned": "partitioned_location"
+          },
+          {
+            "adapter": "adapter_scale",
+            "allclose": true,
+            "max_abs": 0.0001220703125,
+            "partitioned": "partitioned_scale"
+          }
+        ],
+        "embedding_shape": [
+          20,
+          33,
+          256
+        ],
+        "finite": true,
+        "license": {
+          "deployment": "allowed_after_admission",
+          "id": "Apache-2.0"
+        },
+        "license_artifacts": {
+          "deployment": "allowed_after_admission",
+          "model_card": {
+            "declared_license": "apache-2.0",
+            "path": "README.md",
+            "sha256": "cc7f60bc7290b5e6146589dae9842a3c9b59d254e9d1d65fc2ef127f3c2498cd"
+          },
+          "registry_license": "Apache-2.0",
+          "source_licenses": [
+            {
+              "path": "METADATA",
+              "sha256": "056c8e7f5b9015c4d2559092b63ff1a58cae387771cb0c59ac0e416ee2721ba6"
+            }
+          ]
+        },
+        "model_revision": "a0e552de83495b5c28c14c71c374f3e33280b340",
+        "native_parity_atol": 1e-05,
+        "native_parity_rtol": 1e-05,
+        "seeded_repeat": null,
+        "source_revision": "chronos-forecasting==2.3.1",
+        "worker_source": "/home/m3hdi/projects/Futures-Foundation-Model/scripts/native_parity_worker.py"
+      },
+      "profile": "generated_bundle",
+      "status": "pass",
+      "track": "R"
     },
-    "moment_small:R:2026-07-18": {
-      "arm_key": "moment_small",
-      "track": "R",
-      "status": "pass",
-      "profile": "representation_fp32",
-      "identity": {
-        "model_id": "AutonLab/MOMENT-1-small",
-        "model_revision": "411e288267f82cce86296dbe4d6c8bc533cc162f",
-        "source_revision": "38f7310ad594100747ca2a8357e9c7ca7d323e0e"
+    "chronos_v1:F:2026-07-18": {
+      "admitted_runtime": {
+        "context_length": 512,
+        "dtype": "float32",
+        "num_samples": 20,
+        "prediction_length": 16,
+        "quantile_levels": [
+          0.1,
+          0.5,
+          0.9
+        ]
       },
-      "environment": {"python": "3.12", "torch": "2.13.0", "momentfm": "0.1.5", "device": "RTX 5090", "dtype": "float32"},
+      "arm_key": "chronos_v1",
+      "bundle": {
+        "bundle_sha256": "c3a0b83a98044c30be9cc148278d78478a92565d38242e151af74cac3770e1b9",
+        "command_sha256": "d9d725dbf5a3271069203c9cbeca4513290e78ca70fe4fe64811c7fa2dddd76f",
+        "fixture_sha256": "7527f9c14a63615191c06e6b0e479de03dc84870161a80ab51bdccccdf4291ef",
+        "path": "../../output/native_parity_evidence_canonical/chronos_v1__F",
+        "path_base": "evidence_registry_parent",
+        "result_sha256": "3ffa9595231b4992b4c43efccb1b45cd231d3464a78ecb1b92e5e211e01c5302",
+        "stderr_sha256": "0702913c90e3c095063be7700a8053b18d51808dc504c9664b36b31bd39c430f",
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
       "checks": {
-        "scaling_inverse_scaling": {"status": "pass", "evidence": "official embed path applies internal RevIN"},
-        "padding_mask_missing_values": {"status": "pass", "evidence": "changing masked left-padding values produced max_abs=0"}
+        "adapter_public_api_parity": {
+          "evidence": "all public native output pairs agree; max_abs=0",
+          "status": "pass"
+        },
+        "batch_partition_parity": {
+          "reason": "public output has no deterministic partition or seeded-repeat contract",
+          "status": "not_applicable"
+        },
+        "channel_semantics": {
+          "evidence": "univariate forecasts preserve five independent OHLCV channel rows",
+          "status": "pass"
+        },
+        "context_horizon_boundaries": {
+          "evidence": "runtime exercised context=512, horizon=16",
+          "status": "pass"
+        },
+        "exact_resume": {
+          "reason": "base inference/representation evidence does not admit training",
+          "status": "not_applicable"
+        },
+        "fp32_finite": {
+          "evidence": "all persisted native outputs are finite float32",
+          "status": "pass"
+        },
+        "frequency_timezone_covariates": {
+          "reason": "admitted public interface has no frequency/timezone covariate input",
+          "status": "not_applicable"
+        },
+        "gradient_freeze_surface": {
+          "reason": "base inference/representation evidence does not admit adaptation",
+          "status": "not_applicable"
+        },
+        "license_governance": {
+          "evidence": "exact model card declares 'apache-2.0'; registry expects 'apache-2.0'; bound source license artifacts=1",
+          "status": "pass"
+        },
+        "official_example": {
+          "evidence": "executed and persisted 1 pinned public output surface(s)",
+          "status": "pass"
+        },
+        "padding_mask_missing_values": {
+          "reason": "admitted interface requires complete finite input and has no mask",
+          "status": "not_applicable"
+        },
+        "prefix_invariance": {
+          "reason": "base native API receives only the supplied causal context; numerical composite-input prefix invariance is a downstream/training gate",
+          "status": "not_applicable"
+        },
+        "reduced_precision_tolerance": {
+          "reason": "technical admission is explicitly FP32-only",
+          "status": "not_applicable"
+        },
+        "repeated_batch_loss_decrease": {
+          "reason": "base inference/representation evidence does not admit training",
+          "status": "not_applicable"
+        },
+        "save_reload_export": {
+          "reason": "base inference/representation evidence does not admit export",
+          "status": "not_applicable"
+        },
+        "scaling_inverse_scaling": {
+          "evidence": "raw-scale public quantiles were compared directly with adapter outputs",
+          "status": "pass"
+        }
       },
-      "admitted_runtime": {"context_length": 512, "dtype": "float32", "reduction": "mean", "output_layout": "B,D"},
-      "metrics": {"embedding_shape": [2, 512], "manual_masked_mean_max_abs": 4.76837158203125e-7, "batch_partition_max_abs": 0.0, "masked_padding_max_abs": 0.0},
-      "notes": "Only the pretrained embedding mean is admitted. Forecasting and classification heads require task-specific fine-tuning."
+      "environment": {
+        "chronos-forecasting": "2.3.1",
+        "device": "cuda:0",
+        "dtype": "float32",
+        "executable": "/usr/bin/python3.12",
+        "network_policy": "python_socket_deny",
+        "profile": "common",
+        "python": "3.12.3",
+        "torch": "2.13.0"
+      },
+      "identity": {
+        "model_id": "amazon/chronos-t5-tiny",
+        "model_revision": "29d808298f1a62493e7b9a5e08529d0d930fa189",
+        "source_revision": "chronos-forecasting==2.3.1",
+        "tokenizer_id": "bundled",
+        "tokenizer_revision": "model_revision"
+      },
+      "metrics": {
+        "adapter_public_api_allclose": true,
+        "adapter_public_api_max_abs": 0.0,
+        "adapter_public_api_pairs": [
+          {
+            "adapter": "adapter_quantiles",
+            "allclose": true,
+            "max_abs": 0.0,
+            "official": "official_quantiles"
+          }
+        ],
+        "batch_partition_allclose": null,
+        "batch_partition_max_abs": null,
+        "batch_partition_pairs": [],
+        "finite": true,
+        "license": {
+          "deployment": "allowed_after_admission",
+          "id": "Apache-2.0"
+        },
+        "license_artifacts": {
+          "deployment": "allowed_after_admission",
+          "model_card": {
+            "declared_license": "apache-2.0",
+            "path": "README.md",
+            "sha256": "cb6ad9d49b90f956c2dc9d60e485f7be41eb0c667662109478fec78e6955328f"
+          },
+          "registry_license": "Apache-2.0",
+          "source_licenses": [
+            {
+              "path": "METADATA",
+              "sha256": "056c8e7f5b9015c4d2559092b63ff1a58cae387771cb0c59ac0e416ee2721ba6"
+            }
+          ]
+        },
+        "model_revision": "29d808298f1a62493e7b9a5e08529d0d930fa189",
+        "native_parity_atol": 1e-05,
+        "native_parity_rtol": 1e-05,
+        "quantile_shape": [
+          20,
+          16,
+          3
+        ],
+        "seeded_repeat": null,
+        "source_revision": "chronos-forecasting==2.3.1",
+        "worker_source": "/home/m3hdi/projects/Futures-Foundation-Model/scripts/native_parity_worker.py"
+      },
+      "profile": "generated_bundle",
+      "status": "pass",
+      "track": "F"
+    },
+    "chronos_v1:R:2026-07-18": {
+      "admitted_runtime": {
+        "context_length": 512,
+        "dtype": "float32",
+        "output": "unpooled_embeddings_and_tokenizer_state"
+      },
+      "arm_key": "chronos_v1",
+      "bundle": {
+        "bundle_sha256": "01005bc677d1fede9c848004d5436e3c5431f4235a139c269215bc3b2bbc6082",
+        "command_sha256": "7e0ffdda526e429e6bc78bcd57f9f362209682376a6b4c86ab2211f04f1d64c9",
+        "fixture_sha256": "7527f9c14a63615191c06e6b0e479de03dc84870161a80ab51bdccccdf4291ef",
+        "path": "../../output/native_parity_evidence_canonical/chronos_v1__R",
+        "path_base": "evidence_registry_parent",
+        "result_sha256": "8e45c8d1b138f493170e43c1aedea2a59d8bb85a84673d91f573a514e4ba8fd4",
+        "stderr_sha256": "3cf578758b940767e651ee237dd95183997d040ee0aa4b35f5ea3d5dfd93b3a1",
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "checks": {
+        "adapter_public_api_parity": {
+          "evidence": "all public native output pairs agree; max_abs=0",
+          "status": "pass"
+        },
+        "batch_partition_parity": {
+          "evidence": "full/partitioned arrays agree; max_abs=8.12113285e-07",
+          "status": "pass"
+        },
+        "channel_semantics": {
+          "evidence": "five independent OHLCV channel rows were retained without pooling",
+          "status": "pass"
+        },
+        "context_horizon_boundaries": {
+          "evidence": "runtime exercised context=512, horizon=not_applicable",
+          "status": "pass"
+        },
+        "exact_resume": {
+          "reason": "base inference/representation evidence does not admit training",
+          "status": "not_applicable"
+        },
+        "fp32_finite": {
+          "evidence": "all persisted native outputs are finite float32",
+          "status": "pass"
+        },
+        "frequency_timezone_covariates": {
+          "reason": "admitted public interface has no frequency/timezone covariate input",
+          "status": "not_applicable"
+        },
+        "gradient_freeze_surface": {
+          "reason": "base inference/representation evidence does not admit adaptation",
+          "status": "not_applicable"
+        },
+        "license_governance": {
+          "evidence": "exact model card declares 'apache-2.0'; registry expects 'apache-2.0'; bound source license artifacts=1",
+          "status": "pass"
+        },
+        "official_example": {
+          "evidence": "executed and persisted 2 pinned public output surface(s)",
+          "status": "pass"
+        },
+        "padding_mask_missing_values": {
+          "reason": "admitted interface requires complete finite input and has no mask",
+          "status": "not_applicable"
+        },
+        "prefix_invariance": {
+          "reason": "base native API receives only the supplied causal context; numerical composite-input prefix invariance is a downstream/training gate",
+          "status": "not_applicable"
+        },
+        "reduced_precision_tolerance": {
+          "reason": "technical admission is explicitly FP32-only",
+          "status": "not_applicable"
+        },
+        "repeated_batch_loss_decrease": {
+          "reason": "base inference/representation evidence does not admit training",
+          "status": "not_applicable"
+        },
+        "save_reload_export": {
+          "reason": "base inference/representation evidence does not admit export",
+          "status": "not_applicable"
+        },
+        "scaling_inverse_scaling": {
+          "reason": "representation output has no inverse-scaled forecast surface",
+          "status": "not_applicable"
+        }
+      },
+      "environment": {
+        "chronos-forecasting": "2.3.1",
+        "device": "cuda:0",
+        "dtype": "float32",
+        "executable": "/usr/bin/python3.12",
+        "network_policy": "python_socket_deny",
+        "profile": "common",
+        "python": "3.12.3",
+        "torch": "2.13.0"
+      },
+      "identity": {
+        "model_id": "amazon/chronos-t5-tiny",
+        "model_revision": "29d808298f1a62493e7b9a5e08529d0d930fa189",
+        "source_revision": "chronos-forecasting==2.3.1",
+        "tokenizer_id": "bundled",
+        "tokenizer_revision": "model_revision"
+      },
+      "metrics": {
+        "adapter_public_api_allclose": true,
+        "adapter_public_api_max_abs": 0.0,
+        "adapter_public_api_pairs": [
+          {
+            "adapter": "adapter_embedding",
+            "allclose": true,
+            "max_abs": 0.0,
+            "official": "official_embedding"
+          },
+          {
+            "adapter": "adapter_tokenizer_state",
+            "allclose": true,
+            "max_abs": 0.0,
+            "official": "official_tokenizer_state"
+          }
+        ],
+        "batch_partition_allclose": true,
+        "batch_partition_max_abs": 8.121132850646973e-07,
+        "batch_partition_pairs": [
+          {
+            "adapter": "adapter_embedding",
+            "allclose": true,
+            "max_abs": 8.121132850646973e-07,
+            "partitioned": "partitioned_embedding"
+          },
+          {
+            "adapter": "adapter_tokenizer_state",
+            "allclose": true,
+            "max_abs": 0.0,
+            "partitioned": "partitioned_tokenizer_state"
+          }
+        ],
+        "embedding_shape": [
+          20,
+          513,
+          256
+        ],
+        "finite": true,
+        "license": {
+          "deployment": "allowed_after_admission",
+          "id": "Apache-2.0"
+        },
+        "license_artifacts": {
+          "deployment": "allowed_after_admission",
+          "model_card": {
+            "declared_license": "apache-2.0",
+            "path": "README.md",
+            "sha256": "cb6ad9d49b90f956c2dc9d60e485f7be41eb0c667662109478fec78e6955328f"
+          },
+          "registry_license": "Apache-2.0",
+          "source_licenses": [
+            {
+              "path": "METADATA",
+              "sha256": "056c8e7f5b9015c4d2559092b63ff1a58cae387771cb0c59ac0e416ee2721ba6"
+            }
+          ]
+        },
+        "model_revision": "29d808298f1a62493e7b9a5e08529d0d930fa189",
+        "native_parity_atol": 1e-05,
+        "native_parity_rtol": 1e-05,
+        "seeded_repeat": null,
+        "source_revision": "chronos-forecasting==2.3.1",
+        "worker_source": "/home/m3hdi/projects/Futures-Foundation-Model/scripts/native_parity_worker.py"
+      },
+      "profile": "generated_bundle",
+      "status": "pass",
+      "track": "R"
+    },
+    "chronos_v2:F:2026-07-18": {
+      "admitted_runtime": {
+        "context_length": 512,
+        "cross_learning": false,
+        "dtype": "float32",
+        "prediction_length": 16,
+        "quantile_levels": [
+          0.1,
+          0.5,
+          0.9
+        ]
+      },
+      "arm_key": "chronos_v2",
+      "bundle": {
+        "bundle_sha256": "9101e58ab139ab3ad406baa596cb306578eaf47e5faba0b2003659f9cfffdac2",
+        "command_sha256": "655a1387f47dfef72cdcfce55ec133a81afa6498bf78b0e15a0b6ba4a3740b47",
+        "fixture_sha256": "7527f9c14a63615191c06e6b0e479de03dc84870161a80ab51bdccccdf4291ef",
+        "path": "../../output/native_parity_evidence_canonical/chronos_v2__F",
+        "path_base": "evidence_registry_parent",
+        "result_sha256": "1fbcaad8f3ab48b554ed9a1722dcbfbf4fc65f4e2ad38f9367677d0847fe4fc7",
+        "stderr_sha256": "e5d67325127bbe3dc50c625f75d2044693f2349e6fc85f1a20676c560ffb0fc1",
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "checks": {
+        "adapter_public_api_parity": {
+          "evidence": "all public native output pairs agree; max_abs=0",
+          "status": "pass"
+        },
+        "batch_partition_parity": {
+          "evidence": "full/partitioned arrays agree; max_abs=0",
+          "status": "pass"
+        },
+        "channel_semantics": {
+          "evidence": "Chronos-2 jointly forecasts five variates within each item",
+          "status": "pass"
+        },
+        "context_horizon_boundaries": {
+          "evidence": "runtime exercised context=512, horizon=16",
+          "status": "pass"
+        },
+        "exact_resume": {
+          "reason": "base inference/representation evidence does not admit training",
+          "status": "not_applicable"
+        },
+        "fp32_finite": {
+          "evidence": "all persisted native outputs are finite float32",
+          "status": "pass"
+        },
+        "frequency_timezone_covariates": {
+          "reason": "admitted public interface has no frequency/timezone covariate input",
+          "status": "not_applicable"
+        },
+        "gradient_freeze_surface": {
+          "reason": "base inference/representation evidence does not admit adaptation",
+          "status": "not_applicable"
+        },
+        "license_governance": {
+          "evidence": "exact model card declares 'apache-2.0'; registry expects 'apache-2.0'; bound source license artifacts=1",
+          "status": "pass"
+        },
+        "official_example": {
+          "evidence": "executed and persisted 1 pinned public output surface(s)",
+          "status": "pass"
+        },
+        "padding_mask_missing_values": {
+          "reason": "admitted interface requires complete finite input and has no mask",
+          "status": "not_applicable"
+        },
+        "prefix_invariance": {
+          "reason": "base native API receives only the supplied causal context; numerical composite-input prefix invariance is a downstream/training gate",
+          "status": "not_applicable"
+        },
+        "reduced_precision_tolerance": {
+          "reason": "technical admission is explicitly FP32-only",
+          "status": "not_applicable"
+        },
+        "repeated_batch_loss_decrease": {
+          "reason": "base inference/representation evidence does not admit training",
+          "status": "not_applicable"
+        },
+        "save_reload_export": {
+          "reason": "base inference/representation evidence does not admit export",
+          "status": "not_applicable"
+        },
+        "scaling_inverse_scaling": {
+          "evidence": "raw-scale public quantiles were compared directly with adapter outputs",
+          "status": "pass"
+        }
+      },
+      "environment": {
+        "chronos-forecasting": "2.3.1",
+        "device": "cuda:0",
+        "dtype": "float32",
+        "executable": "/usr/bin/python3.12",
+        "network_policy": "python_socket_deny",
+        "profile": "common",
+        "python": "3.12.3",
+        "torch": "2.13.0"
+      },
+      "identity": {
+        "model_id": "autogluon/chronos-2-small",
+        "model_revision": "ddec01313e50b6bc58ebaa92ede81bc24a3d9f9a",
+        "source_revision": "chronos-forecasting==2.3.1",
+        "tokenizer_id": "bundled_patchifier_with_reg_and_output_tokens",
+        "tokenizer_revision": "model_revision"
+      },
+      "metrics": {
+        "adapter_public_api_allclose": true,
+        "adapter_public_api_max_abs": 0.0,
+        "adapter_public_api_pairs": [
+          {
+            "adapter": "adapter_quantiles",
+            "allclose": true,
+            "max_abs": 0.0,
+            "official": "official_quantiles"
+          }
+        ],
+        "batch_partition_allclose": true,
+        "batch_partition_max_abs": 0.0,
+        "batch_partition_pairs": [
+          {
+            "adapter": "adapter_quantiles",
+            "allclose": true,
+            "max_abs": 0.0,
+            "partitioned": "partitioned_quantiles"
+          }
+        ],
+        "finite": true,
+        "license": {
+          "deployment": "allowed_after_admission",
+          "id": "Apache-2.0"
+        },
+        "license_artifacts": {
+          "deployment": "allowed_after_admission",
+          "model_card": {
+            "declared_license": "apache-2.0",
+            "path": "README.md",
+            "sha256": "c27a3415d8482238aef5c419a7e58ef2f3fd2a45247148f17e5237521059abf7"
+          },
+          "registry_license": "Apache-2.0",
+          "source_licenses": [
+            {
+              "path": "METADATA",
+              "sha256": "056c8e7f5b9015c4d2559092b63ff1a58cae387771cb0c59ac0e416ee2721ba6"
+            }
+          ]
+        },
+        "model_revision": "ddec01313e50b6bc58ebaa92ede81bc24a3d9f9a",
+        "native_parity_atol": 1e-05,
+        "native_parity_rtol": 1e-05,
+        "quantile_shape": [
+          4,
+          5,
+          16,
+          3
+        ],
+        "seeded_repeat": null,
+        "source_revision": "chronos-forecasting==2.3.1",
+        "worker_source": "/home/m3hdi/projects/Futures-Foundation-Model/scripts/native_parity_worker.py"
+      },
+      "profile": "generated_bundle",
+      "status": "pass",
+      "track": "F"
+    },
+    "chronos_v2:R:2026-07-18": {
+      "admitted_runtime": {
+        "context_length": 512,
+        "dtype": "float32",
+        "output": "tokens_and_scaling_state_unpooled"
+      },
+      "arm_key": "chronos_v2",
+      "bundle": {
+        "bundle_sha256": "910a397c4860d33b6d3b660ec556bc968110e38d177c246697b9a7bec4183b8b",
+        "command_sha256": "8511ce3c31be2b0001f2b0a7bcf12dc8f13da622bc5e81efefcb1299112950e0",
+        "fixture_sha256": "7527f9c14a63615191c06e6b0e479de03dc84870161a80ab51bdccccdf4291ef",
+        "path": "../../output/native_parity_evidence_canonical/chronos_v2__R",
+        "path_base": "evidence_registry_parent",
+        "result_sha256": "42c5fff9ed78307b82a02c47a8aeedb0000c982bd7b11f31a46a1d5eea009176",
+        "stderr_sha256": "66c9642e21842084cd5a698ccc063ac56a1957b683b1d559e613d388c9314fb5",
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "checks": {
+        "adapter_public_api_parity": {
+          "evidence": "all public native output pairs agree; max_abs=0",
+          "status": "pass"
+        },
+        "batch_partition_parity": {
+          "evidence": "full/partitioned arrays agree; max_abs=0",
+          "status": "pass"
+        },
+        "channel_semantics": {
+          "evidence": "grouped five-variate tokens were retained",
+          "status": "pass"
+        },
+        "context_horizon_boundaries": {
+          "evidence": "runtime exercised context=512, horizon=not_applicable",
+          "status": "pass"
+        },
+        "exact_resume": {
+          "reason": "base inference/representation evidence does not admit training",
+          "status": "not_applicable"
+        },
+        "fp32_finite": {
+          "evidence": "all persisted native outputs are finite float32",
+          "status": "pass"
+        },
+        "frequency_timezone_covariates": {
+          "reason": "admitted public interface has no frequency/timezone covariate input",
+          "status": "not_applicable"
+        },
+        "gradient_freeze_surface": {
+          "reason": "base inference/representation evidence does not admit adaptation",
+          "status": "not_applicable"
+        },
+        "license_governance": {
+          "evidence": "exact model card declares 'apache-2.0'; registry expects 'apache-2.0'; bound source license artifacts=1",
+          "status": "pass"
+        },
+        "official_example": {
+          "evidence": "executed and persisted 3 pinned public output surface(s)",
+          "status": "pass"
+        },
+        "padding_mask_missing_values": {
+          "reason": "admitted interface requires complete finite input and has no mask",
+          "status": "not_applicable"
+        },
+        "prefix_invariance": {
+          "reason": "base native API receives only the supplied causal context; numerical composite-input prefix invariance is a downstream/training gate",
+          "status": "not_applicable"
+        },
+        "reduced_precision_tolerance": {
+          "reason": "technical admission is explicitly FP32-only",
+          "status": "not_applicable"
+        },
+        "repeated_batch_loss_decrease": {
+          "reason": "base inference/representation evidence does not admit training",
+          "status": "not_applicable"
+        },
+        "save_reload_export": {
+          "reason": "base inference/representation evidence does not admit export",
+          "status": "not_applicable"
+        },
+        "scaling_inverse_scaling": {
+          "reason": "representation output has no inverse-scaled forecast surface",
+          "status": "not_applicable"
+        }
+      },
+      "environment": {
+        "chronos-forecasting": "2.3.1",
+        "device": "cuda:0",
+        "dtype": "float32",
+        "executable": "/usr/bin/python3.12",
+        "network_policy": "python_socket_deny",
+        "profile": "common",
+        "python": "3.12.3",
+        "torch": "2.13.0"
+      },
+      "identity": {
+        "model_id": "autogluon/chronos-2-small",
+        "model_revision": "ddec01313e50b6bc58ebaa92ede81bc24a3d9f9a",
+        "source_revision": "chronos-forecasting==2.3.1",
+        "tokenizer_id": "bundled_patchifier_with_reg_and_output_tokens",
+        "tokenizer_revision": "model_revision"
+      },
+      "metrics": {
+        "adapter_public_api_allclose": true,
+        "adapter_public_api_max_abs": 0.0,
+        "adapter_public_api_pairs": [
+          {
+            "adapter": "adapter_embedding",
+            "allclose": true,
+            "max_abs": 0.0,
+            "official": "official_embedding"
+          },
+          {
+            "adapter": "adapter_location",
+            "allclose": true,
+            "max_abs": 0.0,
+            "official": "official_location"
+          },
+          {
+            "adapter": "adapter_scale",
+            "allclose": true,
+            "max_abs": 0.0,
+            "official": "official_scale"
+          }
+        ],
+        "batch_partition_allclose": true,
+        "batch_partition_max_abs": 0.0,
+        "batch_partition_pairs": [
+          {
+            "adapter": "adapter_embedding",
+            "allclose": true,
+            "max_abs": 0.0,
+            "partitioned": "partitioned_embedding"
+          },
+          {
+            "adapter": "adapter_location",
+            "allclose": true,
+            "max_abs": 0.0,
+            "partitioned": "partitioned_location"
+          },
+          {
+            "adapter": "adapter_scale",
+            "allclose": true,
+            "max_abs": 0.0,
+            "partitioned": "partitioned_scale"
+          }
+        ],
+        "embedding_shape": [
+          4,
+          5,
+          34,
+          512
+        ],
+        "finite": true,
+        "license": {
+          "deployment": "allowed_after_admission",
+          "id": "Apache-2.0"
+        },
+        "license_artifacts": {
+          "deployment": "allowed_after_admission",
+          "model_card": {
+            "declared_license": "apache-2.0",
+            "path": "README.md",
+            "sha256": "c27a3415d8482238aef5c419a7e58ef2f3fd2a45247148f17e5237521059abf7"
+          },
+          "registry_license": "Apache-2.0",
+          "source_licenses": [
+            {
+              "path": "METADATA",
+              "sha256": "056c8e7f5b9015c4d2559092b63ff1a58cae387771cb0c59ac0e416ee2721ba6"
+            }
+          ]
+        },
+        "model_revision": "ddec01313e50b6bc58ebaa92ede81bc24a3d9f9a",
+        "native_parity_atol": 1e-05,
+        "native_parity_rtol": 1e-05,
+        "seeded_repeat": null,
+        "source_revision": "chronos-forecasting==2.3.1",
+        "worker_source": "/home/m3hdi/projects/Futures-Foundation-Model/scripts/native_parity_worker.py"
+      },
+      "profile": "generated_bundle",
+      "status": "pass",
+      "track": "R"
     },
     "kronos_mini:F:2026-07-18": {
+      "admitted_runtime": {
+        "context_length": 512,
+        "decoding": [
+          {
+            "sample_count": 1,
+            "temperature": 1.0,
+            "top_k": 1,
+            "top_p": 1.0
+          }
+        ],
+        "dtype": "float32",
+        "prediction_length": 16,
+        "timeframes_minutes": [
+          1,
+          3,
+          5,
+          15,
+          30,
+          60
+        ],
+        "timestamp_timezone": "UTC"
+      },
       "arm_key": "kronos_mini",
-      "track": "F",
-      "status": "pass",
-      "profile": "forecast_fp32",
+      "bundle": {
+        "bundle_sha256": "c9e12d99f7205f651a7a241930ef98ffc9d19c7ad7945261c08f4530590ce83b",
+        "command_sha256": "dc52ffb975dfbec8b0330294fb8913d7e024e908b6312fe4eb8fe53bdfada5c7",
+        "fixture_sha256": "7527f9c14a63615191c06e6b0e479de03dc84870161a80ab51bdccccdf4291ef",
+        "path": "../../output/native_parity_evidence_canonical/kronos_mini__F",
+        "path_base": "evidence_registry_parent",
+        "result_sha256": "97626107c5753c59a84ec40a86f409ae489e6d3511c247ed056b09f596cb4d64",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout_sha256": "cda469d25f28fc5ae1400e397a5e49cc2d460b6974e1d6b13779469884a9a9cf"
+      },
+      "checks": {
+        "adapter_public_api_parity": {
+          "evidence": "all public native output pairs agree; max_abs=0",
+          "status": "pass"
+        },
+        "batch_partition_parity": {
+          "evidence": "full/partitioned arrays agree; max_abs=0.0625",
+          "status": "pass"
+        },
+        "channel_semantics": {
+          "evidence": "official joint OHLCVA output retained six columns; the benchmark consumes OHLCV",
+          "status": "pass"
+        },
+        "context_horizon_boundaries": {
+          "evidence": "runtime exercised context=512, horizon=16",
+          "status": "pass"
+        },
+        "exact_resume": {
+          "reason": "base inference/representation evidence does not admit training",
+          "status": "not_applicable"
+        },
+        "fp32_finite": {
+          "evidence": "all persisted native outputs are finite float32",
+          "status": "pass"
+        },
+        "frequency_timezone_covariates": {
+          "evidence": "UTC calendar inputs exercised 1/3/5/15/30/60-minute deltas",
+          "status": "pass"
+        },
+        "gradient_freeze_surface": {
+          "reason": "base inference/representation evidence does not admit adaptation",
+          "status": "not_applicable"
+        },
+        "license_governance": {
+          "evidence": "exact model card declares 'mit'; registry expects 'mit'; bound source license artifacts=1",
+          "status": "pass"
+        },
+        "official_example": {
+          "evidence": "executed and persisted 6 pinned public output surface(s)",
+          "status": "pass"
+        },
+        "padding_mask_missing_values": {
+          "reason": "admitted interface requires complete finite input and has no mask",
+          "status": "not_applicable"
+        },
+        "prefix_invariance": {
+          "reason": "base native API receives only the supplied causal context; numerical composite-input prefix invariance is a downstream/training gate",
+          "status": "not_applicable"
+        },
+        "reduced_precision_tolerance": {
+          "reason": "technical admission is explicitly FP32-only",
+          "status": "not_applicable"
+        },
+        "repeated_batch_loss_decrease": {
+          "reason": "base inference/representation evidence does not admit training",
+          "status": "not_applicable"
+        },
+        "save_reload_export": {
+          "reason": "base inference/representation evidence does not admit export",
+          "status": "not_applicable"
+        },
+        "scaling_inverse_scaling": {
+          "evidence": "Kronos native normalize/inverse affine input/output max_abs=0.537963867; atol=0.001, rtol=0.0005",
+          "status": "pass"
+        }
+      },
+      "environment": {
+        "device": "cuda:0",
+        "dtype": "float32",
+        "executable": "/usr/bin/python3.12",
+        "network_policy": "python_socket_deny",
+        "profile": "common",
+        "python": "3.12.3",
+        "torch": "2.13.0"
+      },
       "identity": {
         "model_id": "NeoQuasar/Kronos-mini",
         "model_revision": "f4e68697d9d5aed55cef5c96aabc3376bcad9f81",
@@ -113,20 +1207,260 @@
         "tokenizer_id": "NeoQuasar/Kronos-Tokenizer-2k",
         "tokenizer_revision": "26966d0035065a0cae0ebad7af8ece35bc1fb51c"
       },
-      "environment": {"python": "3.12", "torch": "2.13.0", "source_checkout": "67b630e67f6a18c9e9be918d9b4337c960db1e9a", "device": "RTX 5090", "dtype": "float32"},
-      "checks": {
-        "padding_mask_missing_values": {"status": "not_applicable", "reason": "official predictor requires complete finite OHLCVA context"},
-        "frequency_timezone_covariates": {"status": "pass", "evidence": "official timestamp inputs and generated DatetimeIndex exercised"}
+      "metrics": {
+        "adapter_public_api_allclose": true,
+        "adapter_public_api_max_abs": 0.0,
+        "adapter_public_api_pairs": [
+          {
+            "adapter": "adapter_15min",
+            "allclose": true,
+            "max_abs": 0.0,
+            "official": "official_15min"
+          },
+          {
+            "adapter": "adapter_1min",
+            "allclose": true,
+            "max_abs": 0.0,
+            "official": "official_1min"
+          },
+          {
+            "adapter": "adapter_30min",
+            "allclose": true,
+            "max_abs": 0.0,
+            "official": "official_30min"
+          },
+          {
+            "adapter": "adapter_3min",
+            "allclose": true,
+            "max_abs": 0.0,
+            "official": "official_3min"
+          },
+          {
+            "adapter": "adapter_5min",
+            "allclose": true,
+            "max_abs": 0.0,
+            "official": "official_5min"
+          },
+          {
+            "adapter": "adapter_60min",
+            "allclose": true,
+            "max_abs": 0.0,
+            "official": "official_60min"
+          }
+        ],
+        "amount_fallback": "volume_times_mean_ohlc",
+        "batch_partition_allclose": true,
+        "batch_partition_max_abs": 0.0625,
+        "batch_partition_pairs": [
+          {
+            "adapter": "adapter_15min",
+            "allclose": true,
+            "max_abs": 0.0625,
+            "partitioned": "partitioned_15min"
+          },
+          {
+            "adapter": "adapter_1min",
+            "allclose": true,
+            "max_abs": 0.0625,
+            "partitioned": "partitioned_1min"
+          },
+          {
+            "adapter": "adapter_30min",
+            "allclose": true,
+            "max_abs": 0.0625,
+            "partitioned": "partitioned_30min"
+          },
+          {
+            "adapter": "adapter_3min",
+            "allclose": true,
+            "max_abs": 0.0625,
+            "partitioned": "partitioned_3min"
+          },
+          {
+            "adapter": "adapter_5min",
+            "allclose": true,
+            "max_abs": 0.0625,
+            "partitioned": "partitioned_5min"
+          },
+          {
+            "adapter": "adapter_60min",
+            "allclose": true,
+            "max_abs": 0.0625,
+            "partitioned": "partitioned_60min"
+          }
+        ],
+        "finite": true,
+        "license": {
+          "deployment": "allowed_after_admission",
+          "id": "MIT"
+        },
+        "license_artifacts": {
+          "deployment": "allowed_after_admission",
+          "model_card": {
+            "declared_license": "mit",
+            "path": "README.md",
+            "sha256": "73fccc29fd1cda62e7e2b0467c0d2b6f5b551b46a4f4cac0c7bca51c0a0b4697"
+          },
+          "registry_license": "MIT",
+          "source_licenses": [
+            {
+              "path": "LICENSE",
+              "sha256": "acb2d194d378204e5f2be4dcd24d39ecac437903620c790c3315a96dab388fdc"
+            }
+          ]
+        },
+        "model_revision": "f4e68697d9d5aed55cef5c96aabc3376bcad9f81",
+        "native_parity_atol": 1e-05,
+        "native_parity_rtol": 1e-05,
+        "output_shapes": {
+          "15min": [
+            4,
+            16,
+            6
+          ],
+          "1min": [
+            4,
+            16,
+            6
+          ],
+          "30min": [
+            4,
+            16,
+            6
+          ],
+          "3min": [
+            4,
+            16,
+            6
+          ],
+          "5min": [
+            4,
+            16,
+            6
+          ],
+          "60min": [
+            4,
+            16,
+            6
+          ]
+        },
+        "seeded_repeat": null,
+        "source_revision": "67b630e67f6a18c9e9be918d9b4337c960db1e9a",
+        "worker_source": "/home/m3hdi/projects/Futures-Foundation-Model/scripts/native_parity_worker.py"
       },
-      "admitted_runtime": {"context_length": 512, "prediction_length": 16, "dtype": "float32", "decoding": [{"temperature": 1.0, "top_k": 1, "top_p": 1.0, "sample_count": 1}], "timeframes_minutes": [1, 3, 5, 15, 30, 60], "timestamp_timezone": "UTC"},
-      "metrics": {"output_shape": [2, 16, 6], "single_vs_batch_max_abs": 0.0078125, "batch_tolerance": {"atol": 0.01, "rtol": 0.00001}, "seeded_stochastic_repeat_max_abs": 0.0, "different_seed_effect_max_abs": 1582.2421875, "finite": true, "ohlc_order_preserved": true},
-      "notes": "The admitted surface is deterministic greedy decoding across UTC 1/3/5/15/30/60-minute timestamps; tokenizer-2k pairing is mandatory."
+      "profile": "generated_bundle",
+      "status": "pass",
+      "track": "F"
     },
     "kronos_small:F:2026-07-18": {
+      "admitted_runtime": {
+        "context_length": 512,
+        "decoding": [
+          {
+            "sample_count": 1,
+            "temperature": 1.0,
+            "top_k": 1,
+            "top_p": 1.0
+          }
+        ],
+        "dtype": "float32",
+        "prediction_length": 16,
+        "timeframes_minutes": [
+          1,
+          3,
+          5,
+          15,
+          30,
+          60
+        ],
+        "timestamp_timezone": "UTC"
+      },
       "arm_key": "kronos_small",
-      "track": "F",
-      "status": "pass",
-      "profile": "forecast_fp32",
+      "bundle": {
+        "bundle_sha256": "f82557c78fd6111b0a7a73434df7d378f61d92255a6a416e434f88db23f54bd9",
+        "command_sha256": "a8d4baf166e72b7373300869793c59918d5627dbdb536cb9cd2b45eec818b987",
+        "fixture_sha256": "7527f9c14a63615191c06e6b0e479de03dc84870161a80ab51bdccccdf4291ef",
+        "path": "../../output/native_parity_evidence_canonical/kronos_small__F",
+        "path_base": "evidence_registry_parent",
+        "result_sha256": "306013e60690d8b25cadf4dc0f7b1029737e37ab038173153367056382943689",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout_sha256": "cda469d25f28fc5ae1400e397a5e49cc2d460b6974e1d6b13779469884a9a9cf"
+      },
+      "checks": {
+        "adapter_public_api_parity": {
+          "evidence": "all public native output pairs agree; max_abs=0",
+          "status": "pass"
+        },
+        "batch_partition_parity": {
+          "evidence": "full/partitioned arrays agree; max_abs=0.0625",
+          "status": "pass"
+        },
+        "channel_semantics": {
+          "evidence": "official joint OHLCVA output retained six columns; the benchmark consumes OHLCV",
+          "status": "pass"
+        },
+        "context_horizon_boundaries": {
+          "evidence": "runtime exercised context=512, horizon=16",
+          "status": "pass"
+        },
+        "exact_resume": {
+          "reason": "base inference/representation evidence does not admit training",
+          "status": "not_applicable"
+        },
+        "fp32_finite": {
+          "evidence": "all persisted native outputs are finite float32",
+          "status": "pass"
+        },
+        "frequency_timezone_covariates": {
+          "evidence": "UTC calendar inputs exercised 1/3/5/15/30/60-minute deltas",
+          "status": "pass"
+        },
+        "gradient_freeze_surface": {
+          "reason": "base inference/representation evidence does not admit adaptation",
+          "status": "not_applicable"
+        },
+        "license_governance": {
+          "evidence": "exact model card declares 'mit'; registry expects 'mit'; bound source license artifacts=1",
+          "status": "pass"
+        },
+        "official_example": {
+          "evidence": "executed and persisted 6 pinned public output surface(s)",
+          "status": "pass"
+        },
+        "padding_mask_missing_values": {
+          "reason": "admitted interface requires complete finite input and has no mask",
+          "status": "not_applicable"
+        },
+        "prefix_invariance": {
+          "reason": "base native API receives only the supplied causal context; numerical composite-input prefix invariance is a downstream/training gate",
+          "status": "not_applicable"
+        },
+        "reduced_precision_tolerance": {
+          "reason": "technical admission is explicitly FP32-only",
+          "status": "not_applicable"
+        },
+        "repeated_batch_loss_decrease": {
+          "reason": "base inference/representation evidence does not admit training",
+          "status": "not_applicable"
+        },
+        "save_reload_export": {
+          "reason": "base inference/representation evidence does not admit export",
+          "status": "not_applicable"
+        },
+        "scaling_inverse_scaling": {
+          "evidence": "Kronos native normalize/inverse affine input/output max_abs=0.778320312; atol=0.001, rtol=0.0005",
+          "status": "pass"
+        }
+      },
+      "environment": {
+        "device": "cuda:0",
+        "dtype": "float32",
+        "executable": "/usr/bin/python3.12",
+        "network_policy": "python_socket_deny",
+        "profile": "common",
+        "python": "3.12.3",
+        "torch": "2.13.0"
+      },
       "identity": {
         "model_id": "NeoQuasar/Kronos-small",
         "model_revision": "901c26c1332695a2a8f243eb2f37243a37bea320",
@@ -134,178 +1468,1543 @@
         "tokenizer_id": "NeoQuasar/Kronos-Tokenizer-base",
         "tokenizer_revision": "0e0117387f39004a9016484a186a908917e22426"
       },
-      "environment": {"python": "3.12", "torch": "2.13.0", "source_checkout": "67b630e67f6a18c9e9be918d9b4337c960db1e9a", "device": "RTX 5090", "dtype": "float32"},
-      "checks": {
-        "padding_mask_missing_values": {"status": "not_applicable", "reason": "official predictor requires complete finite OHLCVA context"},
-        "frequency_timezone_covariates": {"status": "pass", "evidence": "official timestamp inputs and generated DatetimeIndex exercised"}
+      "metrics": {
+        "adapter_public_api_allclose": true,
+        "adapter_public_api_max_abs": 0.0,
+        "adapter_public_api_pairs": [
+          {
+            "adapter": "adapter_15min",
+            "allclose": true,
+            "max_abs": 0.0,
+            "official": "official_15min"
+          },
+          {
+            "adapter": "adapter_1min",
+            "allclose": true,
+            "max_abs": 0.0,
+            "official": "official_1min"
+          },
+          {
+            "adapter": "adapter_30min",
+            "allclose": true,
+            "max_abs": 0.0,
+            "official": "official_30min"
+          },
+          {
+            "adapter": "adapter_3min",
+            "allclose": true,
+            "max_abs": 0.0,
+            "official": "official_3min"
+          },
+          {
+            "adapter": "adapter_5min",
+            "allclose": true,
+            "max_abs": 0.0,
+            "official": "official_5min"
+          },
+          {
+            "adapter": "adapter_60min",
+            "allclose": true,
+            "max_abs": 0.0,
+            "official": "official_60min"
+          }
+        ],
+        "amount_fallback": "volume_times_mean_ohlc",
+        "batch_partition_allclose": true,
+        "batch_partition_max_abs": 0.0625,
+        "batch_partition_pairs": [
+          {
+            "adapter": "adapter_15min",
+            "allclose": true,
+            "max_abs": 0.0625,
+            "partitioned": "partitioned_15min"
+          },
+          {
+            "adapter": "adapter_1min",
+            "allclose": true,
+            "max_abs": 0.0625,
+            "partitioned": "partitioned_1min"
+          },
+          {
+            "adapter": "adapter_30min",
+            "allclose": true,
+            "max_abs": 0.0625,
+            "partitioned": "partitioned_30min"
+          },
+          {
+            "adapter": "adapter_3min",
+            "allclose": true,
+            "max_abs": 0.0625,
+            "partitioned": "partitioned_3min"
+          },
+          {
+            "adapter": "adapter_5min",
+            "allclose": true,
+            "max_abs": 0.0625,
+            "partitioned": "partitioned_5min"
+          },
+          {
+            "adapter": "adapter_60min",
+            "allclose": true,
+            "max_abs": 0.0625,
+            "partitioned": "partitioned_60min"
+          }
+        ],
+        "finite": true,
+        "license": {
+          "deployment": "allowed_after_admission",
+          "id": "MIT"
+        },
+        "license_artifacts": {
+          "deployment": "allowed_after_admission",
+          "model_card": {
+            "declared_license": "mit",
+            "path": "README.md",
+            "sha256": "33ba1550110c020dc30da869c91a65749009af7671dff0dce98fc0a914f3fc04"
+          },
+          "registry_license": "MIT",
+          "source_licenses": [
+            {
+              "path": "LICENSE",
+              "sha256": "acb2d194d378204e5f2be4dcd24d39ecac437903620c790c3315a96dab388fdc"
+            }
+          ]
+        },
+        "model_revision": "901c26c1332695a2a8f243eb2f37243a37bea320",
+        "native_parity_atol": 1e-05,
+        "native_parity_rtol": 1e-05,
+        "output_shapes": {
+          "15min": [
+            4,
+            16,
+            6
+          ],
+          "1min": [
+            4,
+            16,
+            6
+          ],
+          "30min": [
+            4,
+            16,
+            6
+          ],
+          "3min": [
+            4,
+            16,
+            6
+          ],
+          "5min": [
+            4,
+            16,
+            6
+          ],
+          "60min": [
+            4,
+            16,
+            6
+          ]
+        },
+        "seeded_repeat": null,
+        "source_revision": "67b630e67f6a18c9e9be918d9b4337c960db1e9a",
+        "worker_source": "/home/m3hdi/projects/Futures-Foundation-Model/scripts/native_parity_worker.py"
       },
-      "admitted_runtime": {"context_length": 512, "prediction_length": 16, "dtype": "float32", "decoding": [{"temperature": 1.0, "top_k": 1, "top_p": 1.0, "sample_count": 1}], "timeframes_minutes": [1, 3, 5, 15, 30, 60], "timestamp_timezone": "UTC"},
-      "metrics": {"output_shape": [2, 16, 6], "single_vs_batch_max_abs": 0.0078125, "batch_tolerance": {"atol": 0.01, "rtol": 0.00001}, "seeded_stochastic_repeat_max_abs": 0.0, "different_seed_effect_max_abs": 1087.0546875, "finite": true, "ohlc_order_preserved": true},
-      "notes": "The admitted surface is deterministic greedy decoding across UTC 1/3/5/15/30/60-minute timestamps; Tokenizer-base pairing is mandatory."
-    },
-    "chronos_v1:F:2026-07-18": {
-      "arm_key": "chronos_v1",
-      "track": "F",
+      "profile": "generated_bundle",
       "status": "pass",
-      "profile": "forecast_fp32",
-      "identity": {"model_id": "amazon/chronos-t5-tiny", "model_revision": "29d808298f1a62493e7b9a5e08529d0d930fa189", "source_revision": "chronos-forecasting==2.3.1"},
-      "environment": {"python": "3.12", "torch": "2.13.0", "chronos-forecasting": "2.3.1", "device": "RTX 5090", "dtype": "float32"},
-      "checks": {"padding_mask_missing_values": {"status": "pass", "evidence": "official tokenizer/scaling/missing mask path used"}},
-      "admitted_runtime": {"context_length": 512, "prediction_length": 16, "dtype": "float32", "num_samples": 20, "quantile_levels": [0.1, 0.5, 0.9]},
-      "metrics": {"quantile_shape": [2, 16, 3], "seeded_tensor_vs_list_max_abs": 0.0, "finite": true},
-      "notes": "Forecast parity only; representation parity is recorded separately through the concrete ChronosPipeline public embed API."
+      "track": "F"
     },
-    "chronos_v1:R:2026-07-18": {
-      "arm_key": "chronos_v1",
-      "track": "R",
-      "status": "pass",
-      "profile": "representation_fp32",
-      "identity": {"model_id": "amazon/chronos-t5-tiny", "model_revision": "29d808298f1a62493e7b9a5e08529d0d930fa189", "source_revision": "chronos-forecasting==2.3.1"},
-      "environment": {"python": "3.12", "torch": "2.13.0", "chronos-forecasting": "2.3.1", "device": "RTX 5090", "dtype": "float32"},
-      "checks": {"padding_mask_missing_values": {"status": "pass", "evidence": "concrete public embed API used the official tokenizer state"}},
-      "admitted_runtime": {"context_length": 512, "dtype": "float32", "output": "unpooled_embeddings_and_tokenizer_state"},
-      "metrics": {"embedding_shape": [2, 513, 256], "tokenizer_state_shape": [2], "finite": true},
-      "notes": "Transitional technical record from direct offline public-API inspection; the generated raw parity bundle replaces this record before final admission."
-    },
-    "chronos_bolt:F:2026-07-18": {
-      "arm_key": "chronos_bolt",
-      "track": "F",
-      "status": "pass",
-      "profile": "forecast_fp32",
-      "identity": {"model_id": "amazon/chronos-bolt-tiny", "model_revision": "a0e552de83495b5c28c14c71c374f3e33280b340", "source_revision": "chronos-forecasting==2.3.1"},
-      "environment": {"python": "3.12", "torch": "2.13.0", "chronos-forecasting": "2.3.1", "device": "RTX 5090", "dtype": "float32"},
-      "checks": {"padding_mask_missing_values": {"status": "pass", "evidence": "official patchifier/scaling/missing mask path used"}},
-      "admitted_runtime": {"context_length": 512, "prediction_length": 16, "dtype": "float32", "quantile_levels": [0.1, 0.5, 0.9]},
-      "metrics": {"quantile_shape": [2, 16, 3], "tensor_vs_list_max_abs": 0.0, "finite": true},
-      "notes": "Forecast parity only; representation parity is recorded separately through the concrete ChronosBoltPipeline public embed API."
-    },
-    "chronos_bolt:R:2026-07-18": {
-      "arm_key": "chronos_bolt",
-      "track": "R",
-      "status": "pass",
-      "profile": "representation_fp32",
-      "identity": {"model_id": "amazon/chronos-bolt-tiny", "model_revision": "a0e552de83495b5c28c14c71c374f3e33280b340", "source_revision": "chronos-forecasting==2.3.1"},
-      "environment": {"python": "3.12", "torch": "2.13.0", "chronos-forecasting": "2.3.1", "device": "RTX 5090", "dtype": "float32"},
-      "checks": {"padding_mask_missing_values": {"status": "pass", "evidence": "concrete public embed API used the official patchifier and location/scale state"}},
-      "admitted_runtime": {"context_length": 512, "dtype": "float32", "output": "unpooled_embeddings_and_location_scale"},
-      "metrics": {"embedding_shape": [2, 33, 256], "location_shape": [2], "scale_shape": [2], "finite": true},
-      "notes": "Transitional technical record from direct offline public-API inspection; the generated raw parity bundle replaces this record before final admission."
-    },
-    "chronos_v2:F:2026-07-18": {
-      "arm_key": "chronos_v2",
-      "track": "F",
-      "status": "pass",
-      "profile": "forecast_fp32",
-      "identity": {"model_id": "autogluon/chronos-2-small", "model_revision": "ddec01313e50b6bc58ebaa92ede81bc24a3d9f9a", "source_revision": "chronos-forecasting==2.3.1"},
-      "environment": {"python": "3.12", "torch": "2.13.0", "chronos-forecasting": "2.3.1", "device": "RTX 5090", "dtype": "float32"},
-      "checks": {"padding_mask_missing_values": {"status": "pass", "evidence": "official grouped scaling/missing mask path used"}},
-      "admitted_runtime": {"context_length": 512, "prediction_length": 16, "dtype": "float32", "quantile_levels": [0.1, 0.5, 0.9], "cross_learning": false},
-      "metrics": {"per_series_quantile_shape": [1, 16, 3], "batch_partition_max_abs": 4.76837158203125e-7, "finite": true},
-      "notes": "Grouped multivariate input is preserved; cross_learning=False is explicit for independent OHLCV evaluation."
-    },
-    "chronos_v2:R:2026-07-18": {
-      "arm_key": "chronos_v2",
-      "track": "R",
-      "status": "pass",
-      "profile": "representation_fp32",
-      "identity": {"model_id": "autogluon/chronos-2-small", "model_revision": "ddec01313e50b6bc58ebaa92ede81bc24a3d9f9a", "source_revision": "chronos-forecasting==2.3.1"},
-      "environment": {"python": "3.12", "torch": "2.13.0", "chronos-forecasting": "2.3.1", "device": "RTX 5090", "dtype": "float32"},
-      "checks": {
-        "scaling_inverse_scaling": {"status": "pass", "evidence": "official embed API returned scaling state alongside tokens"},
-        "padding_mask_missing_values": {"status": "pass", "evidence": "official grouped embed preprocessing used"}
+    "mantis_v1:R:2026-07-18": {
+      "admitted_runtime": {
+        "channel_fusion": "forbidden_in_track_R",
+        "context_length": 512,
+        "dtype": "float32",
+        "output_layout": "B,C,D"
       },
-      "admitted_runtime": {"context_length": 512, "dtype": "float32", "output": "tokens_and_scaling_state_unpooled"},
-      "metrics": {"series_count": 2, "per_series_embedding_shape": [5, 34, 512], "state_tensor_shapes": [[5, 1], [5, 1]], "batch_partition_embedding_max_abs": 0.0, "batch_partition_state_max_abs": 0.0, "finite": true},
-      "notes": "Tokens and scaling state are returned unchanged. Any token pooling is Track C."
+      "arm_key": "mantis_v1",
+      "bundle": {
+        "bundle_sha256": "9b17d25383d847e81a57b1d38de751049b8cbb599c09231a342adda0482100bf",
+        "command_sha256": "b4eee3a48177c4047ea530707c631e015245e22b552a6adea69ab0285e7cd9ca",
+        "fixture_sha256": "7527f9c14a63615191c06e6b0e479de03dc84870161a80ab51bdccccdf4291ef",
+        "path": "../../output/native_parity_evidence_canonical/mantis_v1__R",
+        "path_base": "evidence_registry_parent",
+        "result_sha256": "1bda8b4559ebab1dc15ce765542e797d5ada6e1e1f7eae58f0cc4a3a4054120f",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout_sha256": "f63207b58c3fce8475f4b830ad545bb803ff04c3bd40d573b4f06b0e5daddc78"
+      },
+      "checks": {
+        "adapter_public_api_parity": {
+          "evidence": "all public native output pairs agree; max_abs=0",
+          "status": "pass"
+        },
+        "batch_partition_parity": {
+          "evidence": "full/partitioned arrays agree; max_abs=2.86102295e-06",
+          "status": "pass"
+        },
+        "channel_semantics": {
+          "evidence": "upstream three_dim=True and adapter retained shape=(4, 5, 256)",
+          "status": "pass"
+        },
+        "context_horizon_boundaries": {
+          "evidence": "runtime exercised context=512, horizon=not_applicable",
+          "status": "pass"
+        },
+        "exact_resume": {
+          "reason": "base inference/representation evidence does not admit training",
+          "status": "not_applicable"
+        },
+        "fp32_finite": {
+          "evidence": "all persisted native outputs are finite float32",
+          "status": "pass"
+        },
+        "frequency_timezone_covariates": {
+          "reason": "admitted public interface has no frequency/timezone covariate input",
+          "status": "not_applicable"
+        },
+        "gradient_freeze_surface": {
+          "reason": "base inference/representation evidence does not admit adaptation",
+          "status": "not_applicable"
+        },
+        "license_governance": {
+          "evidence": "exact model card declares 'apache-2.0'; registry expects 'apache-2.0'; bound source license artifacts=1",
+          "status": "pass"
+        },
+        "official_example": {
+          "evidence": "executed and persisted 1 pinned public output surface(s)",
+          "status": "pass"
+        },
+        "padding_mask_missing_values": {
+          "reason": "admitted interface requires complete finite input and has no mask",
+          "status": "not_applicable"
+        },
+        "prefix_invariance": {
+          "reason": "base native API receives only the supplied causal context; numerical composite-input prefix invariance is a downstream/training gate",
+          "status": "not_applicable"
+        },
+        "reduced_precision_tolerance": {
+          "reason": "technical admission is explicitly FP32-only",
+          "status": "not_applicable"
+        },
+        "repeated_batch_loss_decrease": {
+          "reason": "base inference/representation evidence does not admit training",
+          "status": "not_applicable"
+        },
+        "save_reload_export": {
+          "reason": "base inference/representation evidence does not admit export",
+          "status": "not_applicable"
+        },
+        "scaling_inverse_scaling": {
+          "reason": "representation output has no inverse-scaled forecast surface",
+          "status": "not_applicable"
+        }
+      },
+      "environment": {
+        "device": "cuda:0",
+        "dtype": "float32",
+        "executable": "/usr/bin/python3.12",
+        "mantis-tsfm": "1.0.0",
+        "network_policy": "python_socket_deny",
+        "profile": "common",
+        "python": "3.12.3",
+        "torch": "2.13.0"
+      },
+      "identity": {
+        "model_id": "paris-noah/Mantis-8M",
+        "model_revision": "93a16a52a5e2e6d76c0b823533b5836dd83ca10a",
+        "source_revision": "84350a0dac8518faaf40a021ef1d591f1132065e"
+      },
+      "metrics": {
+        "adapter_public_api_allclose": true,
+        "adapter_public_api_max_abs": 0.0,
+        "adapter_public_api_pairs": [
+          {
+            "adapter": "adapter",
+            "allclose": true,
+            "max_abs": 0.0,
+            "official": "official"
+          }
+        ],
+        "batch_partition_allclose": true,
+        "batch_partition_max_abs": 2.86102294921875e-06,
+        "batch_partition_pairs": [
+          {
+            "adapter": "adapter",
+            "allclose": true,
+            "max_abs": 2.86102294921875e-06,
+            "partitioned": "partitioned"
+          }
+        ],
+        "finite": true,
+        "license": {
+          "deployment": "allowed_after_admission",
+          "id": "Apache-2.0",
+          "source_license_file_sha256": "1eb85fc97224598dad1852b5d6483bbcf0aa8608790dcc657a5a2a761ae9c8c6"
+        },
+        "license_artifacts": {
+          "deployment": "allowed_after_admission",
+          "model_card": {
+            "declared_license": "apache-2.0",
+            "path": "README.md",
+            "sha256": "b58262e0c8bacf88b6a53aa5428bd3dae17e2007a5ab3119241f1b67e7c332ec"
+          },
+          "registry_license": "Apache-2.0",
+          "source_licenses": [
+            {
+              "path": "LICENSE",
+              "sha256": "1eb85fc97224598dad1852b5d6483bbcf0aa8608790dcc657a5a2a761ae9c8c6"
+            }
+          ]
+        },
+        "model_revision": "93a16a52a5e2e6d76c0b823533b5836dd83ca10a",
+        "native_parity_atol": 1e-05,
+        "native_parity_rtol": 1e-05,
+        "output_shape": [
+          4,
+          5,
+          256
+        ],
+        "seeded_repeat": null,
+        "source_revision": "84350a0dac8518faaf40a021ef1d591f1132065e",
+        "worker_source": "/home/m3hdi/projects/Futures-Foundation-Model/scripts/native_parity_worker.py"
+      },
+      "profile": "generated_bundle",
+      "status": "pass",
+      "track": "R"
+    },
+    "mantis_v2:R:2026-07-18": {
+      "admitted_runtime": {
+        "channel_fusion": "forbidden_in_track_R",
+        "context_length": 512,
+        "dtype": "float32",
+        "output_layout": "B,C,D",
+        "output_token": "combined",
+        "return_transf_layer": 2
+      },
+      "arm_key": "mantis_v2",
+      "bundle": {
+        "bundle_sha256": "837dcbe9b4411bca743fccb5abc7b7c02eea319916164361a08a7eb5d2f4a8e1",
+        "command_sha256": "9ea1060492d9205c0e17a310d5f97738c0261076c6d57413321492c222efe533",
+        "fixture_sha256": "7527f9c14a63615191c06e6b0e479de03dc84870161a80ab51bdccccdf4291ef",
+        "path": "../../output/native_parity_evidence_canonical/mantis_v2__R",
+        "path_base": "evidence_registry_parent",
+        "result_sha256": "14cd6c5b2170c476d2b91b165d0cc5a793ba0ab118644fda15cc30d686b6a254",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout_sha256": "f63207b58c3fce8475f4b830ad545bb803ff04c3bd40d573b4f06b0e5daddc78"
+      },
+      "checks": {
+        "adapter_public_api_parity": {
+          "evidence": "all public native output pairs agree; max_abs=0",
+          "status": "pass"
+        },
+        "batch_partition_parity": {
+          "evidence": "full/partitioned arrays agree; max_abs=9.53674316e-07",
+          "status": "pass"
+        },
+        "channel_semantics": {
+          "evidence": "upstream three_dim=True and adapter retained shape=(4, 5, 512)",
+          "status": "pass"
+        },
+        "context_horizon_boundaries": {
+          "evidence": "runtime exercised context=512, horizon=not_applicable",
+          "status": "pass"
+        },
+        "exact_resume": {
+          "reason": "base inference/representation evidence does not admit training",
+          "status": "not_applicable"
+        },
+        "fp32_finite": {
+          "evidence": "all persisted native outputs are finite float32",
+          "status": "pass"
+        },
+        "frequency_timezone_covariates": {
+          "reason": "admitted public interface has no frequency/timezone covariate input",
+          "status": "not_applicable"
+        },
+        "gradient_freeze_surface": {
+          "reason": "base inference/representation evidence does not admit adaptation",
+          "status": "not_applicable"
+        },
+        "license_governance": {
+          "evidence": "exact model card declares 'mit'; registry expects 'mit'; bound source license artifacts=1",
+          "status": "pass"
+        },
+        "official_example": {
+          "evidence": "executed and persisted 1 pinned public output surface(s)",
+          "status": "pass"
+        },
+        "padding_mask_missing_values": {
+          "reason": "admitted interface requires complete finite input and has no mask",
+          "status": "not_applicable"
+        },
+        "prefix_invariance": {
+          "reason": "base native API receives only the supplied causal context; numerical composite-input prefix invariance is a downstream/training gate",
+          "status": "not_applicable"
+        },
+        "reduced_precision_tolerance": {
+          "reason": "technical admission is explicitly FP32-only",
+          "status": "not_applicable"
+        },
+        "repeated_batch_loss_decrease": {
+          "reason": "base inference/representation evidence does not admit training",
+          "status": "not_applicable"
+        },
+        "save_reload_export": {
+          "reason": "base inference/representation evidence does not admit export",
+          "status": "not_applicable"
+        },
+        "scaling_inverse_scaling": {
+          "reason": "representation output has no inverse-scaled forecast surface",
+          "status": "not_applicable"
+        }
+      },
+      "environment": {
+        "device": "cuda:0",
+        "dtype": "float32",
+        "executable": "/usr/bin/python3.12",
+        "mantis-tsfm": "1.0.0",
+        "network_policy": "python_socket_deny",
+        "profile": "common",
+        "python": "3.12.3",
+        "torch": "2.13.0"
+      },
+      "identity": {
+        "model_id": "paris-noah/MantisV2",
+        "model_revision": "99fe0f548960e272fbfa4b82fd9b5b5956779dfd",
+        "source_revision": "84350a0dac8518faaf40a021ef1d591f1132065e"
+      },
+      "metrics": {
+        "adapter_public_api_allclose": true,
+        "adapter_public_api_max_abs": 0.0,
+        "adapter_public_api_pairs": [
+          {
+            "adapter": "adapter",
+            "allclose": true,
+            "max_abs": 0.0,
+            "official": "official"
+          }
+        ],
+        "batch_partition_allclose": true,
+        "batch_partition_max_abs": 9.5367431640625e-07,
+        "batch_partition_pairs": [
+          {
+            "adapter": "adapter",
+            "allclose": true,
+            "max_abs": 9.5367431640625e-07,
+            "partitioned": "partitioned"
+          }
+        ],
+        "finite": true,
+        "license": {
+          "deployment": "allowed_after_admission",
+          "id": "Apache-2.0-code/MIT-weights",
+          "source_license_file_sha256": "1eb85fc97224598dad1852b5d6483bbcf0aa8608790dcc657a5a2a761ae9c8c6"
+        },
+        "license_artifacts": {
+          "deployment": "allowed_after_admission",
+          "model_card": {
+            "declared_license": "mit",
+            "path": "README.md",
+            "sha256": "ea2ce2b7e49a4ad7830c1483518d84041b2f71902a3805c1100e2f30feb3cc56"
+          },
+          "registry_license": "Apache-2.0-code/MIT-weights",
+          "source_licenses": [
+            {
+              "path": "LICENSE",
+              "sha256": "1eb85fc97224598dad1852b5d6483bbcf0aa8608790dcc657a5a2a761ae9c8c6"
+            }
+          ]
+        },
+        "model_revision": "99fe0f548960e272fbfa4b82fd9b5b5956779dfd",
+        "native_parity_atol": 1e-05,
+        "native_parity_rtol": 1e-05,
+        "output_shape": [
+          4,
+          5,
+          512
+        ],
+        "seeded_repeat": null,
+        "source_revision": "84350a0dac8518faaf40a021ef1d591f1132065e",
+        "worker_source": "/home/m3hdi/projects/Futures-Foundation-Model/scripts/native_parity_worker.py"
+      },
+      "profile": "generated_bundle",
+      "status": "pass",
+      "track": "R"
+    },
+    "moirai2_small:F:2026-07-18": {
+      "admitted_runtime": {
+        "context_length": 512,
+        "dtype": "float32",
+        "masked_value_fill": 0.0,
+        "prediction_length": 16,
+        "quantile_crossing_repair": "forbidden_in_parity",
+        "use_scope": "research_noncommercial"
+      },
+      "arm_key": "moirai2_small",
+      "bundle": {
+        "bundle_sha256": "5305cb423987fd0219d1c0bc3331c52dd9aa36d710d98f3a15cacc27bd374eb0",
+        "command_sha256": "16c18067c9d94125757ef7be434308d02ce108037968699c5c3d054369e4a2d4",
+        "fixture_sha256": "7527f9c14a63615191c06e6b0e479de03dc84870161a80ab51bdccccdf4291ef",
+        "path": "../../output/native_parity_evidence_canonical/moirai2_small__F",
+        "path_base": "evidence_registry_parent",
+        "result_sha256": "2d9246ce043253ec09e032156a30114560b5ca24691336267518db80b27713c0",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout_sha256": "f63207b58c3fce8475f4b830ad545bb803ff04c3bd40d573b4f06b0e5daddc78"
+      },
+      "checks": {
+        "adapter_public_api_parity": {
+          "evidence": "all public native output pairs agree; max_abs=0",
+          "status": "pass"
+        },
+        "batch_partition_parity": {
+          "evidence": "full/partitioned arrays agree; max_abs=0.00146484375",
+          "status": "pass"
+        },
+        "channel_semantics": {
+          "evidence": "official packed five-variate target produced shape=(4, 9, 16, 5)",
+          "status": "pass"
+        },
+        "context_horizon_boundaries": {
+          "evidence": "runtime exercised context=512, horizon=16",
+          "status": "pass"
+        },
+        "exact_resume": {
+          "reason": "base inference/representation evidence does not admit training",
+          "status": "not_applicable"
+        },
+        "fp32_finite": {
+          "evidence": "all persisted native outputs are finite float32",
+          "status": "pass"
+        },
+        "frequency_timezone_covariates": {
+          "reason": "admitted public interface has no frequency/timezone covariate input",
+          "status": "not_applicable"
+        },
+        "gradient_freeze_surface": {
+          "reason": "base inference/representation evidence does not admit adaptation",
+          "status": "not_applicable"
+        },
+        "license_governance": {
+          "evidence": "exact model card declares 'cc-by-nc-4.0'; registry expects 'cc-by-nc-4.0'; bound source license artifacts=1",
+          "status": "pass"
+        },
+        "official_example": {
+          "evidence": "executed and persisted 1 pinned public output surface(s)",
+          "status": "pass"
+        },
+        "padding_mask_missing_values": {
+          "evidence": "changing explicitly unobserved values produced max_abs=0 after zero fill",
+          "status": "pass"
+        },
+        "prefix_invariance": {
+          "reason": "base native API receives only the supplied causal context; numerical composite-input prefix invariance is a downstream/training gate",
+          "status": "not_applicable"
+        },
+        "reduced_precision_tolerance": {
+          "reason": "technical admission is explicitly FP32-only",
+          "status": "not_applicable"
+        },
+        "repeated_batch_loss_decrease": {
+          "reason": "base inference/representation evidence does not admit training",
+          "status": "not_applicable"
+        },
+        "save_reload_export": {
+          "reason": "base inference/representation evidence does not admit export",
+          "status": "not_applicable"
+        },
+        "scaling_inverse_scaling": {
+          "evidence": "Moirai native scale/inverse affine input/output max_abs=0.00439453125; atol=0.001, rtol=0.0005",
+          "status": "pass"
+        }
+      },
+      "environment": {
+        "device": "cuda:0",
+        "dtype": "float32",
+        "executable": "/home/m3hdi/.local/share/uv/python/cpython-3.11.15-linux-x86_64-gnu/bin/python3.11",
+        "network_policy": "python_socket_deny",
+        "profile": "moirai",
+        "python": "3.11.15",
+        "torch": "2.10.0",
+        "uni2ts": "2.0.0"
+      },
+      "identity": {
+        "model_id": "Salesforce/moirai-2.0-R-small",
+        "model_revision": "30f43ff08c8494f4943ae1521e9d4e94a0fbb389",
+        "source_revision": "cfd46d4510ed8896f263116f32928eede05b0a75"
+      },
+      "metrics": {
+        "adapter_public_api_allclose": true,
+        "adapter_public_api_max_abs": 0.0,
+        "adapter_public_api_pairs": [
+          {
+            "adapter": "adapter",
+            "allclose": true,
+            "max_abs": 0.0,
+            "official": "official"
+          }
+        ],
+        "batch_partition_allclose": true,
+        "batch_partition_max_abs": 0.00146484375,
+        "batch_partition_pairs": [
+          {
+            "adapter": "adapter",
+            "allclose": true,
+            "max_abs": 0.00146484375,
+            "partitioned": "partitioned"
+          }
+        ],
+        "finite": true,
+        "license": {
+          "deployment": "research_only_noncommercial",
+          "id": "CC-BY-NC-4.0"
+        },
+        "license_artifacts": {
+          "deployment": "research_only_noncommercial",
+          "model_card": {
+            "declared_license": "cc-by-nc-4.0",
+            "path": "README.md",
+            "sha256": "f6dbd74f440ef637ba986147717c2ddf38979b3fba3c35ed6768939822aec73a"
+          },
+          "registry_license": "CC-BY-NC-4.0",
+          "source_licenses": [
+            {
+              "path": "LICENSE.txt",
+              "sha256": "f5f58eb4b77c4b1709334b97f1f04772df7e97c7863be1c0d4c639ee1a871cae"
+            }
+          ]
+        },
+        "masked_value_max_abs": 0.0,
+        "model_revision": "30f43ff08c8494f4943ae1521e9d4e94a0fbb389",
+        "native_min_quantile_difference": 0.03411102294921875,
+        "native_parity_atol": 1e-05,
+        "native_parity_rtol": 1e-05,
+        "output_shape": [
+          4,
+          9,
+          16,
+          5
+        ],
+        "seeded_repeat": null,
+        "source_revision": "cfd46d4510ed8896f263116f32928eede05b0a75",
+        "worker_source": "/home/m3hdi/projects/Futures-Foundation-Model/scripts/native_parity_worker.py"
+      },
+      "profile": "generated_bundle",
+      "status": "research_only_pass",
+      "track": "F"
+    },
+    "moment_small:R:2026-07-18": {
+      "admitted_runtime": {
+        "context_length": 512,
+        "dtype": "float32",
+        "output_layout": "B,D",
+        "reduction": "mean"
+      },
+      "arm_key": "moment_small",
+      "bundle": {
+        "bundle_sha256": "ba6c5d06d1bf1dbacf6449e648f2bebd591a38333d3598a7897a44b8e5bb032f",
+        "command_sha256": "ac46d0cdcf9b1fd3b71d1f698e7cefff707932817d21d342b406c09ff6255490",
+        "fixture_sha256": "7527f9c14a63615191c06e6b0e479de03dc84870161a80ab51bdccccdf4291ef",
+        "path": "../../output/native_parity_evidence_canonical/moment_small__R",
+        "path_base": "evidence_registry_parent",
+        "result_sha256": "c018aef5de2a12350e4e5679d2231112d89d959dede2d89d9208b350f16cf509",
+        "stderr_sha256": "4e3bcd40d5159f062f242ab605f32d81f3ce658848add9669f21a377c0c1c6b5",
+        "stdout_sha256": "f63207b58c3fce8475f4b830ad545bb803ff04c3bd40d573b4f06b0e5daddc78"
+      },
+      "checks": {
+        "adapter_public_api_parity": {
+          "evidence": "all public native output pairs agree; max_abs=0",
+          "status": "pass"
+        },
+        "batch_partition_parity": {
+          "evidence": "full/partitioned arrays agree; max_abs=2.5331974e-07",
+          "status": "pass"
+        },
+        "channel_semantics": {
+          "evidence": "official MOMENT input shape=(4, 5, 512); mean output=(4, 512)",
+          "status": "pass"
+        },
+        "context_horizon_boundaries": {
+          "evidence": "runtime exercised context=512, horizon=not_applicable",
+          "status": "pass"
+        },
+        "exact_resume": {
+          "reason": "base inference/representation evidence does not admit training",
+          "status": "not_applicable"
+        },
+        "fp32_finite": {
+          "evidence": "all persisted native outputs are finite float32",
+          "status": "pass"
+        },
+        "frequency_timezone_covariates": {
+          "reason": "admitted public interface has no frequency/timezone covariate input",
+          "status": "not_applicable"
+        },
+        "gradient_freeze_surface": {
+          "reason": "base inference/representation evidence does not admit adaptation",
+          "status": "not_applicable"
+        },
+        "license_governance": {
+          "evidence": "exact model card declares 'mit'; registry expects 'mit'; bound source license artifacts=1",
+          "status": "pass"
+        },
+        "official_example": {
+          "evidence": "executed and persisted 1 pinned public output surface(s)",
+          "status": "pass"
+        },
+        "padding_mask_missing_values": {
+          "evidence": "changing 32 masked left-padding values produced max_abs=0",
+          "status": "pass"
+        },
+        "prefix_invariance": {
+          "reason": "base native API receives only the supplied causal context; numerical composite-input prefix invariance is a downstream/training gate",
+          "status": "not_applicable"
+        },
+        "reduced_precision_tolerance": {
+          "reason": "technical admission is explicitly FP32-only",
+          "status": "not_applicable"
+        },
+        "repeated_batch_loss_decrease": {
+          "reason": "base inference/representation evidence does not admit training",
+          "status": "not_applicable"
+        },
+        "save_reload_export": {
+          "reason": "base inference/representation evidence does not admit export",
+          "status": "not_applicable"
+        },
+        "scaling_inverse_scaling": {
+          "reason": "representation output has no inverse-scaled forecast surface",
+          "status": "not_applicable"
+        }
+      },
+      "environment": {
+        "device": "cuda:0",
+        "dtype": "float32",
+        "executable": "/usr/bin/python3.12",
+        "momentfm": "0.1.5",
+        "network_policy": "python_socket_deny",
+        "profile": "common",
+        "python": "3.12.3",
+        "torch": "2.13.0"
+      },
+      "identity": {
+        "model_id": "AutonLab/MOMENT-1-small",
+        "model_revision": "411e288267f82cce86296dbe4d6c8bc533cc162f",
+        "source_revision": "38f7310ad594100747ca2a8357e9c7ca7d323e0e"
+      },
+      "metrics": {
+        "adapter_public_api_allclose": true,
+        "adapter_public_api_max_abs": 0.0,
+        "adapter_public_api_pairs": [
+          {
+            "adapter": "adapter",
+            "allclose": true,
+            "max_abs": 0.0,
+            "official": "official"
+          }
+        ],
+        "batch_partition_allclose": true,
+        "batch_partition_max_abs": 2.5331974029541016e-07,
+        "batch_partition_pairs": [
+          {
+            "adapter": "adapter",
+            "allclose": true,
+            "max_abs": 2.5331974029541016e-07,
+            "partitioned": "partitioned"
+          }
+        ],
+        "finite": true,
+        "license": {
+          "deployment": "allowed_after_admission",
+          "id": "MIT"
+        },
+        "license_artifacts": {
+          "deployment": "allowed_after_admission",
+          "model_card": {
+            "declared_license": "mit",
+            "path": "README.md",
+            "sha256": "e02f6d82c300988e55edd499745cc036d88be55634093e9db7d322390cd4101c"
+          },
+          "registry_license": "MIT",
+          "source_licenses": [
+            {
+              "path": "LICENSE",
+              "sha256": "b91d51e5180bcbcbb06b2f13e124a71efc9df98049e6e9a188ad070ded2fa8c6"
+            }
+          ]
+        },
+        "masked_padding_max_abs": 0.0,
+        "model_revision": "411e288267f82cce86296dbe4d6c8bc533cc162f",
+        "native_parity_atol": 1e-05,
+        "native_parity_rtol": 1e-05,
+        "output_shape": [
+          4,
+          512
+        ],
+        "seeded_repeat": null,
+        "source_revision": "38f7310ad594100747ca2a8357e9c7ca7d323e0e",
+        "worker_source": "/home/m3hdi/projects/Futures-Foundation-Model/scripts/native_parity_worker.py"
+      },
+      "profile": "generated_bundle",
+      "status": "pass",
+      "track": "R"
+    },
+    "sundial_base:F:2026-07-18": {
+      "admitted_runtime": {
+        "context_length": 512,
+        "dtype": "float32",
+        "hidden_states": "forbidden",
+        "isolated_environment": true,
+        "num_samples": 20,
+        "prediction_length": 16
+      },
+      "arm_key": "sundial_base",
+      "bundle": {
+        "bundle_sha256": "78a8945d325e7dfcd40c747ec4daaa1d9bbea95eb533a51eb3c3691b5968f88a",
+        "command_sha256": "ca9ecb62a5598106a6d796e8eb0723dff695206e1fceb592dd40cf6214adbd4b",
+        "fixture_sha256": "7527f9c14a63615191c06e6b0e479de03dc84870161a80ab51bdccccdf4291ef",
+        "path": "../../output/native_parity_evidence_canonical/sundial_base__F",
+        "path_base": "evidence_registry_parent",
+        "result_sha256": "f546ee9f88200358e93290a9339f49a01b8622c73fc11dbad1c8cf2d67467a69",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "checks": {
+        "adapter_public_api_parity": {
+          "evidence": "all public native output pairs agree; max_abs=0",
+          "status": "pass"
+        },
+        "batch_partition_parity": {
+          "evidence": "seeded adapter/repeat arrays agree; max_abs=0",
+          "status": "pass"
+        },
+        "channel_semantics": {
+          "evidence": "independent OHLCV rows retained; minimum sample std=0.0249770936",
+          "status": "pass"
+        },
+        "context_horizon_boundaries": {
+          "evidence": "runtime exercised context=512, horizon=16",
+          "status": "pass"
+        },
+        "exact_resume": {
+          "reason": "base inference/representation evidence does not admit training",
+          "status": "not_applicable"
+        },
+        "fp32_finite": {
+          "evidence": "all persisted native outputs are finite float32",
+          "status": "pass"
+        },
+        "frequency_timezone_covariates": {
+          "reason": "admitted public interface has no frequency/timezone covariate input",
+          "status": "not_applicable"
+        },
+        "gradient_freeze_surface": {
+          "reason": "base inference/representation evidence does not admit adaptation",
+          "status": "not_applicable"
+        },
+        "license_governance": {
+          "evidence": "exact model card declares 'apache-2.0'; registry expects 'apache-2.0'; bound source license artifacts=1",
+          "status": "pass"
+        },
+        "official_example": {
+          "evidence": "executed and persisted 1 pinned public output surface(s)",
+          "status": "pass"
+        },
+        "padding_mask_missing_values": {
+          "reason": "admitted interface requires complete finite input and has no mask",
+          "status": "not_applicable"
+        },
+        "prefix_invariance": {
+          "reason": "base native API receives only the supplied causal context; numerical composite-input prefix invariance is a downstream/training gate",
+          "status": "not_applicable"
+        },
+        "reduced_precision_tolerance": {
+          "reason": "technical admission is explicitly FP32-only",
+          "status": "not_applicable"
+        },
+        "repeated_batch_loss_decrease": {
+          "reason": "base inference/representation evidence does not admit training",
+          "status": "not_applicable"
+        },
+        "save_reload_export": {
+          "reason": "base inference/representation evidence does not admit export",
+          "status": "not_applicable"
+        },
+        "scaling_inverse_scaling": {
+          "evidence": "affine input/inverse output check max_abs=0.00341796875",
+          "status": "pass"
+        }
+      },
+      "environment": {
+        "device": "cuda:0",
+        "dtype": "float32",
+        "executable": "/usr/bin/python3.12",
+        "huggingface-hub": "0.36.2",
+        "network_policy": "python_socket_deny",
+        "profile": "sundial",
+        "python": "3.12.3",
+        "torch": "2.10.0",
+        "transformers": "4.40.1"
+      },
+      "identity": {
+        "model_id": "thuml/sundial-base-128m",
+        "model_revision": "3212e42564493f520593e5414af4367fc4b49226",
+        "source_revision": "3ef03b8c3804f64a506e57101a173470040aaece"
+      },
+      "metrics": {
+        "adapter_public_api_allclose": true,
+        "adapter_public_api_max_abs": 0.0,
+        "adapter_public_api_pairs": [
+          {
+            "adapter": "adapter_samples",
+            "allclose": true,
+            "max_abs": 0.0,
+            "official": "official_samples"
+          }
+        ],
+        "affine_inverse_max_abs": 0.00341796875,
+        "batch_partition_allclose": true,
+        "batch_partition_max_abs": 0.0,
+        "batch_partition_pairs": [],
+        "license": {
+          "deployment": "allowed_after_admission",
+          "id": "Apache-2.0"
+        },
+        "license_artifacts": {
+          "deployment": "allowed_after_admission",
+          "model_card": {
+            "declared_license": "apache-2.0",
+            "path": "README.md",
+            "sha256": "067cec6d8736b9f36ed85cf861289c97f434d4577d479a4bdc273e7ca710a65d"
+          },
+          "registry_license": "Apache-2.0",
+          "source_licenses": [
+            {
+              "path": "LICENSE",
+              "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+            }
+          ]
+        },
+        "minimum_sample_std": 0.024977093562483788,
+        "model_revision": "3212e42564493f520593e5414af4367fc4b49226",
+        "native_parity_atol": 1e-05,
+        "native_parity_rtol": 1e-05,
+        "output_shape": [
+          20,
+          20,
+          16
+        ],
+        "seeded_repeat": {
+          "adapter": "adapter_samples",
+          "allclose": true,
+          "max_abs": 0.0,
+          "repeat": "seeded_repeat"
+        },
+        "seeded_repeat_max_abs": 0.0,
+        "source_revision": "3ef03b8c3804f64a506e57101a173470040aaece",
+        "worker_source": "/home/m3hdi/projects/Futures-Foundation-Model/scripts/native_parity_worker.py"
+      },
+      "profile": "generated_bundle",
+      "status": "pass",
+      "track": "F"
     },
     "timesfm25:F:2026-07-18": {
+      "admitted_runtime": {
+        "context_length": 512,
+        "dtype": "float32",
+        "fix_quantile_crossing": false,
+        "force_flip_invariance": true,
+        "prediction_length": 16,
+        "truncate_negative": false
+      },
       "arm_key": "timesfm25",
-      "track": "F",
-      "status": "pass",
-      "profile": "forecast_fp32",
+      "bundle": {
+        "bundle_sha256": "9736292411e507983574309c29b702a2407f3c26e42b84fefa290822ca5da9b0",
+        "command_sha256": "24f995b8a828be46aef1b39ced7dacda614b7cd6e42edc3a86800c0d7493bf47",
+        "fixture_sha256": "7527f9c14a63615191c06e6b0e479de03dc84870161a80ab51bdccccdf4291ef",
+        "path": "../../output/native_parity_evidence_canonical/timesfm25__F",
+        "path_base": "evidence_registry_parent",
+        "result_sha256": "fe9fad23be469a67291d7d8615dbe0c70abdcd8aab165eaf7cf6e129f595bbfb",
+        "stderr_sha256": "170ba5f664e85c0eb1f0e0e0a8714104b555185acef2e37bf7b570da54a663ba",
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "checks": {
+        "adapter_public_api_parity": {
+          "evidence": "all public native output pairs agree; max_abs=0.0009765625",
+          "status": "pass"
+        },
+        "batch_partition_parity": {
+          "evidence": "full/partitioned arrays agree; max_abs=0.0009765625",
+          "status": "pass"
+        },
+        "channel_semantics": {
+          "evidence": "five independent OHLCV rows per item produced shape=(20, 16)",
+          "status": "pass"
+        },
+        "context_horizon_boundaries": {
+          "evidence": "runtime exercised context=512, horizon=16",
+          "status": "pass"
+        },
+        "exact_resume": {
+          "reason": "base inference/representation evidence does not admit training",
+          "status": "not_applicable"
+        },
+        "fp32_finite": {
+          "evidence": "all persisted native outputs are finite float32",
+          "status": "pass"
+        },
+        "frequency_timezone_covariates": {
+          "reason": "admitted public interface has no frequency/timezone covariate input",
+          "status": "not_applicable"
+        },
+        "gradient_freeze_surface": {
+          "reason": "base inference/representation evidence does not admit adaptation",
+          "status": "not_applicable"
+        },
+        "license_governance": {
+          "evidence": "exact model card declares 'apache-2.0'; registry expects 'apache-2.0'; bound source license artifacts=1",
+          "status": "pass"
+        },
+        "official_example": {
+          "evidence": "executed and persisted 2 pinned public output surface(s)",
+          "status": "pass"
+        },
+        "padding_mask_missing_values": {
+          "reason": "admitted interface requires complete finite input and has no mask",
+          "status": "not_applicable"
+        },
+        "prefix_invariance": {
+          "reason": "base native API receives only the supplied causal context; numerical composite-input prefix invariance is a downstream/training gate",
+          "status": "not_applicable"
+        },
+        "reduced_precision_tolerance": {
+          "reason": "technical admission is explicitly FP32-only",
+          "status": "not_applicable"
+        },
+        "repeated_batch_loss_decrease": {
+          "reason": "base inference/representation evidence does not admit training",
+          "status": "not_applicable"
+        },
+        "save_reload_export": {
+          "reason": "base inference/representation evidence does not admit export",
+          "status": "not_applicable"
+        },
+        "scaling_inverse_scaling": {
+          "evidence": "official PyTorch wrapper and Transformers wrapper matched at raw output scale",
+          "status": "pass"
+        }
+      },
+      "environment": {
+        "device": "cuda:0",
+        "dtype": "float32",
+        "executable": "/usr/bin/python3.12",
+        "network_policy": "python_socket_deny",
+        "profile": "timesfm",
+        "python": "3.12.3",
+        "torch": "2.13.0",
+        "transformers": "5.13.1"
+      },
       "identity": {
         "model_id": "google/timesfm-2.5-200m-transformers",
         "model_revision": "5a9806b9b291fad9233b5249d88263f1846304d3",
+        "source_revision": "3dae50b20d7a724981e8ea36cda75578f80dd2dc"
+      },
+      "metrics": {
+        "adapter_public_api_allclose": true,
+        "adapter_public_api_max_abs": 0.0009765625,
+        "adapter_public_api_pairs": [
+          {
+            "adapter": "adapter_point",
+            "allclose": true,
+            "max_abs": 0.00048828125,
+            "official": "official_point"
+          },
+          {
+            "adapter": "adapter_quantiles",
+            "allclose": true,
+            "max_abs": 0.0009765625,
+            "official": "official_quantiles"
+          }
+        ],
+        "batch_partition_allclose": true,
+        "batch_partition_max_abs": 0.0009765625,
+        "batch_partition_pairs": [
+          {
+            "adapter": "adapter_point",
+            "allclose": true,
+            "max_abs": 0.00048828125,
+            "partitioned": "partitioned_point"
+          },
+          {
+            "adapter": "adapter_quantiles",
+            "allclose": true,
+            "max_abs": 0.0009765625,
+            "partitioned": "partitioned_quantiles"
+          }
+        ],
+        "license": {
+          "deployment": "allowed_after_admission",
+          "id": "Apache-2.0"
+        },
+        "license_artifacts": {
+          "deployment": "allowed_after_admission",
+          "model_card": {
+            "declared_license": "apache-2.0",
+            "path": "README.md",
+            "sha256": "f449dbb1e046aa6437270f52fbdc604ef9808a5af8dbd9830a090784006a305d"
+          },
+          "registry_license": "Apache-2.0",
+          "source_licenses": [
+            {
+              "path": "LICENSE",
+              "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+            }
+          ]
+        },
+        "model_revision": "5a9806b9b291fad9233b5249d88263f1846304d3",
+        "native_parity_atol": 1e-05,
+        "native_parity_rtol": 1e-05,
+        "point_max_abs": 0.00048828125,
+        "point_shape": [
+          20,
+          16
+        ],
+        "quantile_max_abs": 0.0009765625,
+        "quantile_shape": [
+          20,
+          16,
+          10
+        ],
+        "seeded_repeat": null,
         "source_revision": "3dae50b20d7a724981e8ea36cda75578f80dd2dc",
-        "reference_model_id": "google/timesfm-2.5-200m-pytorch",
-        "reference_model_revision": "1d952420fba87f3c6dee4f240de0f1a0fbc790e3"
+        "worker_source": "/home/m3hdi/projects/Futures-Foundation-Model/scripts/native_parity_worker.py"
       },
-      "environment": {"python": "3.12", "torch": "2.13.0", "transformers": "5.13.1", "timesfm": "2.0.2", "device": "RTX 5090", "dtype": "float32"},
-      "checks": {"padding_mask_missing_values": {"status": "not_applicable", "reason": "pinned Transformers wrapper accepts finite univariate series without an external mask"}},
-      "admitted_runtime": {"context_length": 512, "prediction_length": 16, "dtype": "float32", "force_flip_invariance": true, "truncate_negative": false, "fix_quantile_crossing": false},
-      "metrics": {"point_shape": [2, 16], "quantile_shape": [2, 16, 10], "point_max_abs": 2.384185791015625e-7, "point_mean_abs": 5.21540641784668e-8, "raw_quantile_max_abs": 4.76837158203125e-7, "raw_quantile_mean_abs": 1.0095536850940334e-7},
-      "notes": "Parity uses force_flip_invariance=true, infer/truncate-positive=false, and fix_quantile_crossing=false. Quantile repair is downstream post-processing."
-    },
-    "ttm_r2:F:2026-07-18": {
-      "arm_key": "ttm_r2",
-      "track": "F",
+      "profile": "generated_bundle",
       "status": "pass",
-      "profile": "forecast_fp32",
-      "identity": {"model_id": "ibm-granite/granite-timeseries-ttm-r2", "model_revision": "b972f0c22190b7502764526004d16e2b4ed39e8c", "source_revision": "743e709b9edbfe1b59e31adb1621bdc98a57b91b"},
-      "environment": {"python": "3.12", "torch": "2.10.0", "transformers": "4.57.6", "source_checkout": "743e709b9edbfe1b59e31adb1621bdc98a57b91b", "device": "RTX 5090", "dtype": "float32"},
-      "checks": {
-        "padding_mask_missing_values": {"status": "not_applicable", "reason": "admitted selector fixture uses complete finite 512-bar context"},
-        "frequency_timezone_covariates": {"status": "pass", "evidence": "1/3/5/15/30/60-minute resolution-prefix tokens 1/0/3/5/6/7 exercised; 3-minute uses OOV=0"}
-      },
-      "admitted_runtime": {"context_length": 512, "prediction_length": 16, "dtype": "float32", "frequency_tokens_by_timeframe": {"1min": 1, "3min": 0, "5min": 3, "15min": 5, "30min": 6, "60min": 7}, "selector": "512-48-ft-r2.1"},
-      "metrics": {"output_shape": [2, 16, 5], "batch_partition_max_abs": 0.00000762939453125, "unaffected_channel_max_abs": 0.0, "affine_scaling_max_abs": 0.000030517578125, "finite": true},
-      "selector": {"official_model_key": "512-48-ft-r2.1", "context_length": 512, "native_prediction_length": 48, "prediction_filter_length": 16, "resolution_prefix_tuning": true, "forecast_channel_mixing": false, "num_input_channels": 5},
-      "notes": "Raw values enter the model; its native std scaler performs scaling/inverse scaling. Artificial zero padding and random channel mixing are forbidden."
-    },
-    "moirai2_small:F:2026-07-18": {
-      "arm_key": "moirai2_small",
-      "track": "F",
-      "status": "research_only_pass",
-      "profile": "forecast_fp32",
-      "identity": {"model_id": "Salesforce/moirai-2.0-R-small", "model_revision": "30f43ff08c8494f4943ae1521e9d4e94a0fbb389", "source_revision": "cfd46d4510ed8896f263116f32928eede05b0a75"},
-      "environment": {"python": "3.11", "torch": "2.10.0", "uni2ts": "2.0.0", "device": "RTX 5090", "dtype": "float32", "use_scope": "research_noncommercial"},
-      "checks": {
-        "padding_mask_missing_values": {"status": "pass", "evidence": "adapter zero-fills masked entries before the official packed API"},
-        "license_governance": {"status": "pass", "evidence": "CC-BY-NC-4.0 restriction is encoded as research_only"}
-      },
-      "admitted_runtime": {"context_length": 512, "prediction_length": 16, "dtype": "float32", "use_scope": "research_noncommercial", "masked_value_fill": 0.0, "quantile_crossing_repair": "forbidden_in_parity"},
-      "metrics": {"output_shape": [2, 9, 16, 5], "batch_partition_max_abs": 0.00006103515625, "raw_masked_value_leak_max_abs": 0.09912109375, "native_min_quantile_difference": -0.0767822265625, "finite_after_mask_sanitization": true},
-      "notes": "Native quantiles may cross. Masked values must be zero-filled before packing. Noncommercial research only."
+      "track": "F"
     },
     "toto2_22m:F:2026-07-18": {
-      "arm_key": "toto2_22m",
-      "track": "F",
-      "status": "pass",
-      "profile": "forecast_fp32",
-      "identity": {"model_id": "Datadog/Toto-2.0-22m", "model_revision": "685e4ae3e2be8d8998025e53dd98e7fdcb296a89", "source_revision": "44ea4e88852228039564aa3e76fac26aafac0803"},
-      "environment": {"python": "3.12", "torch": "2.13.0", "toto-2": "2.0.0", "device": "RTX 5090", "dtype": "float32"},
-      "checks": {"padding_mask_missing_values": {"status": "pass", "evidence": "zero-filled masked finite values were invariant with max_abs=0"}},
-      "admitted_runtime": {"context_length": 512, "prediction_length": 16, "dtype": "float32", "decode_block_size": null, "masked_value_fill": 0.0, "series_ids": "one_semantic_group_per_item", "has_missing_values": false},
-      "metrics": {"output_shape": [9, 2, 5, 16], "batch_partition_max_abs": 0.00006103515625, "decode_none_vs_zero_max_abs": 0.0, "decode_none_vs_oversized_max_abs": 0.0, "masked_value_max_abs": 0.0, "minimum_quantile_difference": 0.0, "group_id_effect_max_abs": 0.1055908203125, "finite": true},
-      "notes": "Short-horizon leaderboard path uses decode_block_size=None. Series IDs are semantic grouping, not arbitrary labels."
-    },
-    "sundial_base:F:2026-07-18": {
-      "arm_key": "sundial_base",
-      "track": "F",
-      "status": "pass",
-      "profile": "forecast_fp32",
-      "identity": {"model_id": "thuml/sundial-base-128m", "model_revision": "3212e42564493f520593e5414af4367fc4b49226", "source_revision": "3ef03b8c3804f64a506e57101a173470040aaece"},
-      "environment": {"python": "3.12", "torch": "2.10.0", "transformers": "4.40.1", "huggingface-hub": "0.36.2", "device": "RTX 5090", "dtype": "float32", "isolated": true},
-      "checks": {"padding_mask_missing_values": {"status": "not_applicable", "reason": "official generator accepts complete finite univariate contexts"}, "batch_partition_parity": {"status": "pass", "evidence": "seeded repeat parity is exact; stochastic partitioning is distributional"}},
-      "admitted_runtime": {"context_length": 512, "prediction_length": 16, "dtype": "float32", "num_samples": 20, "isolated_environment": true, "hidden_states": "forbidden"},
-      "metrics": {"output_shape": [2, 20, 16], "seeded_repeat_max_abs": 0.0, "minimum_sample_std": 0.00227932701818645, "affine_scaling_max_abs": 0.000030517578125, "unaffected_series_max_abs": 0.0, "finite": true},
-      "notes": "Forecast-only isolated environment. Hidden-state extraction remains excluded because prior hidden outputs were non-finite."
-    },
-    "tabpfn_ts:D:2026-07-18": {
-      "arm_key": "tabpfn_ts",
-      "track": "D",
-      "status": "blocked",
-      "profile": "forecast_fp32",
-      "identity": {"model_id": "tabpfn-v3-regressor-v3_20260506_timeseries.ckpt", "model_revision": "license_gated_unresolved_sha256", "source_revision": "a756ae3fb3af82c903c39e1cd71864ff5252bc4d"},
-      "environment": {"package": "tabpfn_time_series", "source_default": "v1.1.0-compatible", "required_tabpfn": ">=8.0.0"},
-      "checks": {
-        "official_example": {"status": "fail", "evidence": "local TabPFN-TS-3 checkpoint is absent"},
-        "adapter_public_api_parity": {"status": "fail", "evidence": "cannot execute local predictor before model terms are accepted"},
-        "fp32_finite": {"status": "fail", "evidence": "no licensed local model artifact available"},
-        "license_governance": {"status": "fail", "evidence": "separate TabPFN model terms have not been accepted"}
+      "admitted_runtime": {
+        "context_length": 512,
+        "decode_block_size": null,
+        "dtype": "float32",
+        "has_missing_values": false,
+        "masked_value_fill": 0.0,
+        "prediction_length": 16,
+        "series_ids": "one_semantic_group_per_item"
       },
-      "metrics": {"source_checkpoint_default": "tabpfn-v3-regressor-v3_20260506_timeseries.ckpt", "max_context_length": 32768, "fold_containment_guard_implemented": true},
-      "notes": "Code is repaired as downstream-only and fold-contained, but technical admission is impossible without a licensed checkpoint and exact artifact hash."
+      "arm_key": "toto2_22m",
+      "bundle": {
+        "bundle_sha256": "575c81303128bbdf621a74eb7beda1f92c185085434cb8c4fa71e8a4a9148e6c",
+        "command_sha256": "3f3cd747fc85c23d210ccbd8e675a5ddf6ff9f78df4e23df514a3bfb860ca031",
+        "fixture_sha256": "7527f9c14a63615191c06e6b0e479de03dc84870161a80ab51bdccccdf4291ef",
+        "path": "../../output/native_parity_evidence_canonical/toto2_22m__F",
+        "path_base": "evidence_registry_parent",
+        "result_sha256": "7ac55af52813d85d6a4b92dae24cddc0a813d19348c50245eec0577fe4c2e3db",
+        "stderr_sha256": "218f4efb1f01bbe360c18f8e19714555f7c06565e25bb68736c44bdb9739b50c",
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "checks": {
+        "adapter_public_api_parity": {
+          "evidence": "all public native output pairs agree; max_abs=0",
+          "status": "pass"
+        },
+        "batch_partition_parity": {
+          "evidence": "full/partitioned arrays agree; max_abs=0.0078125",
+          "status": "pass"
+        },
+        "channel_semantics": {
+          "evidence": "five OHLCV variates share one semantic group within each independent batch item",
+          "status": "pass"
+        },
+        "context_horizon_boundaries": {
+          "evidence": "runtime exercised context=512, horizon=16",
+          "status": "pass"
+        },
+        "exact_resume": {
+          "reason": "base inference/representation evidence does not admit training",
+          "status": "not_applicable"
+        },
+        "fp32_finite": {
+          "evidence": "all persisted native outputs are finite float32",
+          "status": "pass"
+        },
+        "frequency_timezone_covariates": {
+          "reason": "admitted public interface has no frequency/timezone covariate input",
+          "status": "not_applicable"
+        },
+        "gradient_freeze_surface": {
+          "reason": "base inference/representation evidence does not admit adaptation",
+          "status": "not_applicable"
+        },
+        "license_governance": {
+          "evidence": "exact model card declares 'apache-2.0'; registry expects 'apache-2.0'; bound source license artifacts=2",
+          "status": "pass"
+        },
+        "official_example": {
+          "evidence": "executed and persisted 1 pinned public output surface(s)",
+          "status": "pass"
+        },
+        "padding_mask_missing_values": {
+          "evidence": "changing explicitly masked values produced max_abs=0 after zero fill",
+          "status": "pass"
+        },
+        "prefix_invariance": {
+          "reason": "base native API receives only the supplied causal context; numerical composite-input prefix invariance is a downstream/training gate",
+          "status": "not_applicable"
+        },
+        "reduced_precision_tolerance": {
+          "reason": "technical admission is explicitly FP32-only",
+          "status": "not_applicable"
+        },
+        "repeated_batch_loss_decrease": {
+          "reason": "base inference/representation evidence does not admit training",
+          "status": "not_applicable"
+        },
+        "save_reload_export": {
+          "reason": "base inference/representation evidence does not admit export",
+          "status": "not_applicable"
+        },
+        "scaling_inverse_scaling": {
+          "evidence": "Toto native causal scale/inverse affine input/output max_abs=0.00537109375; atol=0.001, rtol=0.0005",
+          "status": "pass"
+        }
+      },
+      "environment": {
+        "device": "cuda:0",
+        "dtype": "float32",
+        "executable": "/usr/bin/python3.12",
+        "network_policy": "python_socket_deny",
+        "profile": "common",
+        "python": "3.12.3",
+        "torch": "2.13.0",
+        "toto-2": "2.0.0"
+      },
+      "identity": {
+        "model_id": "Datadog/Toto-2.0-22m",
+        "model_revision": "685e4ae3e2be8d8998025e53dd98e7fdcb296a89",
+        "source_revision": "44ea4e88852228039564aa3e76fac26aafac0803"
+      },
+      "metrics": {
+        "adapter_public_api_allclose": true,
+        "adapter_public_api_max_abs": 0.0,
+        "adapter_public_api_pairs": [
+          {
+            "adapter": "adapter",
+            "allclose": true,
+            "max_abs": 0.0,
+            "official": "official"
+          }
+        ],
+        "batch_partition_allclose": true,
+        "batch_partition_max_abs": 0.0078125,
+        "batch_partition_pairs": [
+          {
+            "adapter": "adapter",
+            "allclose": true,
+            "max_abs": 0.0078125,
+            "partitioned": "partitioned"
+          }
+        ],
+        "finite": true,
+        "license": {
+          "deployment": "allowed_after_admission",
+          "id": "Apache-2.0"
+        },
+        "license_artifacts": {
+          "deployment": "allowed_after_admission",
+          "model_card": {
+            "declared_license": "apache-2.0",
+            "path": "README.md",
+            "sha256": "ee8496066ba403a526754243375820cd7384364ce2ad739ab0b45d16c2cf0257"
+          },
+          "registry_license": "Apache-2.0",
+          "source_licenses": [
+            {
+              "path": "LICENSE",
+              "sha256": "58d1e17ffe5109a7ae296caafcadfdbe6a7d176f0bc4ab01e12a689b0499d8bd"
+            },
+            {
+              "path": "LICENSE-3rdparty.csv",
+              "sha256": "c41ca2437e7a56a2ecf217aaa2c88191aa3effaaba37d6d4924fc7bd9495bd03"
+            }
+          ]
+        },
+        "masked_value_max_abs": 0.0,
+        "minimum_quantile_difference": 0.023284912109375,
+        "model_revision": "685e4ae3e2be8d8998025e53dd98e7fdcb296a89",
+        "native_parity_atol": 1e-05,
+        "native_parity_rtol": 1e-05,
+        "output_shape": [
+          9,
+          4,
+          5,
+          16
+        ],
+        "seeded_repeat": null,
+        "source_revision": "44ea4e88852228039564aa3e76fac26aafac0803",
+        "worker_source": "/home/m3hdi/projects/Futures-Foundation-Model/scripts/native_parity_worker.py"
+      },
+      "profile": "generated_bundle",
+      "status": "pass",
+      "track": "F"
+    },
+    "ttm_r2:F:2026-07-18": {
+      "admitted_runtime": {
+        "context_length": 512,
+        "dtype": "float32",
+        "frequency_tokens_by_timeframe": {
+          "15min": 5,
+          "1min": 1,
+          "30min": 6,
+          "3min": 0,
+          "5min": 3,
+          "60min": 7
+        },
+        "prediction_length": 16,
+        "selector": "512-48-ft-r2.1"
+      },
+      "arm_key": "ttm_r2",
+      "bundle": {
+        "bundle_sha256": "aac9862349cf55f513d4481a1ece78721905373cd9985b280859c8e67baa6a3d",
+        "command_sha256": "bd2179d13e54cb0cf2434f54581bebf59a826562be6659d85ef379ce69567ae9",
+        "fixture_sha256": "7527f9c14a63615191c06e6b0e479de03dc84870161a80ab51bdccccdf4291ef",
+        "path": "../../output/native_parity_evidence_canonical/ttm_r2__F",
+        "path_base": "evidence_registry_parent",
+        "result_sha256": "b7695e48f67d7f2e6e1512a8c0f656ab3e9f2f9678d7725f7f34c92711d2cd3e",
+        "stderr_sha256": "02ce414cd6fca64672566102cae193cb8fbcbd4dc4c2fa1a8bb2513ba4489051",
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "checks": {
+        "adapter_public_api_parity": {
+          "evidence": "all public native output pairs agree; max_abs=0",
+          "status": "pass"
+        },
+        "batch_partition_parity": {
+          "evidence": "full/partitioned arrays agree; max_abs=0.00048828125",
+          "status": "pass"
+        },
+        "channel_semantics": {
+          "evidence": "five channels were forecast without the optional cross-channel mixer",
+          "status": "pass"
+        },
+        "context_horizon_boundaries": {
+          "evidence": "runtime exercised context=512, horizon=16",
+          "status": "pass"
+        },
+        "exact_resume": {
+          "reason": "base inference/representation evidence does not admit training",
+          "status": "not_applicable"
+        },
+        "fp32_finite": {
+          "evidence": "all persisted native outputs are finite float32",
+          "status": "pass"
+        },
+        "frequency_timezone_covariates": {
+          "evidence": "exercised 1/3/5/15/30/60-minute tokens 1/0/3/5/6/7; 3min is OOV=0",
+          "status": "pass"
+        },
+        "gradient_freeze_surface": {
+          "reason": "base inference/representation evidence does not admit adaptation",
+          "status": "not_applicable"
+        },
+        "license_governance": {
+          "evidence": "exact model card declares 'apache-2.0'; registry expects 'apache-2.0'; bound source license artifacts=1",
+          "status": "pass"
+        },
+        "official_example": {
+          "evidence": "executed and persisted 6 pinned public output surface(s)",
+          "status": "pass"
+        },
+        "padding_mask_missing_values": {
+          "reason": "admitted interface requires complete finite input and has no mask",
+          "status": "not_applicable"
+        },
+        "prefix_invariance": {
+          "reason": "base native API receives only the supplied causal context; numerical composite-input prefix invariance is a downstream/training gate",
+          "status": "not_applicable"
+        },
+        "reduced_precision_tolerance": {
+          "reason": "technical admission is explicitly FP32-only",
+          "status": "not_applicable"
+        },
+        "repeated_batch_loss_decrease": {
+          "reason": "base inference/representation evidence does not admit training",
+          "status": "not_applicable"
+        },
+        "save_reload_export": {
+          "reason": "base inference/representation evidence does not admit export",
+          "status": "not_applicable"
+        },
+        "scaling_inverse_scaling": {
+          "evidence": "TTM native std scale/inverse affine input/output max_abs=0.00048828125; atol=0.001, rtol=0.0005",
+          "status": "pass"
+        }
+      },
+      "environment": {
+        "device": "cuda:0",
+        "dtype": "float32",
+        "executable": "/usr/bin/python3.12",
+        "network_policy": "python_socket_deny",
+        "profile": "ttm",
+        "python": "3.12.3",
+        "torch": "2.10.0",
+        "transformers": "4.57.6"
+      },
+      "identity": {
+        "model_id": "ibm-granite/granite-timeseries-ttm-r2",
+        "model_revision": "b972f0c22190b7502764526004d16e2b4ed39e8c",
+        "source_revision": "743e709b9edbfe1b59e31adb1621bdc98a57b91b"
+      },
+      "metrics": {
+        "adapter_public_api_allclose": true,
+        "adapter_public_api_max_abs": 0.0,
+        "adapter_public_api_pairs": [
+          {
+            "adapter": "adapter_15min",
+            "allclose": true,
+            "max_abs": 0.0,
+            "official": "official_15min"
+          },
+          {
+            "adapter": "adapter_1min",
+            "allclose": true,
+            "max_abs": 0.0,
+            "official": "official_1min"
+          },
+          {
+            "adapter": "adapter_30min",
+            "allclose": true,
+            "max_abs": 0.0,
+            "official": "official_30min"
+          },
+          {
+            "adapter": "adapter_3min",
+            "allclose": true,
+            "max_abs": 0.0,
+            "official": "official_3min"
+          },
+          {
+            "adapter": "adapter_5min",
+            "allclose": true,
+            "max_abs": 0.0,
+            "official": "official_5min"
+          },
+          {
+            "adapter": "adapter_60min",
+            "allclose": true,
+            "max_abs": 0.0,
+            "official": "official_60min"
+          }
+        ],
+        "batch_partition_allclose": true,
+        "batch_partition_max_abs": 0.00048828125,
+        "batch_partition_pairs": [
+          {
+            "adapter": "adapter_15min",
+            "allclose": true,
+            "max_abs": 0.000244140625,
+            "partitioned": "partitioned_15min"
+          },
+          {
+            "adapter": "adapter_1min",
+            "allclose": true,
+            "max_abs": 0.00048828125,
+            "partitioned": "partitioned_1min"
+          },
+          {
+            "adapter": "adapter_30min",
+            "allclose": true,
+            "max_abs": 0.000244140625,
+            "partitioned": "partitioned_30min"
+          },
+          {
+            "adapter": "adapter_3min",
+            "allclose": true,
+            "max_abs": 0.000244140625,
+            "partitioned": "partitioned_3min"
+          },
+          {
+            "adapter": "adapter_5min",
+            "allclose": true,
+            "max_abs": 0.000244140625,
+            "partitioned": "partitioned_5min"
+          },
+          {
+            "adapter": "adapter_60min",
+            "allclose": true,
+            "max_abs": 0.000244140625,
+            "partitioned": "partitioned_60min"
+          }
+        ],
+        "finite": true,
+        "license": {
+          "deployment": "allowed_after_admission",
+          "id": "Apache-2.0"
+        },
+        "license_artifacts": {
+          "deployment": "allowed_after_admission",
+          "model_card": {
+            "declared_license": "apache-2.0",
+            "path": "README.md",
+            "sha256": "e20234ff1a9eec054fd643d5ef7a4683857c8b24c7b00b466a9f55b6e22728ff"
+          },
+          "registry_license": "Apache-2.0",
+          "source_licenses": [
+            {
+              "path": "LICENSE",
+              "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+            }
+          ]
+        },
+        "loaded_config": {
+          "context_length": 512,
+          "enable_forecast_channel_mixing": false,
+          "num_input_channels": 5,
+          "prediction_filter_length": 16,
+          "prediction_length": 48,
+          "resolution_prefix_tuning": true
+        },
+        "model_revision": "b972f0c22190b7502764526004d16e2b4ed39e8c",
+        "native_parity_atol": 1e-05,
+        "native_parity_rtol": 1e-05,
+        "output_shapes": {
+          "15min": [
+            4,
+            16,
+            5
+          ],
+          "1min": [
+            4,
+            16,
+            5
+          ],
+          "30min": [
+            4,
+            16,
+            5
+          ],
+          "3min": [
+            4,
+            16,
+            5
+          ],
+          "5min": [
+            4,
+            16,
+            5
+          ],
+          "60min": [
+            4,
+            16,
+            5
+          ]
+        },
+        "seeded_repeat": null,
+        "source_revision": "743e709b9edbfe1b59e31adb1621bdc98a57b91b",
+        "worker_source": "/home/m3hdi/projects/Futures-Foundation-Model/scripts/native_parity_worker.py"
+      },
+      "profile": "generated_bundle",
+      "status": "pass",
+      "track": "F"
     }
-  }
+  },
+  "schema_version": "ffm_native_contract_evidence_v1"
 }

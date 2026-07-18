@@ -1,0 +1,39 @@
+{
+  "schema_version": "ffm_native_parity_replay_attestation_v1",
+  "methodology_commit": "fa0e3774e0c77029c92d9f975238ae5458c45f6d",
+  "registry_sha256": "d3b454b1ee4dca5f8bc8dc95d869090e15ea99e24a6f0f93fd020cd9d1d6cee8",
+  "record_count": 16,
+  "canonical": {
+    "aggregate_sha256": "d005d7cb8b74b6cbfc1db5bdbc7db2c7c493f4ef949bd4ffbc487b6ec48dd64e",
+    "candidate_evidence_sha256": "53069aa560a7ace997891ad5b9a6daee17940092014d7ff4797b923743d54faa",
+    "generated_utc": "2026-07-18T05:53:54Z"
+  },
+  "replay": {
+    "aggregate_sha256": "0b42ec4da067634356bdc0a562c00f31aa2116df8236c415460b8e665032e00f",
+    "candidate_evidence_sha256": "ea233dd23e0876844686a5f782bf6d29ab51d0aa11f814aedc1e0799487c7546",
+    "generated_utc": "2026-07-18T05:55:39Z"
+  },
+  "comparison": {
+    "all_native_outputs_byte_identical": true,
+    "all_records_excluding_run_specific_bundle_byte_identical": true,
+    "native_output_sha256": {
+      "chronos_bolt:F": "c0eefeec39f5fa299393506c245baa05b01467e3a5b66bfe52c1bd66c8e8cfcc",
+      "chronos_bolt:R": "4af34a04a2406b17862ec07e63f59e349159891706d730029a5aa151e43b49f5",
+      "chronos_v1:F": "aed905e4734b5d212e7f0f935e14bde05c47f427036f0792750dc404862f6ed8",
+      "chronos_v1:R": "93ea77e9e13c159cb20bcd951f8751112969929c2984673dc96a6f2766fc6428",
+      "chronos_v2:F": "27befe67a2f5300b9185a58caf7cb1424c6b409cf004173c9950bf613d01e3c3",
+      "chronos_v2:R": "1474a037adfee3abaf997035057a25558a8782ddf7f4671b50e4d0a1ce2be423",
+      "kronos_mini:F": "337b1c162494711495585030f19e95c1dbd7f4339ef6a2ca18f4b4e902939971",
+      "kronos_small:F": "3512c8e6df9b4bb35e7084dff8634de22ad798534773f4dbbbb6e1a02d1141db",
+      "mantis_v1:R": "6944b754423a21bbec46fa2f14129b5138731f41d73ba15631c7b9ddef2353e4",
+      "mantis_v2:R": "51002e9c8ffef5c9653a0d9e64ae5fead0d838790d16649b8bd11e373856338f",
+      "moirai2_small:F": "5f9b8737c0bcb63f25865771fd6a87085db80fb7eed9a7cb2700d85dbfe4daa0",
+      "moment_small:R": "d4ba6f418dad4953cf8e907e96c7a0caabe6c73fa30f2179fba31afbdd74efdb",
+      "sundial_base:F": "b62d99812830a3780743c71fff7e896d3b47eedaf3256da82ed65a50019400a5",
+      "timesfm25:F": "29c7fedf78257048d9c6caf2128365b6e3271744288515866433b28167cfb12a",
+      "toto2_22m:F": "d2a5f2bbd29cf2e81a543aa3fee708627df15de15e782840d79fbad70a45e835",
+      "ttm_r2:F": "526bf13befa834eacba55acb395ff92b1766e26bf555a941c229f177f7cc517c"
+    }
+  },
+  "scope": "Synthetic-fixture native F/R parity only; no training, market data, labels, validation, or OOS."
+}
