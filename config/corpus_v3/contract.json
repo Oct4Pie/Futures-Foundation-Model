@@ -42,15 +42,22 @@
     "must_reuse_admitted_loader_internals": true,
     "must_not_use_purpose_tokens": ["qa", "validation", "historical_validation"],
     "required_row_fields": [
-      "timestamp_utc_ns", "session_day", "time_us", "event_seq", "price", "bid", "ask",
-      "volume", "bid_volume", "ask_volume", "contract_id", "source_path",
-      "source_file_sha256", "source_row_ordinal"
+      "timestamp_utc_ns", "time_us", "event_seq", "price", "bid", "ask", "quote_valid",
+      "volume", "bid_volume", "ask_volume", "source_file_index", "source_row_ordinal"
+    ],
+    "required_shard_metadata": [
+      "root", "contract_id", "session_day", "session_start_utc_ns", "session_end_utc_ns",
+      "coverage_start_utc_ns", "coverage_end_utc_ns", "export_receipt_sha256",
+      "source_shard_sha256", "source_file_table_sha256", "corpus_contract_sha256",
+      "environment_receipt_sha256", "instrument_spec_sha256", "tick_size", "tick_value"
     ],
     "required_receipt_bindings": [
       "request", "roots", "date_range", "window_contract", "loader_sha256",
       "config_sha256", "governance_sha256", "lake_hash_of_hashes_sha256",
       "selected_source_file_sha256", "excluded_row_counts", "output_row_counts",
-      "output_shard_sha256"
+      "output_shard_sha256", "source_file_index_to_path_and_sha256",
+      "session_bounds_and_internal_gap_evidence", "negative_price_preservation",
+      "trade_row_preservation_independent_of_quote_validity", "environment_receipt_sha256"
     ],
     "ordering_must_be_strict_and_unique": ["timestamp_utc_ns", "event_seq"],
     "missing_event_seq_policy": "reject",
@@ -164,13 +171,20 @@
     "note": "UTC coverage-manifest dates are inventory buckets, not exchange sessions; they cannot select roots"
   },
   "label_contract": {
+    "schema_version": "ffm_ordered_tick_path_labels_v2",
     "decision_time": "regular_bar_close",
-    "entry_time": "first_valid_ordered_tick_strictly_after_decision",
+    "decision_manifest": "hash_binds_caller_supplied_decision_risk_and_known_by_keys_receipt_verification_still_required",
+    "entry_time": "first_ordered_trade_tick_strictly_after_decision_with_bounded_wait",
     "horizons_minutes": [60, 180, 360],
     "tick_order": ["timestamp_microseconds", "event_seq"],
-    "barrier_order": "exact_first_ordered_tick_touch",
+    "barrier_order": "integer_tick_first_ordered_trade_touch_after_entry_record",
+    "fractional_target_tick_rounding": "decimal_string_multiply_then_ceiling",
     "mfe_mae": "ordered_post_entry_trade_prices_in_tick_units",
-    "label_end": "actual_terminal_tick_or_declared_wall_clock_horizon",
+    "label_end_observation": "last_ordered_tick_at_or_before_declared_wall_clock_horizon",
+    "purge_authority": "declared_wall_clock_horizon_only",
+    "quote_track": "marketable_at_trade_proxy_masked_when_any_required_bbo_at_trade_is_invalid",
+    "quote_track_is_fill_proof": false,
+    "negative_prices": "allowed_when_tick_aligned_and_finite",
     "no_contract_crossing": true,
     "no_session_truncation": true,
     "fill_claim": "none_without_separate_marketability_contract"

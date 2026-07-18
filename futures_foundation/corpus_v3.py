@@ -20,6 +20,31 @@ from typing import Any, Mapping
 SCHEMA_VERSION = "ffm_corpus_v3_contract_v1"
 AUDIT_SCHEMA_VERSION = "ffm_corpus_v3_coverage_audit_v1"
 CONTRACT_RE = re.compile(r"^(.+)([FGHJKMNQUVXZ])(\d{2})$")
+REQUIRED_EXPORT_ROWS = {
+    "timestamp_utc_ns", "time_us", "event_seq", "price", "bid", "ask", "quote_valid",
+    "volume", "bid_volume", "ask_volume", "source_file_index", "source_row_ordinal",
+}
+REQUIRED_SHARD_METADATA = {
+    "root", "contract_id", "session_day", "session_start_utc_ns", "session_end_utc_ns",
+    "coverage_start_utc_ns", "coverage_end_utc_ns", "export_receipt_sha256",
+    "source_shard_sha256", "source_file_table_sha256", "corpus_contract_sha256",
+    "environment_receipt_sha256", "instrument_spec_sha256", "tick_size", "tick_value",
+}
+REQUIRED_RECEIPT_BINDINGS = {
+    "request", "roots", "date_range", "window_contract", "loader_sha256", "config_sha256",
+    "governance_sha256", "lake_hash_of_hashes_sha256", "selected_source_file_sha256",
+    "excluded_row_counts", "output_row_counts", "output_shard_sha256",
+    "source_file_index_to_path_and_sha256", "session_bounds_and_internal_gap_evidence",
+    "negative_price_preservation", "trade_row_preservation_independent_of_quote_validity",
+    "environment_receipt_sha256",
+}
+REQUIRED_PROHIBITIONS = {
+    "strategy_outcome_based_universe_selection", "random_train_validation_splits",
+    "windows_crossing_contract_rolls", "labels_using_ticks_at_or_before_decision_or_entry",
+    "training_validation_or_calibration_on_legacy_holdout_excluded",
+    "depth_or_databento_without_separate_admission",
+    "passive_fill_or_queue_claims_from_trade_ticks",
+}
 
 
 class CorpusV3Error(ValueError):
@@ -79,6 +104,10 @@ def verify_contract(contract: Mapping[str, Any], *, verify_artifacts: bool = Fal
     source = contract.get("source") or {}
     source_end = _parse_day(source.get("max_date_exclusive"), "source.max_date_exclusive")
     _require_sha(source.get("hash_of_hashes_sha256"), "source.hash_of_hashes_sha256")
+    if source.get("status_required") != "admitted_limited" or source.get("data_mode") != "raw_ticks":
+        raise CorpusV3Error("Corpus v3 source must remain admitted-limited raw ticks")
+    if source.get("quote_semantics") != "bid_and_ask_are_bbo_at_trade_not_quote_stream":
+        raise CorpusV3Error("source quote semantics have drifted")
     loader = contract.get("loader") or {}
     _require_sha(loader.get("sha256"), "loader.sha256")
     if loader.get("disposition") != "reference_only_not_authorized_as_corpus_v3_export":
@@ -88,6 +117,62 @@ def verify_contract(contract: Mapping[str, Any], *, verify_artifacts: bool = Fal
         raise CorpusV3Error("the required AlphaForge foundation export seam is not declared")
     if export.get("missing_event_seq_policy") != "reject":
         raise CorpusV3Error("Corpus v3 must reject missing event_seq rather than synthesize it")
+    if export.get("must_reuse_admitted_loader_internals") is not True:
+        raise CorpusV3Error("the export must reuse admitted loader internals")
+    if export.get("must_not_use_purpose_tokens") != [
+        "qa", "validation", "historical_validation"
+    ]:
+        raise CorpusV3Error("the export purpose-token prohibition has drifted")
+    if export.get("receipt_verification") != (
+        "fail_closed_before_any_FFM_bar_or_label_materialization"
+    ):
+        raise CorpusV3Error("export receipt verification must remain fail-closed")
+    if export.get("mode") != "streaming_contract_day_shards_without_roll_splicing":
+        raise CorpusV3Error("Corpus v3 export must emit unspliced contract-day shards")
+    if set(export.get("required_row_fields") or []) != REQUIRED_EXPORT_ROWS:
+        raise CorpusV3Error("Corpus v3 export row schema does not match the sealed contract")
+    if set(export.get("required_shard_metadata") or []) != REQUIRED_SHARD_METADATA:
+        raise CorpusV3Error("Corpus v3 shard metadata does not match the sealed contract")
+    if set(export.get("required_receipt_bindings") or []) != REQUIRED_RECEIPT_BINDINGS:
+        raise CorpusV3Error("Corpus v3 receipt bindings do not match the sealed contract")
+    if export.get("ordering_must_be_strict_and_unique") != [
+        "timestamp_utc_ns", "event_seq"
+    ]:
+        raise CorpusV3Error("Corpus v3 rows require a strict unique ordered event key")
+    label = contract.get("label_contract") or {}
+    if label.get("schema_version") != "ffm_ordered_tick_path_labels_v2":
+        raise CorpusV3Error("Corpus v3 tick-label schema must be v2 integer-tick semantics")
+    if label.get("purge_authority") != "declared_wall_clock_horizon_only":
+        raise CorpusV3Error("declared label endpoints must be the sole purge authority")
+    if label.get("quote_track_is_fill_proof") is not False:
+        raise CorpusV3Error("BBO-at-trade labels must explicitly deny fill proof")
+    if label.get("negative_prices") != "allowed_when_tick_aligned_and_finite":
+        raise CorpusV3Error("the export and label contract must preserve valid negative prices")
+    expected_label = {
+        "decision_time": "regular_bar_close",
+        "decision_manifest": (
+            "hash_binds_caller_supplied_decision_risk_and_known_by_keys_"
+            "receipt_verification_still_required"
+        ),
+        "entry_time": "first_ordered_trade_tick_strictly_after_decision_with_bounded_wait",
+        "horizons_minutes": [60, 180, 360],
+        "tick_order": ["timestamp_microseconds", "event_seq"],
+        "barrier_order": "integer_tick_first_ordered_trade_touch_after_entry_record",
+        "fractional_target_tick_rounding": "decimal_string_multiply_then_ceiling",
+        "mfe_mae": "ordered_post_entry_trade_prices_in_tick_units",
+        "label_end_observation": "last_ordered_tick_at_or_before_declared_wall_clock_horizon",
+        "quote_track": (
+            "marketable_at_trade_proxy_masked_when_any_required_bbo_at_trade_is_invalid"
+        ),
+        "fill_claim": "none_without_separate_marketability_contract",
+    }
+    for field, expected in expected_label.items():
+        if label.get(field) != expected:
+            raise CorpusV3Error(f"label_contract.{field} has drifted from sealed semantics")
+    if label.get("no_contract_crossing") is not True:
+        raise CorpusV3Error("labels must never cross a contract")
+    if label.get("no_session_truncation") is not True:
+        raise CorpusV3Error("labels must never silently truncate at a session boundary")
     splits = contract.get("splits") or {}
     required_splits = (
         "foundation_pretraining", "supervised_training", "development",
@@ -107,7 +192,11 @@ def verify_contract(contract: Mapping[str, Any], *, verify_artifacts: bool = Fal
     holdout = parsed["legacy_holdout_excluded"]
     if not (supervised[1] == development[0] and development[1] == holdout[0]):
         raise CorpusV3Error("supervised/development/holdout boundaries must be contiguous")
-    if "never_training_validation" not in str(splits["legacy_holdout_excluded"].get("use")):
+    if parsed["foundation_pretraining"][1] > development[0]:
+        raise CorpusV3Error("foundation pretraining must end before development begins")
+    if splits["legacy_holdout_excluded"].get("use") != (
+        "coverage_report_only_never_training_validation_calibration_or_selection"
+    ):
         raise CorpusV3Error("legacy holdout must explicitly forbid training and validation")
     screen = contract.get("universe_screen") or {}
     if screen.get("uses_strategy_outcomes") is not False:
@@ -116,10 +205,40 @@ def verify_contract(contract: Mapping[str, Any], *, verify_artifacts: bool = Fal
         raise CorpusV3Error("manifest-only audit cannot authorize universe selection")
     if "legacy_holdout_excluded" in set(screen.get("eligible_periods") or []):
         raise CorpusV3Error("legacy holdout cannot influence universe eligibility")
-    if int((contract.get("execution_ruler") or {}).get(
-        "primary_added_slippage_ticks_round_trip", -1
-    )) != 0:
+    ruler = contract.get("execution_ruler") or {}
+    if type(ruler.get("primary_added_slippage_ticks_round_trip")) is not int or ruler.get(
+        "primary_added_slippage_ticks_round_trip"
+    ) != 0:
         raise CorpusV3Error("primary execution contract must preserve declared zero added slippage")
+    expected_ruler = {
+        "fees": "instrument_specific_round_trip_fee_from_pinned_economics_artifact",
+        "fee_schedule_status": "provisional_static_approximation_not_effective_dated",
+        "historical_economic_promotion": "blocked_pending_effective_dated_fee_schedule",
+        "primary_added_delay": "none",
+        "frozen_sensitivity_added_slippage_ticks_round_trip": 1,
+    }
+    for field, expected in expected_ruler.items():
+        if ruler.get(field) != expected:
+            raise CorpusV3Error(f"execution_ruler.{field} has drifted from sealed semantics")
+    if set(contract.get("prohibited") or []) != REQUIRED_PROHIBITIONS:
+        raise CorpusV3Error("the Corpus v3 prohibited-operation list has drifted")
+    views = contract.get("derived_views") or {}
+    native = views.get("contract_native_pretraining") or {}
+    if not (
+        native.get("status") == "required_primary_foundation_view"
+        and native.get("stream_identity") == ["root", "contract_id"]
+        and native.get("roll_selection") == "none"
+        and native.get("window_crosses_contract") is False
+    ):
+        raise CorpusV3Error("contract-native pretraining view has drifted")
+    downstream = views.get("causal_front_contract_downstream") or {}
+    if not (
+        downstream.get("status") == "blocked_pending_separate_admission"
+        and downstream.get("selection_cutoff") == "not_later_than_each_decision_time"
+        and downstream.get("future_or_full_day_activity") == "forbidden"
+        and downstream.get("window_or_label_crosses_contract") is False
+    ):
+        raise CorpusV3Error("causal downstream view has drifted")
     artifacts = contract.get("artifacts") or {}
     required_artifacts = {
         "data_source_registry", "data_admission", "tick_admission", "loader_smoke",

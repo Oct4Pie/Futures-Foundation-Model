@@ -247,6 +247,9 @@ verification item is also checked.
   and receipt; do not bypass it with `session_store_v6`, QA or validation purpose tokens.
 - [ ] Produce the sessionized valid-tick liquidity, continuity, roll and gap matrix, then freeze
   core-comparable and supplemental-pretraining roots without reading strategy outcomes.
+- [x] Implement the strict synthetic ordered-tick path-label engine: event-sequence entry, endpoint
+  coverage, observed-versus-marketable paths, gap-through prices, source lineage and deterministic
+  fingerprints. Real materialization remains blocked on the export receipt.
 - [ ] Materialize a representative tick-derived multi-resolution subset with exact ordered barrier,
   MFE, MAE and time-to-barrier labels.
 - [ ] Measure event yield, barrier balance, effective calendar-block sample size, cross-root

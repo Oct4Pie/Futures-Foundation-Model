@@ -27,7 +27,7 @@ The canonical contract is
 Current internal hashes:
 
 ```text
-coverage report payload: 772cb3791fd780b5980879ca08e0744650de387b61440f1d61dab583908d601b
+coverage report payload: db0dd303d23f3d8adf5e35b45dcf592a3ca9a75d129b9a96a261523fb7886047
 lake hash-of-hashes:      632f859e138d6ad22b67801d8279ac42363a8ededabf79dbb767eb1d649baffe
 leaf-manifest file:       367d5847ccfeae04e085d9fd55664bc6e5f52a2d56be686d1d25e43f46663928
 ```
@@ -65,15 +65,32 @@ AlphaForge must own a new `foundation_training` streaming export that emits unsp
 rows. Each row must retain:
 
 ```text
-timestamp_utc_ns, session_day, time_us, event_seq,
-price, bid, ask, volume, bid_volume, ask_volume,
-contract_id, source_path, source_file_sha256, source_row_ordinal
+timestamp_utc_ns, time_us, event_seq,
+price, bid, ask, quote_valid,
+volume, bid_volume, ask_volume,
+source_file_index, source_row_ordinal
 ```
 
+Each contract-day shard must separately bind scalar metadata:
+
+```text
+root, contract_id, session_day,
+session_start_utc_ns, session_end_utc_ns,
+coverage_start_utc_ns, coverage_end_utc_ns,
+export_receipt_sha256, source_shard_sha256,
+source_file_table_sha256, corpus_contract_sha256,
+environment_receipt_sha256, instrument_spec_sha256,
+tick_size, tick_value
+```
+
+The physical shard may replace the repeated per-row hash with `source_file_index`; the receipt must
+bind that index to the exact source path and SHA-256.
+
 The export receipt must bind the request, roots, dates, window, loader/config/governance hashes,
-lake hash, selected leaf hashes, exclusions, row counts and output shard hashes. Missing or duplicate
-`(timestamp_utc_ns, event_seq)` keys must be rejected. FFM must verify the receipt before deriving a
-single bar or label.
+lake hash, selected leaf hashes, exclusions, row counts, output shard hashes, internal-gap/session
+evidence, preservation of valid negative prices, and preservation of valid trade rows when the
+attached quote is invalid. Missing or duplicate `(timestamp_utc_ns, event_seq)` keys must be
+rejected. FFM must verify the receipt before deriving a single bar or label.
 
 FFM will then construct two separate views:
 
@@ -81,16 +98,49 @@ FFM will then construct two separate views:
 2. A separately admitted downstream front-contract view whose selection cutoff never exceeds the
    decision time and whose windows and labels never cross a contract change.
 
-## Labels and economics still blocked
+## Strict label engine status
+
+[`futures_foundation/tick_path_labels.py`](futures_foundation/tick_path_labels.py) implements the
+strict `ffm_ordered_tick_path_labels_v2` semantics against synthetic governed rows. It now:
+
+- Rejects missing or duplicate event keys and duplicate source-file/row lineage.
+- Enters at the first lexicographic event strictly after the decision key.
+- Requires a hash-bound decision/risk manifest and rejects supplied risk-known keys after the
+  decision. This binds caller assertions; it does not prove the feature generator was causal.
+- Requires supplied receipt, shard, source-table, environment and Corpus-contract hashes. The
+  engine validates their form and binds them into the artifact; the missing export verifier must
+  prove their content before real use.
+- Requires declared source coverage through the horizon and rejects stale entry/endpoints.
+- Preserves valid negative futures prices and performs exact barrier comparisons in integer ticks.
+- Converts fractional R targets to ticks with decimal multiplication and conservative ceiling.
+- Separates observed trade-path targets from marketable-at-trade bid/ask proxies.
+- Preserves valid trades when quotes are invalid and masks only the quote-derived path.
+- Never reuses the entry event as an exit or barrier observation.
+- Uses the actual observed quote on gap-through exits instead of clipping losses to the barrier.
+- Emits entry, terminal and barrier-touch event/source lineage.
+- Uses the declared wall-clock endpoint, never the last observed tick, as purge authority.
+- Produces separate semantic and provenance-bound artifact fingerprints.
+- Retains independent reference and indexed backends with randomized parity tests.
+- Writes canonical array bundles that verify manifest, file, semantic and artifact hashes on load;
+  tampered arrays fail closed.
+- Keeps fees and added slippage outside the gross label artifact.
+
+These tests prove label semantics only. The engine cannot consume real Corpus v3 data until the
+AlphaForge export receipt passes. In particular, scalar coverage bounds cannot prove that no source
+records are missing inside the interval; that evidence must come from the verified export receipt.
+
+## Economics still blocked
 
 The eventual tick labeler must separate:
 
 - Observed trade-path MFE, MAE, barrier order and time-to-barrier.
-- Executable marketable-quote outcomes using ask for long entry/bid for long exit, reversed for
-  shorts.
+- Marketable-at-trade quote proxies using ask for long entry/bid for long exit, reversed for shorts.
+  These are not continuous-quote or fill evidence.
 
-Entry begins at the first strict event key after the decision; the signal-forming event cannot be
-reused. A horizon without endpoint coverage is invalid rather than silently truncated.
+Entry begins at the first strict event key after the decision; the signal-forming event and entry
+event cannot be reused as an exit observation. A horizon without endpoint coverage is invalid
+rather than silently truncated. “Exact” means first touch among verified observed trade records;
+it is not a claim of continuous market observation between records.
 
 Zero added slippage and zero added delay remain the primary ruler, with frozen one-tick sensitivity.
 Spread and instrument fees are not zero. The existing fees are static approximations, so historical

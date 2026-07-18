@@ -209,7 +209,10 @@ new ranking is authorized until the relevant admission items pass.
 - [ ] Freeze common-information and native-best views separately.
 - [ ] Seal regular bars, contract IDs, source rows and timestamps.
 - [ ] Seal native future-series forecast targets separately from trading labels.
-- [ ] Build post-entry ordered tick barrier, MFE, MAE and time-to-barrier labels.
+- [ ] Materialize post-entry ordered tick barrier, MFE, MAE and time-to-barrier artifacts from the
+  admitted streaming export.
+- [x] Implement and adversarially test the strict contract-day tick-label semantics on synthetic
+  governed rows; real label artifacts remain blocked on the admitted streaming export.
 - [ ] Store exact/ambiguous coverage and deterministic conservative fallback.
 - [ ] Validate wall-clock cadence, session gaps, rolls and complete label-end timestamps.
 - [ ] Purge/embargo by label end, not fixed bar count.

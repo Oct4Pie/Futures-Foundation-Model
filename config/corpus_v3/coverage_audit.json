@@ -57,7 +57,7 @@
     "ZW"
   ],
   "contract_id": "corpus_v3_sierra_ticks_pre2026_v1",
-  "contract_sha256": "6d213b3636c933e498a056310167382df9ffce9200951f866a886b250c74546b",
+  "contract_sha256": "00eea927b490815db9dab4515acf9774c5408563a9a623e0e475835668125a8d",
   "diagnostic_flagged_roots": [
     "MCL",
     "MET",
@@ -92,7 +92,7 @@
     "status": "coverage_audit_only"
   },
   "purpose": "coverage_and_liquidity_only_no_strategy_events_labels_or_outcomes_read",
-  "report_sha256": "772cb3791fd780b5980879ca08e0744650de387b61440f1d61dab583908d601b",
+  "report_sha256": "db0dd303d23f3d8adf5e35b45dcf592a3ca9a75d129b9a96a261523fb7886047",
   "roots": {
     "6A": {
       "periods": {
