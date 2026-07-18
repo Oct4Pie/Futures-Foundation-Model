@@ -236,20 +236,30 @@ verification item is also checked.
   families in [FOUNDATION_MODEL_NATIVE_CONTRACT_TASKS.md](FOUNDATION_MODEL_NATIVE_CONTRACT_TASKS.md).
   This unblocks governed Corpus v3 design/materialization, not model training. Training remains
   prohibited until the family-specific training surface and Phase 3/4/5 gates pass.
-- [x] Pin a coverage-audit-only Corpus v3 contract to the admitted Sierra tick source, registry,
-  admission artifact, reference loader, instrument economics, coverage inventory, full leaf
-  manifest and lake hash-of-hashes. It explicitly blocks materialization and training. See
-  [CORPUS_V3_STATUS.md](CORPUS_V3_STATUS.md).
+- [x] Pin the initial coverage-audit-only Corpus v3 contract to the admitted Sierra tick source,
+  registry, admission artifact, reference loader, instrument economics, coverage inventory, full
+  leaf manifest and lake hash-of-hashes. Amend it only for the exact predeclared representative
+  pilot after the producer/verifier seam passes; broad materialization and training remain blocked.
+  See [CORPUS_V3_STATUS.md](CORPUS_V3_STATUS.md).
 - [x] Produce a deterministic root-by-year UTC inventory report without reading strategy events or
   outcomes. The report conserves all admitted files/rows but selects zero roots because UTC file
   buckets are not exchange sessions.
-- [ ] Implement and admit the AlphaForge-owned all-contract `foundation_training` streaming export
-  and receipt; do not bypass it with `session_store_v6`, QA or validation purpose tokens.
+- [x] Implement the AlphaForge-owned contract-native `foundation_training` streaming exporter and
+  receipt without bypassing it through `session_store_v6`, QA or validation purpose tokens.
+  AlphaForge commit `0a955b4` and the independent FFM verifier passed the exact
+  `CL/CLK20/2020-04-20` pilot, including reconstruction of all 61,150 rows from two pinned raw
+  leaves. This admits only the interoperability seam, not an all-contract run.
+- [ ] Pass the exporter scale-admission tests: multiprocess cold-cache contention, crash recovery
+  around the atomic rename, broader calendar/DST/session coverage, complete source-schema variants,
+  and bounded memory/throughput measurements.
+- [ ] Freeze a separately versioned corpus-scale contract and materialization manifest. Do not widen
+  the successful pilot contract in place.
 - [ ] Produce the sessionized valid-tick liquidity, continuity, roll and gap matrix, then freeze
   core-comparable and supplemental-pretraining roots without reading strategy outcomes.
-- [x] Implement the strict synthetic ordered-tick path-label engine: event-sequence entry, endpoint
-  coverage, observed-versus-marketable paths, gap-through prices, source lineage and deterministic
-  fingerprints. Real materialization remains blocked on the export receipt.
+- [x] Implement the strict ordered-tick path-label engine: event-sequence entry, endpoint coverage,
+  observed-versus-marketable paths, gap-through prices, source lineage and deterministic
+  fingerprints. Synthetic parity and the verified CLK20 production capability pass; corpus-scale
+  label bundles remain blocked until their hashes are frozen in a materialization manifest.
 - [ ] Materialize a representative tick-derived multi-resolution subset with exact ordered barrier,
   MFE, MAE and time-to-barrier labels.
 - [ ] Measure event yield, barrier balance, effective calendar-block sample size, cross-root
