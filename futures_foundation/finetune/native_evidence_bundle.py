@@ -43,7 +43,8 @@ from .native_contracts import (
 
 
 FIXTURE_SCHEMA = "ffm_native_parity_fixture_v1"
-RESULT_SCHEMA = "ffm_native_parity_result_v1"
+RESULT_SCHEMA = "ffm_native_parity_result_v2"
+LEGACY_RESULT_SCHEMA = "ffm_native_parity_result_v1"
 BUNDLE_SCHEMA = "ffm_native_parity_bundle_v1"
 AGGREGATE_SCHEMA = "ffm_native_parity_aggregate_v1"
 DEFAULT_SEED = 20260717
@@ -258,6 +259,15 @@ def _tree_description(
         return _file_description(root, display_path=display)
     if not root.is_dir():
         raise NativeEvidenceError(f"unsupported bound artifact type: {root}")
+    if root.name.endswith(".dist-info"):
+        from .native_parity_runtime import validate_distribution_record
+
+        try:
+            validate_distribution_record(root)
+        except RuntimeError as exc:
+            raise NativeEvidenceError(
+                f"installed distribution source failed RECORD validation: {exc}"
+            ) from exc
     if (root / ".git").exists():
         return _git_checkout_description(
             root, display_path=display, untracked_policy=git_untracked_policy
@@ -295,6 +305,73 @@ def _tree_description(
     }
 
 
+def execution_code_description(path: str | Path) -> dict[str, Any]:
+    """Hash the stable executable Python surface without registry/output self-reference."""
+    root = Path(path).expanduser().resolve()
+    if not root.is_dir():
+        raise NativeEvidenceError(f"execution-code root is not a directory: {root}")
+    if (root / ".git").exists():
+        untracked_raw = _git(
+            root, "ls-files", "-z", "--others", "--exclude-standard"
+        ).stdout
+        untracked_code = sorted(
+            item.decode("utf-8", "surrogateescape")
+            for item in untracked_raw.split(b"\0")
+            if item
+            and item.decode("utf-8", "surrogateescape").endswith(".py")
+            and item.decode("utf-8", "surrogateescape").startswith(
+                ("futures_foundation/", "scripts/")
+            )
+        )
+        if untracked_code:
+            raise NativeEvidenceError(
+                "execution-code roots contain untracked Python sources: "
+                f"{untracked_code[:8]}"
+            )
+        raw_entries = _git_checkout_description(
+            root, display_path=str(root), untracked_policy="ignore"
+        )["entries"]
+        entries = [
+            {
+                "path": item["path"],
+                "sha256": item.get("sha256"),
+                "size_bytes": item.get("size_bytes"),
+            }
+            for item in raw_entries
+            if str(item.get("path", "")).endswith(".py")
+            and str(item.get("path", "")).startswith(("futures_foundation/", "scripts/"))
+        ]
+    else:
+        entries = []
+        for relative_root in (Path("futures_foundation"), Path("scripts")):
+            code_root = root / relative_root
+            if not code_root.is_dir() and root.name == "futures_foundation" and relative_root.name == root.name:
+                code_root = root
+            if not code_root.is_dir():
+                continue
+            for candidate in sorted(code_root.rglob("*.py")):
+                if not candidate.is_file() or candidate.is_symlink():
+                    raise NativeEvidenceError(
+                        f"execution-code manifest contains an unsafe path: {candidate}"
+                    )
+                entries.append({
+                    "path": candidate.relative_to(root).as_posix(),
+                    "sha256": file_sha256(candidate),
+                    "size_bytes": candidate.stat().st_size,
+                })
+    entries.sort(key=lambda item: item["path"])
+    if not entries:
+        raise NativeEvidenceError("execution-code manifest contains no Python sources")
+    return {
+        "path": str(root),
+        "kind": "execution_code",
+        "sha256": content_sha256(entries),
+        "file_count": len(entries),
+        "size_bytes": sum(int(item["size_bytes"]) for item in entries),
+        "entries": entries,
+    }
+
+
 def _verify_tree(
     description: Mapping[str, Any], field: str, *, relative_to: Path | None = None
 ) -> None:
@@ -306,10 +383,14 @@ def _verify_tree(
         if relative_to is None:
             raise NativeEvidenceError(f"{field}.path is relative without a bundle root")
         supplied = relative_to / supplied
-    actual = _tree_description(
-        supplied,
-        relative_to=relative_to,
-        git_untracked_policy=str(description.get("untracked_policy", "ignore")),
+    actual = (
+        execution_code_description(supplied)
+        if description.get("kind") == "execution_code"
+        else _tree_description(
+            supplied,
+            relative_to=relative_to,
+            git_untracked_policy=str(description.get("untracked_policy", "ignore")),
+        )
     )
     for key in ("kind", "sha256", "size_bytes"):
         if actual.get(key) != description.get(key):
@@ -327,6 +408,8 @@ def _verify_tree(
                 raise NativeEvidenceError(f"{field} Git checkout {key} drifted")
     if actual["kind"] == "directory" and actual.get("entries") != description.get("entries"):
         raise NativeEvidenceError(f"{field} directory members drifted")
+    if actual["kind"] == "execution_code" and actual.get("entries") != description.get("entries"):
+        raise NativeEvidenceError(f"{field} execution-code members drifted")
 
 
 def create_shared_fixture(
@@ -546,8 +629,11 @@ def _validate_source_checkout(dossier: Mapping[str, Any], description: Mapping[s
 def _validate_result(
     result: Mapping[str, Any], *, arm_key: str, track: str, required_checks: Sequence[str]
 ) -> None:
-    if result.get("schema_version") != RESULT_SCHEMA:
-        raise NativeEvidenceError(f"result schema must be {RESULT_SCHEMA!r}")
+    result_schema = result.get("schema_version")
+    if result_schema not in {RESULT_SCHEMA, LEGACY_RESULT_SCHEMA}:
+        raise NativeEvidenceError(
+            f"result schema must be {RESULT_SCHEMA!r} or legacy {LEGACY_RESULT_SCHEMA!r}"
+        )
     if result.get("arm_key") != arm_key or result.get("track") != track:
         raise NativeEvidenceError("parity result arm/track mismatch")
     if result.get("status") not in {"pass", "research_only_pass", "fail"}:
@@ -555,6 +641,13 @@ def _validate_result(
     for field in ("environment", "admitted_runtime", "metrics"):
         if not isinstance(result.get(field), Mapping) or not result[field]:
             raise NativeEvidenceError(f"parity result requires nonempty {field}")
+    if result_schema == RESULT_SCHEMA:
+        from .native_parity_runtime import NativeParityRuntimeError, validate_runtime_lock
+
+        try:
+            validate_runtime_lock(result.get("runtime_lock") or {})
+        except NativeParityRuntimeError as exc:
+            raise NativeEvidenceError(f"parity result runtime lock is invalid: {exc}") from exc
     checks = result.get("checks")
     if not isinstance(checks, Mapping) or set(checks) != set(required_checks):
         raise NativeEvidenceError(
@@ -617,8 +710,10 @@ def run_parity_bundle(
     raw_dir.mkdir(parents=True, exist_ok=True)
     fixture = create_shared_fixture(fixture_dir)
     artifact_records = {
-        name: _tree_description(
-            path, git_untracked_policy=_git_policy(dossier, name)
+        name: (
+            execution_code_description(path)
+            if name == "runner"
+            else _tree_description(path, git_untracked_policy=_git_policy(dossier, name))
         )
         for name, path in sorted(artifacts.items())
     }
@@ -904,6 +999,7 @@ def aggregate_parity_bundles(
                 if identity.get(field) is not None
             },
             "environment": dict(result["environment"]),
+            **({"runtime_lock": dict(result["runtime_lock"])} if result.get("runtime_lock") else {}),
             "checks": {name: dict(item) for name, item in result["checks"].items()},
             "admitted_runtime": dict(result["admitted_runtime"]),
             "metrics": dict(result["metrics"]),

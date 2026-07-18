@@ -14,7 +14,9 @@ new ranking is authorized until the relevant admission items pass.
   stages; record Sundial hidden-state extraction as a failed attempt without implying valid staged
   artifacts exist.
 - [x] Relabel noncanonical Mantis, custom MOMENT pooling and all custom forecast-model hidden states.
-- [ ] Add a warning to every active historical ranking document.
+- [x] Add the historical-adapter-contract warning to the active tournament review, full-history
+  downstream result, conditional-event gate and legacy-OOS confirmation documents; retain the
+  existing warning in `FOUNDATION_MODEL_RESULTS.md`.
 - [x] Replace fragmented rosters with one per-track capability registry at
   [`config/foundation_models/native_contracts.json`](config/foundation_models/native_contracts.json).
 - [ ] Record source patches, dependency locks, model/weight/tokenizer revisions, preprocessing and
@@ -163,15 +165,21 @@ new ranking is authorized until the relevant admission items pass.
 - [ ] Gradient/freeze-surface tests.
 - [ ] Native repeated-batch loss-decrease smoke.
 - [ ] Exact resume, save/reload and deployment/export parity.
-- [x] Evidence-bound machine-readable v2 admission report with route, exact runtime/environment,
-  optional artifact hashes and two independent approvals.
-- [x] Enforce a non-bypassable two-approval floor, normalized reviewer identity comparison, and
-  valid approval/report timestamp ordering.
-- [ ] Authenticate reviewer identity and organizational independence through external governance
-  or a trusted-signature mechanism before any operational authorization.
+- [x] Evidence-bound machine-readable v3 admission report with route, measured Python/package
+  environment, consumer-supplied execution controls, and exact runtime artifact trees.
+- [x] Add a complete deterministic runtime lock over all installed distributions, interpreter,
+  platform, Torch CUDA/cuDNN, visible devices, GPU identity and measurable driver details; remeasure
+  it at report build and execution. Legacy evidence without this lock cannot authorize execution.
+- [x] Enforce a non-bypassable two-approval floor, distinct reviewer/key fingerprints, Ed25519
+  signatures, and request/approval/finalization timestamp ordering.
+- [x] Install an explicit trusted-public-key registry that fails closed while empty. Independent
+  organizational assignment of those keys remains an external governance responsibility.
 - [x] Install a durable canonical raw-bundle archive and require admission-report build/verification
   to reopen its fixture, result, log, manifest and raw-output hashes. Current runtime artifacts are
   bound separately because installing reviewed evidence necessarily advances the source checkout.
+  The executable-code binding uses a stable package/script source manifest rather than Git HEAD.
+- [x] Restrict operational consumers to a clean source checkout. Wheel installs may inspect the
+  canonical archive but cannot authorize model execution in this phase.
 
 ## Phase 3 — data and label contract
 

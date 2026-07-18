@@ -41,6 +41,17 @@ from futures_foundation.finetune.native_contracts import (
     technical_runtime_contract,
     validate_runtime_contract,
 )
+from futures_foundation.finetune.native_runtime_binding import (
+    require_distribution_record,
+    require_import_origin,
+    require_module_within,
+    require_same_path,
+)
+from futures_foundation.finetune.native_parity_runtime import (
+    install_python_network_guard,
+    runtime_profile_for_arm,
+    validate_runtime_profile,
+)
 
 
 SCHEMA = "ffm_native_representation_artifact_v1"
@@ -83,6 +94,14 @@ RUNTIME_FACTS = {
         "output": "tokens_and_scaling_state_unpooled",
     },
 }
+
+
+def _representation_artifact_paths(args) -> dict[str, Path]:
+    """Build the admission map from the exact paths every extractor consumes."""
+    return {
+        "model": Path(args.model_snapshot).expanduser().resolve(),
+        "source": Path(args.source_repo).expanduser().resolve(),
+    }
 
 
 def _sha256(path: str | Path) -> str:
@@ -151,20 +170,24 @@ def _contexts(windows: dict[str, Any]) -> np.ndarray:
 
 
 def _extract_mantis(args, contexts: np.ndarray) -> dict[str, np.ndarray]:
+    source = _require_source_checkout(
+        args.native_artifacts["source"], get_arm(args.arm).source_revision
+    )
+    require_import_origin("mantis", source, "mantis")
     import mantis
     from mantis.architecture import MantisV1, MantisV2
 
     arm = get_arm(args.arm)
-    source = _require_source_checkout(args.source_repo, arm.source_revision)
+    require_same_path(args.source_repo, source, "--source-repo")
     _module_within(mantis.__file__, source, "mantis")
     if args.arm == "mantis_v1":
         model = MantisV1(device=args.device).from_pretrained(
-            arm.model_id, revision=arm.model_revision
+            str(args.native_artifacts["model"])
         )
     else:
         model = MantisV2(
             device=args.device, return_transf_layer=2, output_token="combined"
-        ).from_pretrained(arm.model_id, revision=arm.model_revision)
+        ).from_pretrained(str(args.native_artifacts["model"]))
     model.eval()
     representation = mantis_native_representation(
         model, contexts, batch_size=args.batch_size, target_length=512
@@ -174,13 +197,17 @@ def _extract_mantis(args, contexts: np.ndarray) -> dict[str, np.ndarray]:
 
 def _extract_moment(args, contexts: np.ndarray) -> dict[str, np.ndarray]:
     import torch
+    arm = get_arm("moment_small")
+    source = _require_source_checkout(args.native_artifacts["source"], arm.source_revision)
+    require_import_origin("momentfm", source, "momentfm")
     import momentfm
     from scripts.benchmark_moment import _load_moment
 
-    arm = get_arm("moment_small")
-    source = _require_source_checkout(args.source_repo, arm.source_revision)
+    require_same_path(args.source_repo, source, "--source-repo")
     _module_within(momentfm.__file__, source, "momentfm")
-    model = _load_moment(source, arm.model_id, arm.model_revision, args.device)
+    model = _load_moment(
+        source, str(args.native_artifacts["model"]), arm.model_revision, args.device
+    )
     values, mask = left_pad_channel_first(contexts, target_length=512)
     pieces = []
     with torch.inference_mode():
@@ -204,10 +231,10 @@ def _load_chronos_pipeline(args):
 
     arm = get_arm(args.arm)
     return BaseChronosPipeline.from_pretrained(
-        arm.model_id,
-        revision=arm.model_revision,
+        str(args.native_artifacts["model"]),
         device_map=args.device,
         dtype=torch.float32,
+        local_files_only=True,
     )
 
 
@@ -326,10 +353,10 @@ def _extract_chronos2(args, contexts: np.ndarray) -> dict[str, np.ndarray]:
 
     arm = get_arm("chronos_v2")
     pipeline = Chronos2Pipeline.from_pretrained(
-        arm.model_id,
-        revision=arm.model_revision,
+        str(args.native_artifacts["model"]),
         device_map=args.device,
         dtype=torch.float32,
+        local_files_only=True,
     )
     embeddings: list[np.ndarray] = []
     locations: list[np.ndarray] = []
@@ -369,7 +396,8 @@ def main() -> None:
     parser.add_argument("--arm", choices=tuple(EXTRACTORS), required=True)
     parser.add_argument("--windows", required=True)
     parser.add_argument("--output", required=True)
-    parser.add_argument("--source-repo")
+    parser.add_argument("--source-repo", required=True)
+    parser.add_argument("--model-snapshot", required=True)
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--dtype", choices=("float32",), default="float32")
@@ -377,11 +405,30 @@ def main() -> None:
     args = parser.parse_args()
     if args.batch_size < 1:
         parser.error("--batch-size must be positive")
-    if args.arm in {"mantis_v1", "mantis_v2", "moment_small"} and not args.source_repo:
-        parser.error("Mantis and MOMENT extraction require --source-repo")
-
+    profile = runtime_profile_for_arm(args.arm)
+    validate_runtime_profile(profile, args.arm)
+    install_python_network_guard("python_socket_deny")
+    args.native_artifacts = _representation_artifact_paths(args)
     admission = require_admission_from_args(
-        args, arm_key=args.arm, track="R", route=None, require_training=False
+        args, arm_key=args.arm, track="R", route=None, require_training=False,
+        required_artifacts=args.native_artifacts,
+        runtime_controls={
+            "device": args.device, "dtype": args.dtype,
+            "network_policy": "python_socket_deny", "profile": profile,
+        },
+    )
+    if args.arm.startswith("chronos"):
+        package_root = require_distribution_record(
+            args.native_artifacts["source"],
+            distribution_name="chronos-forecasting",
+            package_prefix="chronos",
+        )
+        require_import_origin("chronos", package_root, "Chronos")
+        import chronos
+        require_module_within(chronos.__file__, package_root, "Chronos")
+    import futures_foundation.finetune.native_adapters as native_adapters_module
+    require_module_within(
+        native_adapters_module.__file__, ROOT, "native adapter runner"
     )
     runtime_facts = {**RUNTIME_FACTS[args.arm], "dtype": args.dtype}
     runtime = validate_runtime_contract(args.arm, "R", runtime_facts)

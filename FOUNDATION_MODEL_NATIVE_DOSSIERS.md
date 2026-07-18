@@ -10,10 +10,18 @@ dispositions. The evidence file owns the executable parity record and exact runt
 by that record. Markdown cannot promote a model.
 
 Technical validity is not runtime authorization. Execution still requires a current
-`ffm_native_admission_report_v2` bound to the registry, dossier, evidence record, runtime contract,
-environment, applicable artifacts, and two independent approvals. Base inference evidence does not
+`ffm_native_admission_report_v3` bound to the registry, dossier, evidence record, measured runtime
+environment, execution controls, exact model/tokenizer/source/execution-code trees, and two
+independently signed Ed25519 approvals from the colocated trusted-key registry. Base inference evidence does not
 admit training: all persistent training, tuning, and adapted-checkpoint routes remain blocked until
 the training-specific checks pass.
+
+New parity evidence also carries a complete runtime lock. Its portable-software surface binds the
+exact interpreter, platform and every installed distribution. Its hardware surface binds the Torch
+CUDA runtime, cuDNN, visible-device setting, device identity/capability/memory and driver probe when
+measurable; unavailable hardware probes are explicit values. Both surfaces are remeasured and
+compared exactly for operational admission. Existing evidence predates this lock and is therefore
+inspectable but not operationally authorizing until regenerated.
 
 Generated technical records point to the tracked canonical raw-bundle archive. Admission-report
 build and verification reopen that archive and fail on missing or altered fixture, result, logs,
@@ -21,9 +29,15 @@ manifest, or native arrays. The archive binds the exact producing model/source t
 runtime binds its own artifacts separately. The repository records selected package versions and
 source revisions but does not claim a portable binary environment or kernel-level network sandbox.
 
-Reviewer labels are normalized and the two-approval floor cannot be lowered, but reviewer identity
-is not cryptographically authenticated by the repository. A report is therefore not sufficient by
-itself to prove organizational independence; that remains an external operational gate.
+Reviewer labels and public-key fingerprints must be distinct, the two-approval floor cannot be
+lowered, and every approval signs the immutable request after request creation. The packaged trust
+store is intentionally empty, so no operational authorization exists until reviewed public keys
+are installed. Organizational independence remains a governance responsibility even though key
+possession is now cryptographically authenticated.
+
+Operational consumers are currently source-checkout-only so the exact executable Python surface
+can be measured against parity evidence. Installed wheels may inspect the sealed archive but fail
+closed if used to request operational admission.
 
 ## Track vocabulary
 

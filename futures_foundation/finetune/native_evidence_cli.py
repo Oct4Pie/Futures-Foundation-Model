@@ -47,9 +47,18 @@ def parser() -> argparse.ArgumentParser:
     run.add_argument("--env", action="append", default=[], metavar="NAME=VALUE")
     run.add_argument("command", nargs=argparse.REMAINDER)
 
-    verify = sub.add_parser("verify", help="rehash and verify one evidence bundle")
+    verify = sub.add_parser(
+        "verify", help="rehash and verify one evidence bundle (strict by default)"
+    )
     verify.add_argument("bundle")
     verify.add_argument("--registry")
+    verify.add_argument(
+        "--archive-only", action="store_true",
+        help=(
+            "verify only immutable files stored inside the archive; do not claim that "
+            "the producing model/source/runtime trees are present or unchanged"
+        ),
+    )
 
     aggregate = sub.add_parser("aggregate", help="generate a reviewed evidence candidate")
     aggregate.add_argument("--output", required=True)
@@ -85,7 +94,22 @@ def main() -> int:
                 registry_path=args.registry,
             )
         elif args.action == "verify":
-            result = verify_parity_bundle(args.bundle, registry_path=args.registry)[0]
+            manifest = verify_parity_bundle(
+                args.bundle, registry_path=args.registry,
+                verify_external_artifacts=not args.archive_only,
+            )[0]
+            result = (
+                {
+                    "verification_scope": "archive_only",
+                    "external_artifacts_verified": False,
+                    "warning": (
+                        "archive integrity only; this does not authorize or attest the "
+                        "current model, source, runtime, training, or deployment artifacts"
+                    ),
+                    "manifest": manifest,
+                }
+                if args.archive_only else manifest
+            )
         else:
             result = aggregate_parity_bundles(
                 args.bundles,
@@ -103,4 +127,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

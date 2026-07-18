@@ -164,7 +164,7 @@
       "status": "invalid_contract"
     }
   },
-  "registry_sha256": "d3b454b1ee4dca5f8bc8dc95d869090e15ea99e24a6f0f93fd020cd9d1d6cee8",
+  "registry_sha256": "3ff0d90fc1d9732c3755053219284672dc12c09ec2e347f5c6e7b05612a2427c",
   "schema_version": "ffm_historical_native_contract_snapshot_v1",
   "source_index": {
     "created_utc": "2026-07-16T03:06:39.661324+00:00",

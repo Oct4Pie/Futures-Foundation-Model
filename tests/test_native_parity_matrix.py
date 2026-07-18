@@ -123,7 +123,10 @@ def test_worker_command_binds_all_paths_and_track(tmp_path):
         arm_key="timesfm25", track="F", profile="timesfm",
         python=Path(sys.executable), source=tmp_path / "source",
         model=tmp_path / "model", tokenizer=None,
-        extra_artifacts=(("reference_model", tmp_path / "reference"),),
+        extra_artifacts=(
+            ("reference_model", tmp_path / "reference"),
+            ("execution_source", tmp_path / "transformers.dist-info"),
+        ),
         runner_source=tmp_path,
         bundle=tmp_path / "bundle",
     )
@@ -137,6 +140,9 @@ def test_worker_command_binds_all_paths_and_track(tmp_path):
     assert command[command.index("--track") + 1] == "F"
     assert command[command.index("--reference-model-snapshot") + 1] == str(
         tmp_path / "reference"
+    )
+    assert command[command.index("--execution-source") + 1] == str(
+        tmp_path / "transformers.dist-info"
     )
 
 

@@ -40,6 +40,18 @@ def _keyed_paths(values, *, label: str) -> dict[str, Path]:
     return output
 
 
+def _keyed_values(values, *, label: str) -> dict[str, str]:
+    output: dict[str, str] = {}
+    for value in values or ():
+        if "=" not in value:
+            raise ValueError(f"{label} must use name=value")
+        name, raw = (part.strip() for part in value.split("=", 1))
+        if not name or not raw or name in output:
+            raise ValueError(f"{label} names and values must be nonempty and unique")
+        output[name] = raw
+    return output
+
+
 def list_contracts(args) -> None:
     registry = load_registry(args.registry)
     rows = {}
@@ -105,6 +117,9 @@ def show_dossier(args) -> None:
 
 def verify_report(args) -> None:
     artifacts = _keyed_paths(args.artifact, label="artifact")
+    runtime_controls = _keyed_values(
+        args.runtime_control, label="runtime control"
+    )
     report = verify_admission_report(
         args.report,
         arm_key=args.arm,
@@ -112,6 +127,7 @@ def verify_report(args) -> None:
         route=args.route,
         require_training=args.training,
         required_artifacts=artifacts,
+        runtime_controls=runtime_controls,
         path=args.registry,
     )
     _print_json({
@@ -123,6 +139,7 @@ def verify_report(args) -> None:
         "verified_artifacts": {
             name: str(path) for name, path in artifacts.items()
         },
+        "runtime_controls": runtime_controls,
         "report_integrity": report["integrity"],
         "registry_sha256": report["registry_sha256"],
         "dossier_sha256": report["dossier_sha256"],
@@ -152,6 +169,13 @@ def _parser() -> argparse.ArgumentParser:
     verify.add_argument(
         "--artifact", action="append", default=[],
         help="repeat name=/path to require an exact report-bound artifact SHA-256",
+    )
+    verify.add_argument(
+        "--runtime-control", action="append", default=[],
+        help=(
+            "repeat name=value for every execution control derived by the consumer; "
+            "controls are never defaulted by the verifier"
+        ),
     )
     verify.add_argument("--training", action="store_true")
     verify.set_defaults(func=verify_report)

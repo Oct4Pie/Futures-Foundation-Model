@@ -4,6 +4,12 @@ Status: decision document for the next agent.
 Date: 2026-07-16 America/Los_Angeles.
 Evidence source: sealed validation artifacts; no reserved-OOS read.
 
+> **Historical adapter-contract warning:** every cross-family score and checkpoint comparison in
+> this document was produced under the historical adapter contract. It is not a ranking of the
+> correctly configured native families and does not establish native representation,
+> classification or training admission. Use
+> [FOUNDATION_MODEL_NATIVE_CONTRACT_PLAN.md](FOUNDATION_MODEL_NATIVE_CONTRACT_PLAN.md) for new work.
+
 ## Purpose
 
 This document reconciles the completed foundation-model tournament with the subsequent methodological review. It is intentionally separate from `FOUNDATION_MODEL_RESULTS.md`:

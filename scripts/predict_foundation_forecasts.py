@@ -32,6 +32,17 @@ from futures_foundation.finetune.native_contracts import (
     technical_runtime_contract,
     validate_runtime_contract,
 )
+from futures_foundation.finetune.native_runtime_binding import (
+    require_distribution_record,
+    require_import_origin,
+    require_module_within,
+    require_same_path,
+)
+from futures_foundation.finetune.native_parity_runtime import (
+    install_python_network_guard,
+    runtime_profile_for_arm,
+    validate_runtime_profile,
+)
 from futures_foundation.finetune.tournament import MAX_CONTEXT
 
 
@@ -41,6 +52,30 @@ TTM_FREQUENCY_TOKENS = {
     "1min": 1, "3min": 0, "5min": 3,
     "15min": 5, "30min": 6, "60min": 7,
 }
+
+
+def _forecast_artifact_paths(args) -> dict[str, Path]:
+    """Build the admission map from the exact paths the dispatch functions consume."""
+    required = {
+        "model": Path(args.model_snapshot).expanduser().resolve(),
+        "source": Path(args.upstream_repo).expanduser().resolve(),
+    }
+    if args.arm.startswith("kronos"):
+        if not args.tokenizer_snapshot:
+            raise ValueError("Kronos execution requires --tokenizer-snapshot")
+        required["tokenizer"] = Path(args.tokenizer_snapshot).expanduser().resolve()
+    if args.arm == "timesfm25":
+        if not args.reference_model_snapshot:
+            raise ValueError("TimesFM admission requires --reference-model-snapshot")
+        if not args.execution_source:
+            raise ValueError("TimesFM execution requires --execution-source")
+        required["reference_model"] = Path(
+            args.reference_model_snapshot
+        ).expanduser().resolve()
+        required["execution_source"] = Path(
+            args.execution_source
+        ).expanduser().resolve()
+    return required
 
 
 def _forecast_runtime_facts(
@@ -151,9 +186,11 @@ def _predict_ttm(args, windows):
     import torch
     from scripts.train_ttm_tournament import FREQUENCY_TOKEN, _load_model, _validate_source
     arm = get_arm("ttm_r2")
-    source = _validate_source(Path(args.upstream_repo).resolve(), arm.source_revision)
+    source = _validate_source(args.native_artifacts["source"], arm.source_revision)
+    require_same_path(args.upstream_repo, source, "--upstream-repo")
+    require_import_origin("tsfm_public", source, "TTM")
     model_args = argparse.Namespace(
-        model_id=arm.model_id, model_revision=arm.model_revision,
+        model_id=str(args.native_artifacts["model"]), model_revision=arm.model_revision,
     )
     model = _load_model(model_args, source=source).to(args.device).eval()
     contexts = _causal_suffix(windows["context"], 512, "TTM R2")
@@ -181,10 +218,15 @@ def _predict_ttm(args, windows):
 
 def _predict_timesfm(args, windows):
     import torch
+    import transformers
     from transformers import TimesFm2_5ModelForPrediction
+    require_module_within(
+        transformers.__file__, args.execution_package_root, "Transformers"
+    )
     arm = get_arm("timesfm25")
     model = TimesFm2_5ModelForPrediction.from_pretrained(
-        arm.model_id, revision=arm.model_revision, dtype=torch.float32,
+        str(args.native_artifacts["model"]), dtype=torch.float32,
+        local_files_only=True,
     ).to(args.device).eval()
     contexts = _causal_suffix(windows["context"], MAX_CONTEXT, "TimesFM 2.5")
     output = np.empty((len(contexts), windows["horizon"], 5), np.float32)
@@ -199,14 +241,18 @@ def _predict_timesfm(args, windows):
                 context_length=contexts.shape[1],
             )
         forecast = forecast.float().cpu().numpy()
-        output[lo:hi] = forecast.reshape(hi - lo, 5, windows["horizon"]).transpose(0, 2, 1)
+        output[lo:hi] = forecast.reshape(
+            hi - lo, 5, windows["horizon"]
+        ).transpose(0, 2, 1)
         print(f"[timesfm25-zero-shot] {lo}:{hi}", flush=True)
     return output, None, {
         "arm": arm.manifest(),
-        "input": {"context": contexts.shape[1], "horizon": windows["horizon"],
-                  "ohlcv_mode": arm.ohlcv_mode, "adaptation": "zero_shot_only",
-                  "dtype": "float32", "force_flip_invariance": True,
-                  "truncate_negative": False},
+        "input": {
+            "context": contexts.shape[1], "horizon": windows["horizon"],
+            "ohlcv_mode": arm.ohlcv_mode, "adaptation": "zero_shot_only",
+            "dtype": "float32", "force_flip_invariance": True,
+            "truncate_negative": False,
+        },
     }
 
 
@@ -214,11 +260,18 @@ def _predict_moirai(args, windows):
     import torch
     from scripts.train_moirai2_tournament import _load_model, _validate_source
     arm = get_arm("moirai2_small")
-    _validate_source(Path(args.upstream_repo).resolve(), arm.source_revision)
+    source = _validate_source(args.native_artifacts["source"], arm.source_revision)
+    require_same_path(args.upstream_repo, source, "--upstream-repo")
+    source_import = str(source / "src")
+    if source_import not in sys.path:
+        sys.path.insert(0, source_import)
+    require_import_origin("uni2ts", source, "Uni2TS")
     model_args = argparse.Namespace(
-        model_id=arm.model_id, model_revision=arm.model_revision,
+        model_id=str(args.native_artifacts["model"]), model_revision=arm.model_revision,
     )
     model = _load_model(model_args, context_length=MAX_CONTEXT).to(args.device).eval()
+    import uni2ts
+    require_module_within(uni2ts.__file__, source, "Uni2TS")
     levels = np.asarray(model.module.quantile_levels, float)
     median_index = int(np.argmin(np.abs(levels - 0.5)))
     contexts = _causal_suffix(windows["context"], MAX_CONTEXT, "Moirai")
@@ -250,10 +303,18 @@ def _predict_kronos(args, windows):
     from scripts.benchmark_kronos import _load_predictor, _predict
     arm = get_arm(args.arm)
     native_windows = _windows_with_causal_suffix(windows, MAX_CONTEXT, args.arm)
+    source = require_same_path(
+        args.upstream_repo, args.native_artifacts["source"], "--upstream-repo"
+    )
+    source_text = str(source)
+    if source_text not in sys.path:
+        sys.path.insert(0, source_text)
+    require_import_origin("model", source, "Kronos")
     predictor = _load_predictor(
-        Path(args.upstream_repo).resolve(), args.device,
-        arm.model_id, arm.model_revision,
-        arm.tokenizer_id, arm.tokenizer_revision, native_windows["context_length"],
+        source, args.device,
+        str(args.native_artifacts["model"]), arm.model_revision,
+        str(args.native_artifacts["tokenizer"]), arm.tokenizer_revision,
+        native_windows["context_length"],
     )
     prediction = _predict(
         predictor, native_windows, cache_dir=args.cache_dir,
@@ -310,10 +371,16 @@ def _predict_moment(args, windows):
 def _predict_chronos(args, windows):
     import torch
     from futures_foundation.finetune.chronos_family import resolve_candidates
-    from scripts.benchmark_chronos_family import _load_pipeline
+    from chronos import BaseChronosPipeline, Chronos2Pipeline
     arm = get_arm(args.arm)
     candidate = resolve_candidates((args.arm,))[0]
-    pipeline, _ = _load_pipeline(candidate, args.device, "float32", None)
+    pipeline_class = (
+        Chronos2Pipeline if candidate.family == "chronos_2" else BaseChronosPipeline
+    )
+    pipeline = pipeline_class.from_pretrained(
+        str(args.native_artifacts["model"]), device_map=args.device,
+        dtype=torch.float32, local_files_only=True,
+    )
     contexts = _causal_suffix(windows["context"], MAX_CONTEXT, args.arm).transpose(0, 2, 1)
     output = np.empty((len(contexts), windows["horizon"], 5), np.float32)
     for lo in range(0, len(contexts), args.batch_size):
@@ -358,10 +425,17 @@ def _predict_chronos(args, windows):
 
 def _predict_toto2(args, windows):
     import torch
+    source = args.native_artifacts["source"]
+    source_import = str(source / "toto2")
+    if source_import not in sys.path:
+        sys.path.insert(0, source_import)
+    require_import_origin("toto2", source, "Toto2")
+    import toto2
     from toto2 import Toto2Model
+    require_module_within(toto2.__file__, source, "Toto2")
     arm = get_arm("toto2_22m")
     model = Toto2Model.from_pretrained(
-        arm.model_id, revision=arm.model_revision, map_location="cpu",
+        str(args.native_artifacts["model"]), map_location="cpu",
     ).to(args.device).eval()
     contexts = _causal_suffix(
         windows["context"], MAX_CONTEXT, "Toto 2.0"
@@ -392,7 +466,8 @@ def _predict_sundial(args, windows):
     from transformers import AutoModelForCausalLM
     arm = get_arm("sundial_base")
     model = AutoModelForCausalLM.from_pretrained(
-        arm.model_id, revision=arm.model_revision, trust_remote_code=True,
+        str(args.native_artifacts["model"]), trust_remote_code=True,
+        local_files_only=True,
     ).to(args.device).eval()
     contexts = _causal_suffix(windows["context"], MAX_CONTEXT, "Sundial")
     output = np.empty((len(contexts), windows["horizon"], 5), np.float32)
@@ -426,7 +501,12 @@ def main():
         "sundial_base",
     ), required=True)
     parser.add_argument("--windows", required=True); parser.add_argument("--checkpoint")
-    parser.add_argument("--output", required=True); parser.add_argument("--upstream-repo")
+    parser.add_argument("--output", required=True)
+    parser.add_argument("--upstream-repo", required=True)
+    parser.add_argument("--model-snapshot", required=True)
+    parser.add_argument("--tokenizer-snapshot")
+    parser.add_argument("--reference-model-snapshot")
+    parser.add_argument("--execution-source")
     parser.add_argument("--cache-dir", default="output/foundation_tournament/shared_validation/cache")
     parser.add_argument("--batch-size", type=int, default=128)
     parser.add_argument("--device", default="cuda:0"); parser.add_argument("--seed", type=int, default=7400)
@@ -434,14 +514,45 @@ def main():
     parser.add_argument("--samples", type=int, default=20)
     add_admission_argument(parser)
     args = parser.parse_args()
-    if (args.arm.startswith("kronos") or args.arm in {"moirai2_small", "ttm_r2"}) and not args.upstream_repo:
-        parser.error("Kronos/Moirai/TTM prediction requires --upstream-repo")
     if args.checkpoint:
         parser.error(
             "native-track evaluation is zero-shot only; historical/adapted checkpoints are not admitted"
         )
+    profile = runtime_profile_for_arm(args.arm)
+    validate_runtime_profile(profile, args.arm)
+    install_python_network_guard("python_socket_deny")
+    args.native_artifacts = _forecast_artifact_paths(args)
+    runtime_controls = {
+        "device": args.device, "dtype": args.dtype,
+        "network_policy": "python_socket_deny", "profile": profile,
+    }
     admission = require_admission_from_args(
         args, arm_key=args.arm, track="F", route=None, require_training=False,
+        required_artifacts=args.native_artifacts,
+        runtime_controls=runtime_controls,
+    )
+    if args.arm.startswith("chronos"):
+        package_root = require_distribution_record(
+            args.native_artifacts["source"],
+            distribution_name="chronos-forecasting",
+            package_prefix="chronos",
+        )
+        require_import_origin("chronos", package_root, "Chronos")
+        import chronos
+        require_module_within(chronos.__file__, package_root, "Chronos")
+    elif args.arm == "timesfm25":
+        execution_source = args.native_artifacts["execution_source"]
+        args.execution_package_root = require_distribution_record(
+            execution_source,
+            distribution_name="transformers",
+            package_prefix="transformers",
+        )
+        require_import_origin(
+            "transformers", args.execution_package_root, "Transformers"
+        )
+    import futures_foundation.finetune.native_adapters as native_adapters_module
+    require_module_within(
+        native_adapters_module.__file__, ROOT, "native adapter runner"
     )
     windows, manifest = load_window_artifact(args.windows)
     decoding = None

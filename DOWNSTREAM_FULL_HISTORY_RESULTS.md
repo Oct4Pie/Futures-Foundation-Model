@@ -2,6 +2,12 @@
 
 Date: 2026-07-17
 
+> **Historical adapter-contract warning:** the Chronos, Mantis and staged-checkpoint comparisons
+> below were produced under the historical adapter contract. Their numbers remain evidence for
+> those exact artifacts only; they are not native-family rankings and do not admit classification,
+> custom representation transfer or training. New comparisons must follow
+> [FOUNDATION_MODEL_NATIVE_CONTRACT_PLAN.md](FOUNDATION_MODEL_NATIVE_CONTRACT_PLAN.md).
+
 ## Decision
 
 The corrected full-history ruler found one economically positive development cell, but it did not

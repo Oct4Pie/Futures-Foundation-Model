@@ -134,7 +134,7 @@ def load_matrix_config(path: str | Path) -> tuple[dict[str, Any], Path]:
     allowed = {
         "schema_version", "runtime_profiles", "source_roots", "hf_cache_roots",
         "environment", "device", "batch_size", "samples", "seed", "runner",
-        "runner_source",
+        "runner_source", "execution_sources",
     }
     unknown = sorted(set(value) - allowed)
     if unknown:
@@ -374,6 +374,50 @@ def _validate_source_root(
         ) from exc
 
 
+def _validate_execution_source(
+    arm_key: str,
+    source: Path,
+    *,
+    dossier: Mapping[str, Any],
+    python: Path,
+) -> None:
+    declared = (dossier.get("native_parity") or {}).get(
+        "execution_source_distribution"
+    ) or {}
+    name, version = declared.get("name"), declared.get("version")
+    if not isinstance(name, str) or not isinstance(version, str):
+        raise NativeParityMatrixError(
+            f"{arm_key} has no pinned execution-source distribution"
+        )
+    program = (
+        "from pathlib import Path;import importlib.metadata as m;"
+        f"d=m.distribution({name!r});"
+        "print(str(Path(d._path).resolve())+'\\n'+d.version)"
+    )
+    try:
+        completed = subprocess.run(
+            [str(python), "-I", "-c", program], check=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise NativeParityMatrixError(
+            f"cannot resolve execution source for {arm_key}: "
+            f"{getattr(exc, 'stderr', '')}"
+        ) from exc
+    actual_path, actual_version = completed.stdout.strip().splitlines()
+    if Path(actual_path).resolve() != source or actual_version != version:
+        raise NativeParityMatrixError(
+            f"{arm_key} execution source drift: expected {source} version {version}, "
+            f"got {actual_path} version {actual_version}"
+        )
+    try:
+        validate_distribution_record(source)
+    except RuntimeError as exc:
+        raise NativeParityMatrixError(
+            f"{arm_key} execution-source RECORD validation failed: {exc}"
+        ) from exc
+
+
 def build_matrix_plan(
     *,
     registry: Mapping[str, Any],
@@ -383,6 +427,7 @@ def build_matrix_plan(
     output_directory: str | Path,
     runner: str | Path,
     runner_source: str | Path,
+    execution_sources: Mapping[str, str | Path] | None = None,
     path_base: Path | None = None,
     validate_environments: bool = True,
 ) -> tuple[MatrixEntry, ...]:
@@ -429,6 +474,30 @@ def build_matrix_plan(
                 arm, sources[arm], dossier=registry["models"][arm],
                 python=python_paths[profile],
             )
+    execution_source_arms = {
+        arm for arm in arms
+        if "execution_source" in (
+            registry["models"][arm].get("native_parity") or {}
+        ).get("required_artifacts", ())
+    }
+    supplied_execution_sources = dict(execution_sources or {})
+    if set(supplied_execution_sources) != execution_source_arms:
+        raise NativeParityMatrixError(
+            "execution-source mapping must exactly cover declared arms: "
+            f"missing={sorted(execution_source_arms - set(supplied_execution_sources))}, "
+            f"unknown={sorted(set(supplied_execution_sources) - execution_source_arms)}"
+        )
+    resolved_execution_sources = {
+        arm: _expanded_path(path, base=path_base)
+        for arm, path in supplied_execution_sources.items()
+    }
+    if validate_environments:
+        for arm, source in sorted(resolved_execution_sources.items()):
+            profile = _profile_for_arm(arm, profiles)
+            _validate_execution_source(
+                arm, source, dossier=registry["models"][arm],
+                python=python_paths[profile],
+            )
     runner_path = _expanded_path(runner, base=path_base)
     if not runner_path.is_file():
         raise NativeParityMatrixError(f"native parity worker not found: {runner_path}")
@@ -462,6 +531,9 @@ def build_matrix_plan(
         extras = []
         native_parity = dossier.get("native_parity") or {}
         for name in native_parity.get("required_artifacts") or []:
+            if name == "execution_source":
+                extras.append((name, resolved_execution_sources[arm_key]))
+                continue
             model_id = native_parity.get(f"{name}_id")
             revision = native_parity.get(f"{name}_revision")
             if not isinstance(model_id, str) or not isinstance(revision, str):
@@ -506,11 +578,14 @@ def worker_command(
     if entry.tokenizer is not None:
         command.extend(["--tokenizer-snapshot", str(entry.tokenizer)])
     for name, path in entry.extra_artifacts:
-        if name != "reference_model":
+        if name == "reference_model":
+            command.extend(["--reference-model-snapshot", str(path)])
+        elif name == "execution_source":
+            command.extend(["--execution-source", str(path)])
+        else:
             raise NativeParityMatrixError(
                 f"worker has no CLI binding for extra artifact {name!r}"
             )
-        command.extend(["--reference-model-snapshot", str(path)])
     return command
 
 

@@ -101,10 +101,10 @@ A technically valid cell still requires a current evidence-bound report and two 
 approvals before execution. Every custom/adaptation cell remains blocked until its own evidence
 passes; no current arm is training-admitted.
 
-The current verifier enforces a hard minimum of two normalized, distinct reviewer labels and
-valid approval timestamps. It does **not** cryptographically authenticate reviewer identity or
-organizational independence. Operational authorization must remain blocked until that external
-governance step is completed or a trusted-signature mechanism is implemented.
+The v3 verifier requires two distinct Ed25519 keys from the explicit trusted-key registry, rejects
+key aliases across reviewer labels, and binds signatures to an immutable request created before
+approval. The packaged trust store is empty and therefore fails closed. Organizational assignment
+and independence of trusted keys remain external governance responsibilities.
 
 ## Three separate leaderboards
 

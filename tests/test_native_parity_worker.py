@@ -1,9 +1,11 @@
 import argparse
+import copy
 import json
 import os
 from pathlib import Path
 import subprocess
 import sys
+import types
 
 import numpy as np
 import pytest
@@ -13,6 +15,10 @@ from futures_foundation.finetune.native_adapters import (
     chronos_native_embedding,
 )
 from scripts import native_parity_worker as worker
+from futures_foundation.finetune.native_parity_runtime import (
+    NativeParityRuntimeError,
+    validate_runtime_lock,
+)
 
 
 EXPECTED_RUNNERS = {
@@ -22,12 +28,52 @@ EXPECTED_RUNNERS = {
 }
 
 
+def _runtime_lock():
+    return {
+        "schema_version": "ffm_native_runtime_lock_v1",
+        "comparison_policy": {
+            "portable_software": "exact",
+            "hardware_runtime": "exact_when_measurable_explicit_when_unavailable",
+        },
+        "portable_software": {
+            "python_executable": sys.executable,
+            "python_version": "test",
+            "python_implementation": "CPython",
+            "platform": "test",
+            "distributions": [{"name": "torch", "version": "test"}],
+        },
+        "hardware_runtime": {
+            "torch_importable": False,
+            "cuda_available": False,
+            "visible_devices": None,
+            "torch_cuda_runtime": None,
+            "cudnn_version": None,
+            "devices": [],
+            "driver_probe": {"status": "unavailable", "rows": []},
+        },
+    }
+
+
 def test_every_real_arm_has_one_explicit_profile_and_dispatch():
     assert set(worker.RUNNERS) == EXPECTED_RUNNERS
     assert set().union(*worker.PROFILE_ARMS.values()) == EXPECTED_RUNNERS
     assert sum(map(len, worker.PROFILE_ARMS.values())) == len(EXPECTED_RUNNERS)
     for arm in EXPECTED_RUNNERS:
         assert worker.runtime_profile_for_arm(arm) in worker.PROFILE_ARMS
+
+
+def test_runtime_lock_rejects_nested_drift_and_duplicate_normalized_names():
+    assert validate_runtime_lock(_runtime_lock()) == _runtime_lock()
+    duplicate = copy.deepcopy(_runtime_lock())
+    duplicate["portable_software"]["distributions"].append(
+        {"name": "torch", "version": "other"}
+    )
+    with pytest.raises(NativeParityRuntimeError, match="unique and sorted"):
+        validate_runtime_lock(duplicate)
+    nested = copy.deepcopy(_runtime_lock())
+    nested["hardware_runtime"]["unknown"] = True
+    with pytest.raises(NativeParityRuntimeError, match="hardware fields drifted"):
+        validate_runtime_lock(nested)
 
 
 def test_affine_contract_allows_quantization_but_rejects_missing_inverse_scale():
@@ -106,6 +152,7 @@ def test_execute_dispatches_sealed_fixture_and_writes_native_result(tmp_path, mo
         lambda profile, arm: {"torch": "test"},
     )
     monkeypatch.setattr(worker, "install_python_network_guard", lambda policy: None)
+    monkeypatch.setattr(worker, "measure_runtime_lock", _runtime_lock)
     fixture = (
         np.ones((4, 512, 5), np.float32),
         np.arange(4 * 512, dtype=np.int64).reshape(4, 512),
@@ -155,6 +202,7 @@ def test_execute_dispatches_sealed_fixture_and_writes_native_result(tmp_path, mo
     assert result["metrics"]["adapter_public_api_max_abs"] == 0.0
     assert result["metrics"]["adapter_public_api_allclose"] is True
     assert result["metrics"]["native_parity_atol"] == 1e-5
+    assert result["runtime_lock"] == _runtime_lock()
     with np.load(result_dir / "native_outputs.npz") as arrays:
         assert set(arrays.files) == {"official", "adapter", "partitioned"}
 
@@ -176,6 +224,7 @@ def test_execute_fails_and_records_out_of_tolerance_public_output(tmp_path, monk
         worker, "validate_runtime_profile", lambda profile, arm: {"torch": "test"},
     )
     monkeypatch.setattr(worker, "install_python_network_guard", lambda policy: None)
+    monkeypatch.setattr(worker, "measure_runtime_lock", _runtime_lock)
     monkeypatch.setattr(worker, "_load_fixture", lambda: (
         np.ones((4, 512, 5), np.float32),
         np.arange(4 * 512, dtype=np.int64).reshape(4, 512),
@@ -250,6 +299,58 @@ def test_invariant_checks_cannot_pass_from_prose_or_failed_measurement():
     assert failed == {
         "status": "fail", "evidence": "masked-value max_abs=0.5",
     }
+
+
+@pytest.mark.parametrize("arm", ["chronos_v1", "chronos_bolt", "chronos_v2"])
+def test_chronos_forecast_runner_measures_scale_and_missing_values(arm, monkeypatch):
+    import torch
+
+    class FakePipeline:
+        @classmethod
+        def from_pretrained(cls, *args, **kwargs):
+            return cls()
+
+        def predict_quantiles(
+            self, inputs, *, prediction_length, quantile_levels, **kwargs
+        ):
+            tensor = torch.as_tensor(inputs, dtype=torch.float32)
+            center = torch.nanmean(tensor, dim=-1)
+            output = center[..., None, None].repeat(
+                *([1] * center.ndim), prediction_length, len(quantile_levels)
+            )
+            if arm == "chronos_v2":
+                return [row for row in output], None
+            return output, None
+
+    monkeypatch.setitem(
+        sys.modules, "chronos",
+        types.SimpleNamespace(
+            BaseChronosPipeline=FakePipeline,
+            Chronos2Pipeline=FakePipeline,
+        ),
+    )
+    args = argparse.Namespace(
+        arm=arm,
+        model_snapshot="unused",
+        device="cpu",
+        batch_size=2,
+        samples=4,
+        seed=7,
+    )
+    values = np.linspace(10.0, 50.0, 4 * 512 * 5, dtype=np.float32).reshape(
+        4, 512, 5
+    )
+    outcome = worker._run_chronos(args, values, track="F")
+    assert outcome["scaling"]["passed"] is True
+    assert outcome["padding"]["passed"] is True
+    assert outcome["metrics"]["affine_scale"] == 1.25
+    assert outcome["metrics"]["affine_shift"] == 0.0
+    assert outcome["metrics"]["missing_prefix_length"] == 16
+    assert outcome["metrics"]["missing_outputs_finite"] is True
+    assert {
+        "scaling_observed", "scaling_expected",
+        "missing_reference", "missing_adapter",
+    }.issubset(outcome["arrays"])
 
 
 class _ChronosEmbeddingPipeline:

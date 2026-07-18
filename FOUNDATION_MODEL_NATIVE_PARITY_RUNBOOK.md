@@ -22,6 +22,25 @@ The worker rejects the wrong profile, an unbound CLI path, a dirty/wrong Git sou
 a wrong snapshot revision, non-finite output, pooled Chronos representations, and a
 bundle/worker arm mismatch.
 
+Strict verification reopens and rehashes the current external model, source, runtime,
+and worker trees:
+
+```bash
+ffm-native-parity-evidence verify /path/to/bundle
+```
+
+For a reviewed archive whose producing external trees are intentionally unavailable or
+have advanced, the explicit archive-only mode verifies the immutable fixture, result,
+logs, arrays, manifest bindings, registry identity, and mandatory checks without making
+an external-runtime claim:
+
+```bash
+ffm-native-parity-evidence verify /path/to/bundle --archive-only
+```
+
+Archive-only verification is not operational admission and cannot replace a strict
+verification of the current execution artifacts.
+
 The matrix worker also installs a Python audit-hook/socket guard and forces the usual
 HF/Transformers offline flags before family imports. The host currently denies
 unprivileged network namespaces, so this is **application-layer Python network denial,
@@ -62,9 +81,11 @@ The isolated environments are under:
 ```
 
 TimesFM additionally requires the exact official PyTorch reference checkpoint as the
-`reference_model` artifact. Kronos Mini/Small require their exact, different tokenizer
-artifacts. Bundled Chronos tokenizers are part of the model artifact and must not be
-supplied separately.
+`reference_model` artifact and the installed Transformers distribution as the
+`execution_source` artifact. The latter validates every installed package file through
+the wheel `RECORD`; a package version string alone is insufficient. Kronos Mini/Small
+require their exact, different tokenizer artifacts. Bundled Chronos tokenizers are part
+of the model artifact and must not be supplied separately.
 
 ## Sealed command template
 
@@ -97,11 +118,13 @@ Add both of these for Kronos:
 --tokenizer-snapshot /exact/tokenizer/snapshot
 ```
 
-Add both of these for TimesFM:
+Add all four bindings for TimesFM:
 
 ```text
 --artifact reference_model=/exact/reference/snapshot
 --reference-model-snapshot /exact/reference/snapshot
+--artifact execution_source=/exact/transformers.dist-info
+--execution-source /exact/transformers.dist-info
 ```
 
 Every path passed to the worker must equal the corresponding
@@ -113,11 +136,14 @@ The canonical and replay matrices use only the generated synthetic OHLCV fixture
 revisions. The canonical tracked archive is:
 
 ```text
-output/native_parity_evidence_canonical/
+output/native_parity_evidence_v2_canonical/
 ```
 
-The independent local replay is written separately and is not installed as canonical evidence.
-Both runs must cover all 16 registry-admitted F/R pairs and produce byte-identical native arrays.
+The independently produced replay matrix and its raw bundles are tracked at
+`output/native_parity_evidence_v2_replay/` so its byte-level comparison is auditable. It is
+replay evidence only: it is not installed as operationally canonical evidence and cannot
+authorize a runtime. Both runs must cover all 16 registry-admitted F/R pairs and produce
+byte-identical native arrays.
 The canonical evidence JSON uses paths relative to the registry directory, so copying it out of the
 aggregate does not change path meaning. Admission-report build and verification reopen the archive
 and fail closed on missing or altered internal proof.
@@ -129,7 +155,7 @@ The family-level expectations are:
 | Mantis V1/V2 `R` | Official transform/API parity, full/partition parity, unpooled `[B,C,D]` |
 | MOMENT Small `R` | Official masked mean embedding, mask perturbation and full/partition parity |
 | Kronos Mini/Small `F` | Exact tokenizer pair, joint OHLCVA, six UTC bar cadences, affine raw-scale check |
-| Chronos V1/Bolt/2 `F/R` | Public forecast and unpooled `embed` surfaces; exact native scaling state |
+| Chronos V1/Bolt/2 `F/R` | Public forecast and unpooled `embed` surfaces; positive raw-scale/inverse and leading-NaN behavior |
 | TimesFM 2.5 `F` | Transformers wrapper versus bound official PyTorch reference, raw point/quantiles |
 | TTM R2 `F` | Exact selector, six resolution tokens, real 512-bar input, affine scale check |
 | Moirai-2 Small `F` | Research-only packed multivariate quantiles, mask and affine scale checks |

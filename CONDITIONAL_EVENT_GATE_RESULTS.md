@@ -1,5 +1,11 @@
 # Conditional Trend-Event Gate Results
 
+> **Historical adapter-contract warning:** the Mantis vectors and adapted checkpoints in this
+> report were evaluated under the historical adapter contract. The findings remain valid for those
+> exact artifacts, but do not constitute native Track-R evidence or admit custom pooling/fusion,
+> classification/barrier training or deployment. New work is governed by
+> [FOUNDATION_MODEL_NATIVE_CONTRACT_PLAN.md](FOUNDATION_MODEL_NATIVE_CONTRACT_PLAN.md).
+
 ## Decision
 
 The causal pullback-continuation event family is promoted as a trading-research candidate. The

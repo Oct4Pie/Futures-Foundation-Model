@@ -11,10 +11,12 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from functools import lru_cache
+import base64
 import hashlib
 import json
-from importlib.metadata import PackageNotFoundError, distribution
+from importlib.metadata import PackageNotFoundError, distribution, version
 from pathlib import Path
+import platform
 import sys
 import sysconfig
 from typing import Any, Iterable, Mapping
@@ -27,11 +29,17 @@ SOURCE_REGISTRY_PATH = (
     / "native_contracts.json"
 )
 SOURCE_EVIDENCE_PATH = SOURCE_REGISTRY_PATH.with_name("native_contract_evidence.json")
+SOURCE_TRUST_PATH = SOURCE_REGISTRY_PATH.with_name("trusted_approvers.json")
 
 
 def evidence_path_for_registry(path: str | Path) -> Path:
     """Return the evidence document colocated with a source or installed registry."""
     return Path(path).resolve().with_name("native_contract_evidence.json")
+
+
+def trust_path_for_registry(path: str | Path) -> Path:
+    """Return the trusted-reviewer key registry colocated with a model registry."""
+    return Path(path).resolve().with_name("trusted_approvers.json")
 
 
 def installed_registry_candidates() -> tuple[Path, ...]:
@@ -71,9 +79,10 @@ def resolve_registry_path(candidates: Iterable[str | Path] | None = None) -> Pat
 
 
 REGISTRY_PATH = resolve_registry_path()
-REPORT_SCHEMA = "ffm_native_admission_report_v2"
+REPORT_SCHEMA = "ffm_native_admission_report_v3"
 REGISTRY_SCHEMA = "ffm_native_contract_registry_v1"
 EVIDENCE_SCHEMA = "ffm_native_contract_evidence_v1"
+TRUST_SCHEMA = "ffm_trusted_approvers_v1"
 VALID_STATUSES = frozenset({
     "native_valid",
     "native_valid_experimental_task",
@@ -101,6 +110,9 @@ MANDATORY_TECHNICAL_CHECKS = frozenset({
     "license_governance",
 })
 VALID_EVIDENCE_STATUSES = frozenset({"pass", "research_only_pass", "blocked"})
+RUNTIME_CONTROL_FIELDS = frozenset({
+    "device", "dtype", "network_policy", "profile", "use_scope",
+})
 
 
 class NativeContractError(ValueError):
@@ -128,6 +140,70 @@ def file_sha256(path: str | Path) -> str:
         for block in iter(lambda: stream.read(1 << 20), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def load_trusted_approvers(path: str | Path = REGISTRY_PATH) -> dict[str, Any]:
+    """Load the explicit Ed25519 trust root used for operational approvals.
+
+    The trust store is deliberately separate from an admission report.  A report cannot
+    introduce its own reviewer key, and an absent or empty store always fails closed.
+    """
+    trust_path = trust_path_for_registry(path)
+    if not trust_path.is_file():
+        raise NativeContractError(f"trusted-approver registry not found: {trust_path}")
+    try:
+        value = json.loads(trust_path.read_text(encoding="utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise NativeContractError(
+            f"trusted-approver registry is not valid JSON: {trust_path}"
+        ) from exc
+    if not isinstance(value, dict) or value.get("schema_version") != TRUST_SCHEMA:
+        raise NativeContractError(
+            f"trusted-approver registry schema must be {TRUST_SCHEMA!r}"
+        )
+    keys = value.get("keys")
+    if not isinstance(keys, dict):
+        raise NativeContractError("trusted-approver registry keys must be an object")
+    normalized_reviewers: set[str] = set()
+    public_key_fingerprints: set[str] = set()
+    for key_id, raw in keys.items():
+        _require_string(key_id, "trusted key id")
+        if not isinstance(raw, Mapping):
+            raise NativeContractError(f"trusted key {key_id!r} must be an object")
+        reviewer = _require_string(raw.get("reviewer"), f"trusted key {key_id}.reviewer")
+        if raw.get("algorithm") != "ed25519":
+            raise NativeContractError(f"trusted key {key_id!r} must use ed25519")
+        public_key_pem = _require_string(
+            raw.get("public_key_pem"), f"trusted key {key_id}.public_key_pem"
+        )
+        try:
+            from cryptography.hazmat.primitives import serialization
+            from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+            public_key = serialization.load_pem_public_key(public_key_pem.encode("ascii"))
+        except (ImportError, ValueError, TypeError, UnicodeEncodeError) as exc:
+            raise NativeContractError(f"trusted key {key_id!r} is not valid Ed25519 PEM") from exc
+        if not isinstance(public_key, Ed25519PublicKey):
+            raise NativeContractError(f"trusted key {key_id!r} is not Ed25519")
+        fingerprint = hashlib.sha256(public_key.public_bytes(
+            serialization.Encoding.DER,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )).hexdigest()
+        if fingerprint in public_key_fingerprints:
+            raise NativeContractError(
+                "trusted-approver registry cannot alias one public key to multiple reviewers"
+            )
+        public_key_fingerprints.add(fingerprint)
+        normalized = reviewer.strip().casefold()
+        if normalized in normalized_reviewers:
+            raise NativeContractError(
+                "trusted-approver registry must contain at most one active key per reviewer"
+            )
+        normalized_reviewers.add(normalized)
+    return value
+
+
+def trusted_approvers_sha256(path: str | Path = REGISTRY_PATH) -> str:
+    return content_sha256(load_trusted_approvers(path))
 
 
 def _require_string(value: Any, field: str) -> str:
@@ -258,6 +334,20 @@ def _validate_registry(value: Mapping[str, Any]) -> None:
                 native_parity.get("reference_model_revision"),
                 f"{key}.native_parity.reference_model_revision",
             )
+        if "execution_source" in required_artifacts:
+            execution_source = native_parity.get("execution_source_distribution")
+            if not isinstance(execution_source, dict):
+                raise NativeContractError(
+                    f"{key}.native_parity.execution_source_distribution must be an object"
+                )
+            _require_string(
+                execution_source.get("name"),
+                f"{key}.native_parity.execution_source_distribution.name",
+            )
+            _require_string(
+                execution_source.get("version"),
+                f"{key}.native_parity.execution_source_distribution.version",
+            )
         disposition = dispositions[key]
         if disposition.get("default_status") not in VALID_STATUSES:
             raise NativeContractError(f"invalid historical disposition for {key}")
@@ -377,6 +467,15 @@ def _validate_evidence(value: Mapping[str, Any], registry: Mapping[str, Any]) ->
             raise NativeContractError(f"evidence record {evidence_id} tokenizer mismatch")
         if not isinstance(record.get("environment"), Mapping) or not record["environment"]:
             raise NativeContractError(f"evidence record {evidence_id} needs an environment")
+        if record.get("runtime_lock") is not None:
+            from .native_parity_runtime import NativeParityRuntimeError, validate_runtime_lock
+
+            try:
+                validate_runtime_lock(record["runtime_lock"])
+            except NativeParityRuntimeError as exc:
+                raise NativeContractError(
+                    f"evidence record {evidence_id} runtime lock is invalid: {exc}"
+                ) from exc
         if record.get("profile") == "generated_bundle":
             bundle = record.get("bundle")
             if not isinstance(bundle, Mapping):
@@ -804,10 +903,273 @@ def normalize_check_results(
     return normalized
 
 
+def measure_runtime_environment(
+    expected: Mapping[str, Any],
+    requested: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Measure Python/package identity and validate non-measurable runtime controls.
+
+    Package and interpreter fields are never copied from caller JSON.  Fields such as
+    dtype and device are execution controls rather than package identity; callers may
+    declare them, but they must exactly match the evidence-covered contract.
+    """
+    if not isinstance(expected, Mapping) or not expected:
+        raise NativeContractError("technical evidence requires an environment contract")
+    supplied = dict(requested or {})
+    allowed = set(expected) | {"use_scope"}
+    extras = sorted(set(supplied) - allowed)
+    if extras:
+        raise NativeContractError(f"admission environment has unsupported fields: {extras}")
+    measured: dict[str, Any] = {}
+    for name, expected_value in expected.items():
+        if name in RUNTIME_CONTROL_FIELDS:
+            continue
+        if name == "python":
+            actual: Any = platform.python_version()
+        elif name == "executable":
+            actual = str(Path(sys.executable).resolve())
+        else:
+            try:
+                actual = version(name)
+            except PackageNotFoundError as exc:
+                raise NativeContractError(
+                    f"required runtime package {name!r} is not installed"
+                ) from exc
+        measured[name] = actual
+        if actual != expected_value:
+            raise NativeContractError(
+                f"measured runtime environment drift for {name!r}: "
+                f"expected {expected_value!r}, got {actual!r}"
+            )
+        if name in supplied and supplied[name] != actual:
+            raise NativeContractError(
+                f"reported runtime environment disagrees with measurement for {name!r}: "
+                f"reported {supplied[name]!r}, measured {actual!r}"
+            )
+    return measured
+
+
+def _validated_runtime_controls(
+    expected_environment: Mapping[str, Any],
+    actual: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    expected = {
+        name: expected_environment[name]
+        for name in RUNTIME_CONTROL_FIELDS
+        if name in expected_environment
+    }
+    supplied = dict(actual or {})
+    if supplied != expected:
+        raise NativeContractError(
+            "runtime controls must be supplied by the execution consumer and match "
+            f"technical evidence exactly: expected={expected}, actual={supplied}"
+        )
+    return expected
+
+
+def _verified_runtime_lock(record: Mapping[str, Any]) -> dict[str, Any]:
+    expected = record.get("runtime_lock")
+    if not isinstance(expected, Mapping):
+        raise NativeContractError(
+            "technical evidence predates the complete runtime lock and cannot authorize execution"
+        )
+    from .native_parity_runtime import (
+        NativeParityRuntimeError,
+        measure_runtime_lock,
+        validate_runtime_lock,
+    )
+
+    try:
+        expected_value = validate_runtime_lock(expected)
+        actual_value = validate_runtime_lock(measure_runtime_lock())
+    except NativeParityRuntimeError as exc:
+        raise NativeContractError(f"runtime lock measurement is invalid: {exc}") from exc
+    if actual_value != expected_value:
+        raise NativeContractError(
+            "complete runtime lock drifted from technical evidence"
+        )
+    return actual_value
+
+
+def _runtime_artifact_description(name: str, artifact: str | Path) -> dict[str, Any]:
+    artifact_path = Path(artifact).expanduser().absolute()
+    if name == "source" and artifact_path.name.endswith(".dist-info"):
+        from .native_parity_runtime import validate_distribution_record
+
+        try:
+            validate_distribution_record(artifact_path)
+        except RuntimeError as exc:
+            raise NativeContractError(
+                f"runtime artifact {name!r} has invalid installed-package bytes: {exc}"
+            ) from exc
+    # Lazy import avoids the native-evidence module's dependency back on this module.
+    from .native_evidence_bundle import NativeEvidenceError, _tree_description
+
+    try:
+        return _tree_description(
+            artifact_path,
+            # Executable source trees must not contain untracked importable code.
+            git_untracked_policy="reject" if name == "source" else "ignore",
+        )
+    except NativeEvidenceError as exc:
+        raise NativeContractError(f"runtime artifact {name!r} is unsafe: {exc}") from exc
+
+
+def _current_execution_artifact() -> dict[str, Any]:
+    """Hash the predeclared executable Python surface, excluding mutable evidence/docs.
+
+    Binding the entire Git checkout would be self-referential because installing evidence
+    changes the repository commit.  This manifest instead covers the package and every
+    executable consumer script while excluding registries, evidence, outputs, and docs.
+    """
+    from .native_evidence_bundle import NativeEvidenceError, execution_code_description
+
+    checkout = Path(__file__).resolve().parents[2]
+    if not (checkout / ".git").exists():
+        raise NativeContractError(
+            "operational admission currently requires a clean source checkout; "
+            "wheel installations support archive inspection only"
+        )
+    try:
+        return execution_code_description(checkout)
+    except NativeEvidenceError as exc:
+        raise NativeContractError(f"executing code cannot be sealed: {exc}") from exc
+
+
+def _technical_execution_artifact(raw: Mapping[str, Any]) -> dict[str, Any]:
+    if raw.get("kind") == "execution_code":
+        return dict(raw)
+    entries = []
+    for item in raw.get("entries") or ():
+        path = str(item.get("path", ""))
+        if not path.endswith(".py") or not path.startswith(("futures_foundation/", "scripts/")):
+            continue
+        entries.append({
+            "path": path,
+            "sha256": item.get("sha256"),
+            "size_bytes": item.get("size_bytes"),
+        })
+    entries.sort(key=lambda item: item["path"])
+    if not entries:
+        raise NativeContractError(
+            "technical runner evidence does not bind executable package/script sources"
+        )
+    return {
+        "path": raw.get("path"),
+        "kind": "execution_code",
+        "sha256": content_sha256(entries),
+        "file_count": len(entries),
+        "size_bytes": sum(int(item["size_bytes"]) for item in entries),
+        "entries": entries,
+    }
+
+
+def _technical_runtime_artifacts(
+    arm_key: str,
+    track: str,
+    path: str | Path,
+) -> dict[str, dict[str, Any]]:
+    verified = verify_technical_evidence_bundle(arm_key, track, path)
+    if not verified:
+        raise NativeContractError(
+            f"{arm_key}.{track} has no generated bundle to bind runtime artifacts"
+        )
+    artifacts = (verified["manifest"].get("bound_artifacts") or {})
+    if not isinstance(artifacts, Mapping):
+        raise NativeContractError("technical evidence has no bound artifact manifest")
+    required = {
+        str(name): dict(item)
+        for name, item in artifacts.items()
+    }
+    if not {"model", "source", "runner"}.issubset(required):
+        raise NativeContractError(
+            "technical evidence must bind current model, source, and execution-code artifacts"
+        )
+    required["runner"] = _technical_execution_artifact(required["runner"])
+    return required
+
+
+def _assert_technical_artifact_match(
+    name: str,
+    actual: Mapping[str, Any],
+    expected: Mapping[str, Any],
+) -> None:
+    if name == "source" and expected.get("kind") == "git_checkout":
+        fields = ("kind", "head_revision", "origin", "entries", "size_bytes")
+    else:
+        fields = ("kind", "sha256", "size_bytes")
+    mismatches = {
+        field: {"expected": expected.get(field), "actual": actual.get(field)}
+        for field in fields
+        if actual.get(field) != expected.get(field)
+    }
+    if mismatches:
+        raise NativeContractError(
+            f"runtime artifact {name!r} differs from technical evidence: {mismatches}"
+        )
+
+
+def _normalize_runtime_artifacts(
+    artifacts: Mapping[str, str | Path] | None,
+    *,
+    technical: Mapping[str, Mapping[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    supplied = dict(artifacts or {})
+    if "runner" in supplied:
+        raise NativeContractError("runner artifact is measured from executing code, not supplied")
+    missing = sorted((set(technical) - {"runner"}) - set(supplied))
+    if missing:
+        raise NativeContractError(
+            f"admission requires current runtime artifacts: missing={missing}"
+        )
+    output: dict[str, dict[str, Any]] = {}
+    runner = _current_execution_artifact()
+    _assert_technical_artifact_match("runner", runner, technical["runner"])
+    output["runner"] = runner
+    for name, artifact in supplied.items():
+        _require_string(name, "artifact name")
+        if not isinstance(artifact, (str, Path)):
+            raise NativeContractError(
+                f"runtime artifact {name!r} must be a current file or directory path"
+            )
+        description = _runtime_artifact_description(name, artifact)
+        if name in technical:
+            _assert_technical_artifact_match(name, description, technical[name])
+        output[name] = description
+    return output
+
+
 def _report_integrity_payload(report: Mapping[str, Any]) -> dict[str, Any]:
     value = dict(report)
     value.pop("integrity", None)
     return value
+
+
+def _approval_target_payload(report: Mapping[str, Any]) -> dict[str, Any]:
+    value = dict(report)
+    value.pop("integrity", None)
+    value.pop("approvals", None)
+    value.pop("approval_target_sha256", None)
+    value.pop("finalized_utc", None)
+    return value
+
+
+def approval_signature_payload(
+    approval_target_sha256: str,
+    approval: Mapping[str, Any],
+) -> bytes:
+    """Return the exact canonical message an independent reviewer must sign."""
+    return canonical_json({
+        "schema_version": "ffm_native_approval_signature_v1",
+        "approval_target_sha256": _require_string(
+            approval_target_sha256, "approval_target_sha256"
+        ),
+        "reviewer": _require_string(approval.get("reviewer"), "approval.reviewer"),
+        "key_id": _require_string(approval.get("key_id"), "approval.key_id"),
+        "algorithm": "ed25519",
+        "decision": approval.get("decision"),
+        "approved_utc": approval.get("approved_utc"),
+    })
 
 
 def attach_integrity(report: Mapping[str, Any]) -> dict[str, Any]:
@@ -822,25 +1184,79 @@ def attach_integrity(report: Mapping[str, Any]) -> dict[str, Any]:
 def _validated_approval_identities(
     approvals: Any,
     *,
-    report_created: datetime,
+    request_created: datetime,
+    approval_target_sha256: str,
+    trust_store: Mapping[str, Any],
     minimum_approvals: int = 2,
 ) -> set[str]:
     if minimum_approvals < 2:
         raise NativeContractError("admission approval floor cannot be lower than 2")
     if not isinstance(approvals, list):
         raise NativeContractError("admission approvals must be a list")
+    trusted_keys = trust_store.get("keys") if isinstance(trust_store, Mapping) else None
+    if not isinstance(trusted_keys, Mapping) or not trusted_keys:
+        raise NativeContractError("trusted-approver registry is empty; admission fails closed")
     identities: set[str] = set()
     for approval in approvals:
         if not isinstance(approval, Mapping):
             raise NativeContractError("each approval must be an object")
         reviewer = _require_string(approval.get("reviewer"), "approval.reviewer")
         approved = _parse_utc(approval.get("approved_utc"), "approval.approved_utc")
-        if approved > report_created:
+        if approved < request_created:
             raise NativeContractError(
-                f"reviewer {reviewer} approval is later than report creation"
+                f"reviewer {reviewer} approval predates the signed admission request"
             )
+        if approved > datetime.now(timezone.utc):
+            raise NativeContractError(f"reviewer {reviewer} approval is in the future")
         if approval.get("decision") != "approve":
             raise NativeContractError(f"reviewer {reviewer} did not approve")
+        key_id = _require_string(approval.get("key_id"), "approval.key_id")
+        trusted = trusted_keys.get(key_id)
+        if not isinstance(trusted, Mapping):
+            raise NativeContractError(
+                f"reviewer {reviewer} used untrusted approval key {key_id!r}"
+            )
+        if trusted.get("algorithm") != "ed25519" or approval.get("algorithm") != "ed25519":
+            raise NativeContractError(f"reviewer {reviewer} approval must use ed25519")
+        if reviewer.strip().casefold() != str(trusted.get("reviewer", "")).strip().casefold():
+            raise NativeContractError(
+                f"approval key {key_id!r} is not trusted for reviewer {reviewer!r}"
+            )
+        signature_text = _require_string(approval.get("signature"), "approval.signature")
+        try:
+            signature = base64.b64decode(signature_text, validate=True)
+        except (ValueError, TypeError) as exc:
+            raise NativeContractError(
+                f"reviewer {reviewer} approval signature is not valid base64"
+            ) from exc
+        try:
+            from cryptography.exceptions import InvalidSignature
+            from cryptography.hazmat.primitives import serialization
+            from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+        except ImportError as exc:
+            raise NativeContractError(
+                "cryptography is required to authenticate admission approvals"
+            ) from exc
+        try:
+            public_key = serialization.load_pem_public_key(
+                _require_string(
+                    trusted.get("public_key_pem"),
+                    f"trusted key {key_id}.public_key_pem",
+                ).encode("ascii")
+            )
+        except (ValueError, TypeError, UnicodeEncodeError) as exc:
+            raise NativeContractError(f"trusted approval key {key_id!r} is invalid") from exc
+        if not isinstance(public_key, Ed25519PublicKey):
+            raise NativeContractError(f"trusted approval key {key_id!r} is not Ed25519")
+        try:
+            public_key.verify(
+                signature,
+                approval_signature_payload(approval_target_sha256, approval),
+            )
+        except InvalidSignature as exc:
+            raise NativeContractError(
+                f"reviewer {reviewer} approval signature is invalid"
+            ) from exc
         identities.add(reviewer.strip().casefold())
     if len(identities) < minimum_approvals:
         raise NativeContractError(
@@ -850,24 +1266,20 @@ def _validated_approval_identities(
     return identities
 
 
-def build_admission_report(
+def build_admission_request(
     *,
     arm_key: str,
     track: str,
     status: str,
     checks: Mapping[str, bool | Mapping[str, Any]],
-    approvals: list[Mapping[str, Any]],
     environment: Mapping[str, Any],
     route: str | None = None,
-    artifacts: Mapping[str, Mapping[str, Any] | str | Path] | None = None,
+    artifacts: Mapping[str, str | Path] | None = None,
     created_utc: str,
     path: str | Path = REGISTRY_PATH,
 ) -> dict[str, Any]:
-    """Build a deterministic, hash-bound report; this does not auto-admit a blocked dossier."""
-    report_created = _parse_utc(created_utc, "created_utc")
-    _validated_approval_identities(
-        approvals, report_created=report_created, minimum_approvals=2
-    )
+    """Build the immutable report body that trusted reviewers independently sign."""
+    _parse_utc(created_utc, "created_utc")
     arm = get_arm(arm_key, path)
     if track not in {"F", "R", "C", "B", "D"}:
         raise NativeContractError(f"unknown track {track!r}")
@@ -875,7 +1287,7 @@ def build_admission_report(
         raise NativeContractError(f"admission report status {status!r} is not admissible")
     normalized = normalize_check_results(checks, path=path)
     evidence_id, evidence_record, evidence_checks = technical_evidence(arm.key, track, path)
-    verify_technical_evidence_bundle(arm.key, track, path)
+    technical_artifacts = _technical_runtime_artifacts(arm.key, track, path)
     expected_evidence_status = (
         "research_only_pass" if status == "research_only" else "pass"
     )
@@ -883,45 +1295,25 @@ def build_admission_report(
         raise NativeContractError(
             f"technical evidence {evidence_id!r} is not admissible for status {status!r}"
         )
-    environment_value = dict(environment)
     evidence_environment = dict(evidence_record["environment"])
-    environment_mismatches = {
-        key: {"expected": expected, "actual": environment_value.get(key)}
-        for key, expected in evidence_environment.items()
-        if environment_value.get(key) != expected
-    }
-    if environment_mismatches:
-        raise NativeContractError(
-            "admission environment does not match technical evidence: "
-            f"{environment_mismatches}"
-        )
-    if status == "research_only" and environment_value.get("use_scope") != "research_noncommercial":
+    runtime_lock = _verified_runtime_lock(evidence_record)
+    environment_value = measure_runtime_environment(evidence_environment, environment)
+    runtime_controls = _validated_runtime_controls(
+        evidence_environment,
+        {name: environment[name] for name in RUNTIME_CONTROL_FIELDS if name in environment},
+    )
+    use_scope = environment.get("use_scope")
+    if status == "research_only" and use_scope != "research_noncommercial":
         raise NativeContractError(
             "research-only admission requires environment.use_scope='research_noncommercial'"
         )
-    normalized_artifacts: dict[str, dict[str, Any]] = {}
-    for name, artifact in (artifacts or {}).items():
-        _require_string(name, "artifact name")
-        if isinstance(artifact, (str, Path)):
-            artifact_path = Path(artifact)
-            if not artifact_path.is_file():
-                raise NativeContractError(f"admission artifact not found: {artifact_path}")
-            normalized_artifacts[name] = {
-                "path": str(artifact_path.resolve()),
-                "sha256": file_sha256(artifact_path),
-            }
-        elif isinstance(artifact, Mapping):
-            item = dict(artifact)
-            digest = _require_string(item.get("sha256"), f"artifact {name}.sha256")
-            if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest.lower()):
-                raise NativeContractError(f"artifact {name}.sha256 must be a hexadecimal SHA-256")
-            item["sha256"] = digest.lower()
-            normalized_artifacts[name] = item
-        else:
-            raise NativeContractError(f"artifact {name} must be a path or object")
+    normalized_artifacts = _normalize_runtime_artifacts(
+        artifacts, technical=technical_artifacts
+    )
+    trust_store = load_trusted_approvers(path)
     value = {
         "schema_version": REPORT_SCHEMA,
-        "created_utc": created_utc,
+        "request_created_utc": created_utc,
         "arm_key": arm.key,
         "track": track,
         "route": route,
@@ -935,11 +1327,56 @@ def build_admission_report(
         "technical_checks_sha256": content_sha256(evidence_checks),
         "technical_runtime_sha256": content_sha256(evidence_record["admitted_runtime"]),
         "technical_environment_sha256": content_sha256(evidence_environment),
+        "technical_runtime_lock_sha256": content_sha256(evidence_record["runtime_lock"]),
+        "trusted_approvers_sha256": content_sha256(trust_store),
         "checks": normalized,
         "environment": environment_value,
+        "runtime_lock": runtime_lock,
+        "runtime_controls": runtime_controls,
+        "use_scope": use_scope,
         "artifacts": normalized_artifacts,
-        "approvals": [dict(item) for item in approvals],
     }
+    value["approval_target_sha256"] = content_sha256(_approval_target_payload(value))
+    return value
+
+
+def build_admission_report(
+    *,
+    arm_key: str,
+    track: str,
+    status: str,
+    checks: Mapping[str, bool | Mapping[str, Any]],
+    approvals: list[Mapping[str, Any]],
+    environment: Mapping[str, Any],
+    route: str | None = None,
+    artifacts: Mapping[str, str | Path] | None = None,
+    created_utc: str,
+    path: str | Path = REGISTRY_PATH,
+) -> dict[str, Any]:
+    """Build a signed, runtime-bound report; blocked dossiers remain blocked."""
+    value = build_admission_request(
+        arm_key=arm_key,
+        track=track,
+        status=status,
+        checks=checks,
+        environment=environment,
+        route=route,
+        artifacts=artifacts,
+        created_utc=created_utc,
+        path=path,
+    )
+    _validated_approval_identities(
+        approvals,
+        request_created=_parse_utc(created_utc, "created_utc"),
+        approval_target_sha256=value["approval_target_sha256"],
+        trust_store=load_trusted_approvers(path),
+        minimum_approvals=2,
+    )
+    value["approvals"] = [dict(item) for item in approvals]
+    value["finalized_utc"] = max(
+        _parse_utc(item.get("approved_utc"), "approval.approved_utc")
+        for item in approvals
+    ).isoformat().replace("+00:00", "Z")
     return attach_integrity(value)
 
 
@@ -960,6 +1397,7 @@ def verify_admission_report(
     route: str | None = None,
     require_training: bool = False,
     required_artifacts: Mapping[str, str | Path] | None = None,
+    runtime_controls: Mapping[str, Any] | None = None,
     minimum_approvals: int = 2,
     path: str | Path = REGISTRY_PATH,
 ) -> dict[str, Any]:
@@ -973,6 +1411,9 @@ def verify_admission_report(
     expected_digest = content_sha256(_report_integrity_payload(value))
     if integrity.get("digest") != expected_digest:
         raise NativeContractError("admission report integrity mismatch")
+    target_digest = content_sha256(_approval_target_payload(value))
+    if value.get("approval_target_sha256") != target_digest:
+        raise NativeContractError("admission report approval target mismatch")
 
     arm = get_arm(arm_key, path)
     capability = arm.capability(track)
@@ -1002,6 +1443,13 @@ def verify_admission_report(
         raise NativeContractError("admission report technical runtime contract is stale")
     if value.get("technical_environment_sha256") != content_sha256(evidence_record["environment"]):
         raise NativeContractError("admission report technical environment contract is stale")
+    if value.get("technical_runtime_lock_sha256") != content_sha256(
+        evidence_record.get("runtime_lock")
+    ):
+        raise NativeContractError("admission report technical runtime lock is stale")
+    trust_store = load_trusted_approvers(path)
+    if value.get("trusted_approvers_sha256") != content_sha256(trust_store):
+        raise NativeContractError("admission report trusted-approver registry is stale")
     if not arm.pin_complete:
         raise NativeContractError(f"{arm.key} has unresolved package/model/source pins")
     if arm.overall_status not in ADMITTED_STATUSES:
@@ -1037,44 +1485,76 @@ def verify_admission_report(
                 f"report={nonpassing}, technical={technical_nonpassing}"
             )
 
-    report_created = _parse_utc(value.get("created_utc"), "created_utc")
+    request_created = _parse_utc(
+        value.get("request_created_utc"), "request_created_utc"
+    )
     approvals = value.get("approvals")
     _validated_approval_identities(
         approvals,
-        report_created=report_created,
+        request_created=request_created,
+        approval_target_sha256=target_digest,
+        trust_store=trust_store,
         minimum_approvals=minimum_approvals,
     )
+    expected_finalized = max(
+        _parse_utc(item.get("approved_utc"), "approval.approved_utc")
+        for item in approvals
+    )
+    finalized = _parse_utc(value.get("finalized_utc"), "finalized_utc")
+    if finalized != expected_finalized or finalized < request_created:
+        raise NativeContractError(
+            "admission report finalization must equal its latest authenticated approval"
+        )
     if not isinstance(value.get("environment"), Mapping) or not value["environment"]:
         raise NativeContractError("admission report requires a pinned environment manifest")
-    environment_mismatches = {
-        key: {"expected": expected, "actual": value["environment"].get(key)}
-        for key, expected in evidence_record["environment"].items()
-        if value["environment"].get(key) != expected
-    }
-    if environment_mismatches:
-        raise NativeContractError(
-            f"admission report environment drift: {environment_mismatches}"
-        )
-    if capability.status == "research_only" and value["environment"].get("use_scope") != "research_noncommercial":
+    measured_environment = measure_runtime_environment(
+        evidence_record["environment"], value["environment"]
+    )
+    if measured_environment != value["environment"]:
+        raise NativeContractError("admission report environment differs from measured runtime")
+    measured_lock = _verified_runtime_lock(evidence_record)
+    if value.get("runtime_lock") != measured_lock:
+        raise NativeContractError("admission report complete runtime lock drifted")
+    actual_controls = _validated_runtime_controls(
+        evidence_record["environment"], runtime_controls
+    )
+    if value.get("runtime_controls") != actual_controls:
+        raise NativeContractError("admission report runtime controls are stale")
+    if capability.status == "research_only" and value.get("use_scope") != "research_noncommercial":
         raise NativeContractError(
             "research-only admission requires environment.use_scope='research_noncommercial'"
         )
     admitted_artifacts = value.get("artifacts") or {}
     if not isinstance(admitted_artifacts, Mapping):
         raise NativeContractError("admission report artifacts must be an object")
-    for name, artifact in (required_artifacts or {}).items():
+    technical_artifacts = _technical_runtime_artifacts(arm.key, track, path)
+    supplied_artifacts = dict(required_artifacts or {})
+    expected_names = set(admitted_artifacts)
+    provided_names = set(supplied_artifacts) | {"runner"}
+    if provided_names != expected_names:
+        raise NativeContractError(
+            "execution artifacts must exactly match the admission report: "
+            f"missing={sorted(expected_names - provided_names)}, "
+            f"unknown={sorted(provided_names - expected_names)}"
+        )
+    actual_artifacts = {
+        name: _runtime_artifact_description(name, artifact)
+        for name, artifact in supplied_artifacts.items()
+    }
+    actual_artifacts["runner"] = _current_execution_artifact()
+    for name, actual in actual_artifacts.items():
         expected = admitted_artifacts.get(name)
         if not isinstance(expected, Mapping):
-            raise NativeContractError(f"admission report does not bind required artifact {name!r}")
-        artifact_path = Path(artifact)
-        if not artifact_path.is_file():
-            raise NativeContractError(f"required artifact not found: {artifact_path}")
-        actual_digest = file_sha256(artifact_path)
-        if expected.get("sha256") != actual_digest:
-            raise NativeContractError(
-                f"admission artifact {name!r} hash mismatch: expected "
-                f"{expected.get('sha256')!r}, got {actual_digest!r}"
-            )
+            raise NativeContractError(f"admission report artifact {name!r} is invalid")
+        expected_identity = dict(expected)
+        # Paths may move; the exact tree/file identity may not.
+        actual_identity = dict(actual)
+        expected_identity.pop("path", None)
+        actual_identity.pop("path", None)
+        if actual_identity != expected_identity:
+            raise NativeContractError(f"admission artifact {name!r} tree hash mismatch")
+        if name in technical_artifacts:
+            _assert_technical_artifact_match(name, actual, technical_artifacts[name])
     return value
 
 
@@ -1086,6 +1566,7 @@ def require_admission_from_args(
     route: str | None = None,
     require_training: bool = False,
     required_artifacts: Mapping[str, str | Path] | None = None,
+    runtime_controls: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     report = getattr(args, "admission_report", None)
     if not report:
@@ -1099,6 +1580,7 @@ def require_admission_from_args(
         route=route,
         require_training=require_training,
         required_artifacts=required_artifacts,
+        runtime_controls=runtime_controls,
     )
 
 
@@ -1106,7 +1588,7 @@ def add_admission_argument(parser: Any) -> None:
     parser.add_argument(
         "--admission-report",
         help=(
-            "Path to a current ffm_native_admission_report_v2 bound to this model, "
+            "Path to a current ffm_native_admission_report_v3 bound to this model, "
             "track, route, registry, and dossier. Missing or stale reports fail closed."
         ),
     )

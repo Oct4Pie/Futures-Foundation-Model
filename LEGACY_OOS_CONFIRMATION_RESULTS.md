@@ -1,5 +1,11 @@
 # Legacy OOS Confirmation Results
 
+> **Historical adapter-contract warning:** the Mantis vectors and VICReg checkpoints in this
+> confirmation were frozen under the historical adapter contract. The OOS measurements remain
+> valid for those exact artifacts; they do not establish native representation, classification,
+> training or deployment admission. New work is governed by
+> [FOUNDATION_MODEL_NATIVE_CONTRACT_PLAN.md](FOUNDATION_MODEL_NATIVE_CONTRACT_PLAN.md).
+
 ## Decision
 
 The frozen pullback-continuation lane produced positive conditional-selector economics on the

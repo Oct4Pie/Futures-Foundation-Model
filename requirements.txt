@@ -4,6 +4,7 @@ peft>=0.10             # bolt_finetune --lora: parameter-efficient Chronos-Bolt 
 datasets>=2.14
 safetensors>=0.3
 pandas>=2.0
+cryptography>=42        # Ed25519-authenticated native admission approvals
 pyarrow>=16            # scripts/prepare_ssl_corpus.py: sealed daily-parquet -> OHLCV corpus
 numpy>=1.24,<2          # torch 2.x built against numpy 1.x ABI (_ARRAY_API); numpy 2 breaks DataLoader workers
 scikit-learn>=1.3

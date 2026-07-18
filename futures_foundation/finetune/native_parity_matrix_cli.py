@@ -31,6 +31,10 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--config", help=f"JSON config with schema {MATRIX_CONFIG_SCHEMA}")
     value.add_argument("--runtime-profile", action="append", default=[], metavar="NAME=PYTHON")
     value.add_argument("--source-root", action="append", default=[], metavar="ARM=PATH")
+    value.add_argument(
+        "--execution-source", action="append", default=[], metavar="ARM=PATH",
+        help="installed distribution root whose code the native loader executes",
+    )
     value.add_argument("--hf-cache-root", action="append", default=[], metavar="PATH")
     value.add_argument("--output", required=True, help="durable matrix bundle directory")
     value.add_argument("--aggregate", help="aggregate output; defaults below --output")
@@ -76,6 +80,8 @@ def main() -> int:
         runtime.update(_pairs(args.runtime_profile, "runtime profile"))
         sources = dict(config.get("source_roots") or {})
         sources.update(_pairs(args.source_root, "source root"))
+        execution_sources = dict(config.get("execution_sources") or {})
+        execution_sources.update(_pairs(args.execution_source, "execution source"))
         cache_roots = list(args.hf_cache_root or config.get("hf_cache_roots") or [])
         runner_raw = args.runner or config.get("runner") or str(_installed_worker())
         runner = Path(os.path.expandvars(os.path.expanduser(str(runner_raw))))
@@ -93,6 +99,7 @@ def main() -> int:
         output = Path(args.output).expanduser().resolve()
         entries = build_matrix_plan(
             registry=load_registry(), runtime_pythons=runtime, source_roots=sources,
+            execution_sources=execution_sources,
             hf_cache_roots=cache_roots, output_directory=output,
             runner=runner, runner_source=runner_source, path_base=base,
         )

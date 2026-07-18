@@ -26,9 +26,10 @@ setup(
         ("config/foundation_models", [
             "config/foundation_models/native_contracts.json",
             "config/foundation_models/native_contract_evidence.json",
+            "config/foundation_models/trusted_approvers.json",
             "config/foundation_models/historical_native_contract_snapshot.json",
         ]),
-        *_data_tree("output/native_parity_evidence_canonical"),
+        *_data_tree("output/native_parity_evidence_v2_canonical"),
     ],
     python_requires=">=3.9",
     # Core install is torch-free (the parent process must never load torch —
@@ -38,6 +39,7 @@ setup(
         "pandas>=2.0",
         "numpy>=1.24",
         "scikit-learn>=1.3",
+        "cryptography>=42",
     ],
     extras_require={
         "foundation": ["torch>=2.0", "chronos-forecasting>=2.3.1,<3"],

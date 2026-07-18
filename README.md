@@ -2,7 +2,7 @@
 
 ![Python Unit Tests](https://github.com/johnamcruz/Futures-Foundation-Model/actions/workflows/main.yml/badge.svg)
 
-**A model-agnostic classification foundation for futures markets — any pretrained time-series classification backbone learns market structure from raw OHLCV, then thin per-strategy heads finetune on top, all held to an honest-ruler walk-forward.**
+**A research framework for testing whether time-series foundation representations improve futures classification and trading decisions under an honest-ruler walk-forward.** Native feature extraction, custom pooling, classification and training are separate admission tracks; one passing track never authorizes another.
 
 **Contents:** [Quick Start](#quick-start) · [Philosophy](#philosophy--bert-for-futures) · [Overview](#overview) · [Self-Supervised Pretraining (2 stages)](#self-supervised-pretraining--2-progressive-stages) · [The Classifier Seam](#the-classifier-seam--model-agnostic) · [Finetuning Pipeline](#finetuning-pipeline--walk-forward--produce) ([Training Loop](#the-training-loop--overfit-driven)) · [Add a Strategy](#add-a-strategy) · [Data](#data) · [Project Structure](#project-structure)
 
@@ -25,12 +25,18 @@
 
 ## Quick Start
 
+> **Legacy interface example:** the commands below document the original Mantis-oriented research
+> pipeline. They are not an admitted native training or deployment route. Check the native-contract
+> registry and obtain the required evidence-bound authorization before executing a backbone path.
+
 ```bash
 pip install -e .
-# + the package for your chosen classification backbone
+# + the package for the exact legacy backbone used by the experiment
 ```
 
-FFM separates **learning the market** from **deciding a trade**. A **2-stage self-supervised pipeline** (masked modeling → candle forecasting) progressively refines the backbone on raw OHLCV; a thin per-strategy classifier then finetunes on top, validated on the honest ruler.
+The historical FFM architecture separates **learning the market** from **deciding a trade**. Its
+self-supervised stages and thin strategy classifier are experimental routes that require their own
+native training, representation-transfer and deployment evidence before reuse.
 
 ```python
 from futures_foundation.finetune import ssl, wf, produce
@@ -56,18 +62,26 @@ if verdict['generalizes']:
 
 > Separate **"understanding market context"** from **"making strategy-specific decisions."**
 
-Just as BERT learns language structure from unlabeled text before being finetuned for sentiment or Q&A, the FFM backbone learns **regime, structure, and volatility** from unlabeled futures OHLCV before any strategy logic runs. A strategy then adds only what the backbone cannot derive — setup geometry, entry distance, risk sizing — and finetunes a light classification head. Market-context knowledge is learned once and shared across every strategy.
+The intended analogy is BERT: test whether a backbone can learn **regime, structure, and
+volatility** from unlabeled futures OHLCV before strategy logic runs, then measure whether a light
+strategy head adds value. This is a research hypothesis, not an established property of every
+registered representation or evidence that market-context knowledge transfers across strategies.
 
-Two principles shape everything below:
+Two architectural hypotheses shape the historical pipeline below:
 
-1. **The backbone is a pretrained foundation model designed for *classification*** — and ingests **multivariate raw OHLCV** (price + volume + range), so it can encode participation and volatility, the raw material of momentum compression → expansion.
-2. **The backbone is swappable.** FFM commits to an *interface*, not a model. Any pretrained classification foundation model plugs in behind the same seam without touching a single strategy.
+1. **The original primary backbone was classification-oriented.** This does not apply to every
+   registered family. Mantis and Chronos V1/Bolt encode OHLCV channels independently, MOMENT uses
+   its official pooled multichannel embedding, and only declared grouped models such as Chronos-2
+   share information across variates in native Track R.
+2. **The backbone seam is intended to be swappable.** A family plugs into it only after its exact
+   representation, any custom pooling, task head, training path and deployment bundle have passed
+   their separate native-contract gates.
 
 ---
 
 ## Overview
 
-The flow is a self-supervised pretraining pipeline over one shared backbone, then a thin per-strategy head:
+The historical flow is a self-supervised pretraining pipeline over one shared backbone, then a thin per-strategy head:
 
 ```
 raw OHLCV (multi-ticker × multi-timeframe)
@@ -131,6 +145,11 @@ The exclusion is valid for this tournament's code path, but it does not make pre
 
 ## The Classifier Seam — model-agnostic
 
+> **Legacy, not currently admitted:** this seam and its two attach modes describe the historical
+> classifier implementation. Native-valid Track-R output proves feature extraction only. No
+> current arm is authorized for custom pooling (Track C), classification/barrier work (Track B),
+> end-to-end training or deployment.
+
 `futures_foundation.finetune.classifier` is the swap point: a `Classifier` ABC + a `get_classifier(name, **cfg)` registry. A strategy pipeline references a classifier **by name**; the backbone behind it can change with no strategy edits.
 
 ```python
@@ -139,13 +158,15 @@ from futures_foundation.finetune.classifier import get_classifier
 clf = get_classifier(BACKBONE, backbone_ckpt='ssl_ohlcv.pt', ft_mode='partial')
 ```
 
-Two ways to attach the backbone — both initialize from the SSL checkpoint via `backbone_ckpt`, both run torch in an **isolated subprocess** (the parent stays torch-free, so torch never collides with other native libraries in one process):
+The historical implementation has two attach modes. Both initialize from the experiment's SSL checkpoint via `backbone_ckpt` and run torch in an **isolated subprocess** (the parent stays torch-free, so torch never collides with other native libraries in one process):
 
-- **End-to-end fine-tune** — foundation model + per-strategy channel adapter + light head, all trained together. Maximum capacity; the backbone specializes to the task.
-- **Frozen head-only** — embed each window **once** through the frozen encoder, then train a cheap **logistic or MLP head** per fold on the cached embedding (optionally concatenated with hand-crafted geometry features). This is the "embed once → head per fold" pattern: fast enough to iterate on local hardware, and a clean linear/​shallow probe of what the representation actually carries.
+- **Legacy end-to-end fine-tune** — foundation model + per-strategy channel adapter + light head, all trained together. This remains blocked pending family-specific training, resume and export evidence.
+- **Legacy frozen head-only** — embed each window **once** through the frozen encoder, then train a cheap **logistic or MLP head** per fold on the cached embedding (optionally concatenated with hand-crafted geometry features). Native Track R does not authorize the required pooling/fusion; that is a separate Track-C contract.
   - **Cross-run embedding cache** — the frozen embedding is deterministic in `(backbone_ckpt, bars, window spec)`, so it's cached to disk keyed on exactly those. The expensive embed cost is **paid once per backbone**: reruns, head swaps (logistic↔MLP), and interpretability checks reuse the cached vectors instead of re-embedding. `EMBED_CACHE=0` disables; `EMBED_CACHE_DIR` relocates it.
 
-**Currently supported:** one pretrained classification backbone (installed via its own package), in both attach modes; **additional pretrained classification foundation models are planned behind the same interface.**
+**Current status:** the repository retains one legacy pretrained-classification implementation in
+both attach modes for historical reproduction. It is not operationally authorized by the native
+contract. Additional families remain blocked until their task-specific tracks pass.
 
 - **`logistic`** — a torch-free baseline / test vehicle for the whole pipeline.
 - **Add your own backbone** by implementing `featurize()` + `fit_predict()` and registering it — the walk-forward, produce, and ONNX paths are all classifier-agnostic.
@@ -154,7 +175,7 @@ Two ways to attach the backbone — both initialize from the SSL checkpoint via 
 
 ## Finetuning Pipeline — walk-forward → produce
 
-**`futures_foundation/finetune/` — the strategy-pluggable harness: streamed walk-forward evaluator with honest-ruler controls, production trainer, ONNX export.** Every strategy goes through it; nothing about it is tied to a specific backbone.
+**`futures_foundation/finetune/` retains the strategy-pluggable historical harness: streamed walk-forward evaluation, honest-ruler controls, production training and ONNX export.** The harness is model-agnostic in design, but a backbone may use it only through an admitted task-specific training and export route.
 
 **What it does:** a strategy labeler defines event candidates (any rule-based setup); for each event a multivariate context window → the classifier predicts `P(take)`, scored on **realized R** via the strategy's own evaluator. Validation runs the **overfit-driven training loop** on a rolling **train / validate / test** walk-forward with **REAL / SHUFFLE / RANDOM** controls and a pre-registered PASS/FAIL auto-verdict. The production trainer then fits one head on the full corpus minus the holdout and saves a single bundle + ONNX the bot loads.
 

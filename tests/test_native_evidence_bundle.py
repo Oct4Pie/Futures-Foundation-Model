@@ -1,3 +1,5 @@
+import base64
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -20,10 +22,12 @@ from futures_foundation.finetune.native_evidence_bundle import (
     NativeEvidenceError,
     aggregate_parity_bundles,
     create_shared_fixture,
+    execution_code_description,
     run_parity_bundle,
     verify_parity_bundle,
     verify_shared_fixture,
     _tree_description,
+    _verify_tree,
 )
 
 
@@ -266,6 +270,58 @@ def test_git_checkout_hash_ignores_clone_metadata_and_detects_tracked_drift(tmp_
     (left / "adapter.py").write_text("VALUE = 2\n", encoding="utf-8")
     with pytest.raises(NativeEvidenceError, match="tracked/index drift"):
         _tree_description(left)
+
+
+def test_execution_code_manifest_ignores_evidence_commits_but_detects_code_drift(tmp_path):
+    repo = tmp_path / "repo"
+    (repo / "futures_foundation").mkdir(parents=True)
+    (repo / "scripts").mkdir()
+    (repo / "config").mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.email", "test@example.com"], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.name", "Test"], check=True)
+    (repo / "futures_foundation/core.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (repo / "scripts/run.py").write_text("print('run')\n", encoding="utf-8")
+    (repo / "config/evidence.json").write_text("{}\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "base"], check=True)
+    before = execution_code_description(repo)
+
+    (repo / "config/evidence.json").write_text('{"installed":true}\n', encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "config/evidence.json"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "evidence"], check=True)
+    after_evidence = execution_code_description(repo)
+    assert before["sha256"] == after_evidence["sha256"]
+    assert before["entries"] == after_evidence["entries"]
+
+    (repo / "scripts/injected.py").write_text("print('injected')\n", encoding="utf-8")
+    with pytest.raises(NativeEvidenceError, match="untracked Python sources"):
+        execution_code_description(repo)
+    (repo / "scripts/injected.py").unlink()
+
+    (repo / "scripts/run.py").write_text("print('tampered')\n", encoding="utf-8")
+    with pytest.raises(NativeEvidenceError, match="tracked/index drift"):
+        execution_code_description(repo)
+
+
+def test_strict_tree_verification_checks_distribution_record_targets(tmp_path):
+    site = tmp_path / "site"
+    dist_info = site / "example-1.0.dist-info"
+    dist_info.mkdir(parents=True)
+    module = site / "example.py"
+    module.write_bytes(b"VALUE = 1\n")
+    digest = base64.urlsafe_b64encode(hashlib.sha256(module.read_bytes()).digest())
+    encoded = digest.decode("ascii").rstrip("=")
+    (dist_info / "RECORD").write_text(
+        f"example.py,sha256={encoded},{module.stat().st_size}\n"
+        "example-1.0.dist-info/RECORD,,\n",
+        encoding="utf-8",
+    )
+    description = _tree_description(dist_info)
+    _verify_tree(description, "source")
+    module.write_bytes(b"VALUE = 2\n")
+    with pytest.raises(NativeEvidenceError, match="RECORD hash mismatch"):
+        _verify_tree(description, "source")
 
 
 def test_run_is_fail_closed_on_missing_artifact_and_incomplete_checks(tmp_path):

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import importlib.metadata
 import inspect
 import json
 import os
@@ -53,7 +52,15 @@ from futures_foundation.finetune.native_parity_runtime import (
     PACKAGE_SOURCE_ARMS,
     PROFILE_ARMS,
     PROFILE_PYTHON,
+    NativeParityRuntimeError,
+    measure_runtime_lock,
+    runtime_profile_for_arm as _runtime_profile_for_arm,
+    validate_runtime_profile as _validate_runtime_profile,
     validate_distribution_record,
+)
+from futures_foundation.finetune.native_runtime_binding import (
+    require_import_origin,
+    require_module_within as require_file_within,
 )
 
 
@@ -69,38 +76,17 @@ class WorkerError(RuntimeError):
 
 
 def runtime_profile_for_arm(arm_key: str) -> str:
-    matches = [profile for profile, arms in PROFILE_ARMS.items() if arm_key in arms]
-    if len(matches) != 1:
-        raise WorkerError(f"arm has no unique runtime profile: {arm_key}")
-    return matches[0]
-
-
-def _version(package: str) -> str:
     try:
-        return importlib.metadata.version(package)
-    except importlib.metadata.PackageNotFoundError as exc:
-        raise WorkerError(f"required package is not installed: {package}") from exc
+        return _runtime_profile_for_arm(arm_key)
+    except NativeParityRuntimeError as exc:
+        raise WorkerError(str(exc)) from exc
 
 
 def validate_runtime_profile(profile: str, arm_key: str) -> dict[str, str]:
-    expected = runtime_profile_for_arm(arm_key)
-    if profile != expected:
-        raise WorkerError(
-            f"{arm_key} requires runtime profile {expected!r}, got {profile!r}"
-        )
-    if sys.version_info[:2] != PROFILE_PYTHON[profile]:
-        raise WorkerError(
-            f"runtime profile {profile!r} requires Python "
-            f"{PROFILE_PYTHON[profile]}, got {sys.version_info[:2]}"
-        )
-    required = {**PACKAGE_PROFILES[profile], **ARM_PACKAGES.get(arm_key, {})}
-    actual = {name: _version(name) for name in required}
-    if actual != required:
-        raise WorkerError(
-            f"runtime profile {profile!r} drifted: expected "
-            f"{required}, got {actual}"
-        )
-    return actual
+    try:
+        return _validate_runtime_profile(profile, arm_key)
+    except NativeParityRuntimeError as exc:
+        raise WorkerError(str(exc)) from exc
 
 
 def _git(path: Path, *args: str) -> str:
@@ -566,6 +552,7 @@ def _write_result(
     track: str,
     status: str,
     environment: Mapping[str, Any],
+    runtime_lock: Mapping[str, Any],
     admitted_runtime: Mapping[str, Any],
     metrics: Mapping[str, Any],
     checks: Mapping[str, Any],
@@ -581,6 +568,7 @@ def _write_result(
         "track": track,
         "status": status,
         "environment": dict(environment),
+        "runtime_lock": dict(runtime_lock),
         "admitted_runtime": dict(admitted_runtime),
         "metrics": dict(metrics),
         "checks": dict(checks),
@@ -836,6 +824,46 @@ def _run_chronos(
     )[0]
     reference = _chronos_container(reference_raw)
     candidate = _chronos_container(candidate_raw)
+
+    # Exercise native raw-scale and missing-value behavior independently of the
+    # public/adapter identity comparison above.  Chronos V1's mean-scale tokenizer is
+    # positively scale-equivariant but not translation-equivariant, so the shared
+    # family contract uses the affine transform y=1.25*x+0 rather than inventing a
+    # non-native centering guarantee.
+    affine_scale, affine_shift = 1.25, 0.0
+    scaled_inputs = inputs * affine_scale + affine_shift
+    _seed(args.seed)
+    scaled_raw = chronos_native_quantiles(
+        pipeline, scaled_inputs, family=family, prediction_length=HORIZON,
+        quantile_levels=levels, batch_size=args.batch_size, context_length=512,
+        num_samples=args.samples,
+    )[0]
+    scaled_output = _chronos_container(scaled_raw)
+    expected_scaled = candidate * affine_scale + affine_shift
+
+    missing_inputs = inputs.clone()
+    missing_inputs[..., :16] = torch.nan
+    _seed(args.seed)
+    missing_reference_raw = pipeline.predict_quantiles(
+        missing_inputs,
+        prediction_length=HORIZON,
+        quantile_levels=levels,
+        **({"batch_size": args.batch_size, "context_length": 512, "cross_learning": False}
+           if family == "chronos_2" else
+           ({"num_samples": args.samples} if family == "original_chronos_t5" else {})),
+    )[0]
+    _seed(args.seed)
+    missing_adapter_raw = chronos_native_quantiles(
+        pipeline, missing_inputs, family=family, prediction_length=HORIZON,
+        quantile_levels=levels, batch_size=args.batch_size, context_length=512,
+        num_samples=args.samples,
+    )[0]
+    missing_reference = _chronos_container(missing_reference_raw)
+    missing_adapter = _chronos_container(missing_adapter_raw)
+    missing_error = _max_abs(missing_reference, missing_adapter)
+    missing_finite = bool(
+        np.isfinite(missing_reference).all() and np.isfinite(missing_adapter).all()
+    )
     partition = None
     batch_error = None
     if family != "original_chronos_t5":
@@ -853,7 +881,14 @@ def _run_chronos(
         else:
             partition = _numpy(torch.cat(partition_parts))
         batch_error = _max_abs(candidate, partition)
-    arrays = {"official_quantiles": reference, "adapter_quantiles": candidate}
+    arrays = {
+        "official_quantiles": reference,
+        "adapter_quantiles": candidate,
+        "scaling_observed": scaled_output,
+        "scaling_expected": expected_scaled,
+        "missing_reference": missing_reference,
+        "missing_adapter": missing_adapter,
+    }
     if partition is not None:
         arrays["partitioned_quantiles"] = partition
     return {
@@ -868,18 +903,32 @@ def _run_chronos(
             **({"num_samples": args.samples} if family == "original_chronos_t5" else {}),
             "quantile_levels": levels,
         }),
-        "metrics": {"quantile_shape": list(candidate.shape), "finite": True},
+        "metrics": {
+            "quantile_shape": list(candidate.shape), "finite": True,
+            "affine_scale": affine_scale, "affine_shift": affine_shift,
+            "affine_inverse_max_abs": _max_abs(scaled_output, expected_scaled),
+            "missing_prefix_length": 16,
+            "missing_public_adapter_max_abs": missing_error,
+            "missing_outputs_finite": missing_finite,
+        },
         "channel": _invariant(
             candidate.shape[0] == (len(values) if family == "chronos_2" else len(values) * 5),
             ("Chronos-2 jointly forecasts five variates within each item" if family == "chronos_2" else
              "univariate forecasts preserve five independent OHLCV channel rows"),
         ),
-        "padding": None,
+        "padding": _invariant(
+            missing_finite
+            and np.allclose(
+                missing_reference, missing_adapter,
+                atol=1e-5, rtol=1e-5, equal_nan=False,
+            ),
+            f"16 leading NaNs per native series produced finite public/adapter "
+            f"quantiles; max_abs={missing_error:.9g}",
+        ),
         "frequency": None,
-        "scaling": _invariant(
-            _max_abs(reference, candidate) <= 1e-5
-            or np.allclose(reference, candidate, atol=1e-5, rtol=1e-5),
-            "raw-scale public quantiles were compared directly with adapter outputs",
+        "scaling": _affine_evidence(
+            scaled_output, expected_scaled,
+            label="Chronos native positive-scale/inverse",
         ),
     }
 
@@ -1007,7 +1056,11 @@ def _run_kronos(
 
 def _run_timesfm(args: argparse.Namespace, values: np.ndarray) -> dict[str, Any]:
     import torch
+    import transformers
     from transformers import TimesFm2_5ModelForPrediction
+    require_file_within(
+        transformers.__file__, args.execution_package_root, "Transformers"
+    )
     if not args.reference_model_snapshot:
         raise WorkerError("TimesFM parity requires --reference-model-snapshot")
     reference_snapshot = Path(args.reference_model_snapshot).expanduser().resolve()
@@ -1021,7 +1074,7 @@ def _run_timesfm(args: argparse.Namespace, values: np.ndarray) -> dict[str, Any]
     import timesfm
     require_module_within(timesfm, args.source_repo, "timesfm")
     candidate_model = TimesFm2_5ModelForPrediction.from_pretrained(
-        str(args.model_snapshot), dtype=torch.float32
+        str(args.model_snapshot), dtype=torch.float32, local_files_only=True
     ).to(args.device).eval()
     reference_model = timesfm.TimesFM_2p5_200M_torch.from_pretrained(
         str(reference_snapshot), torch_compile=False, local_files_only=True
@@ -1468,6 +1521,38 @@ def execute(args: argparse.Namespace) -> None:
             args.reference_model_snapshot, reference_revision,
             "reference_model_snapshot",
         )
+        args.execution_source = bound_artifact(
+            "execution_source", args.execution_source
+        )
+        execution_distribution = native_parity.get(
+            "execution_source_distribution"
+        ) or {}
+        distribution_name = execution_distribution.get("name")
+        distribution_version = execution_distribution.get("version")
+        if not isinstance(distribution_name, str) or not isinstance(
+            distribution_version, str
+        ):
+            raise WorkerError(
+                "TimesFM dossier must pin its execution-source distribution"
+            )
+        import importlib.metadata
+        installed_distribution = importlib.metadata.distribution(distribution_name)
+        installed_source = Path(installed_distribution._path).resolve()
+        if (
+            args.execution_source != installed_source
+            or installed_distribution.version != distribution_version
+        ):
+            raise WorkerError(
+                "bound TimesFM execution source differs from the installed "
+                f"{distribution_name} distribution"
+            )
+        validate_distribution_record(installed_source)
+        args.execution_package_root = Path(
+            installed_distribution.locate_file("transformers")
+        ).resolve()
+        require_import_origin(
+            "transformers", args.execution_package_root, "Transformers"
+        )
     values, timestamps = _load_fixture()
     _seed(args.seed)
     if args.arm.startswith("kronos"):
@@ -1552,6 +1637,7 @@ def execute(args: argparse.Namespace) -> None:
         environment=_environment(
             args.profile, profile_versions, args.device, network_policy
         ),
+        runtime_lock=measure_runtime_lock(),
         admitted_runtime=outcome["runtime"],
         metrics=metrics,
         checks=checks,
@@ -1571,6 +1657,7 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--model-snapshot", required=True)
     value.add_argument("--tokenizer-snapshot")
     value.add_argument("--reference-model-snapshot")
+    value.add_argument("--execution-source")
     value.add_argument("--source-repo")
     value.add_argument("--device", default="cuda:0")
     value.add_argument("--batch-size", type=int, default=4)

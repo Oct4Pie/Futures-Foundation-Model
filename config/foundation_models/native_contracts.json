@@ -251,9 +251,10 @@
       "source_revision": "3dae50b20d7a724981e8ea36cda75578f80dd2dc",
       "package": {"name": "transformers", "version": "5.13.1", "parity_package": {"name": "timesfm", "version": "2.0.2"}},
       "native_parity": {
-        "required_artifacts": ["reference_model"],
+        "required_artifacts": ["reference_model", "execution_source"],
         "reference_model_id": "google/timesfm-2.5-200m-pytorch",
-        "reference_model_revision": "1d952420fba87f3c6dee4f240de0f1a0fbc790e3"
+        "reference_model_revision": "1d952420fba87f3c6dee4f240de0f1a0fbc790e3",
+        "execution_source_distribution": {"name": "transformers", "version": "5.13.1"}
       },
       "tokenizer": null,
       "license": {"id": "Apache-2.0", "deployment": "allowed_after_admission"},

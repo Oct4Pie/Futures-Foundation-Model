@@ -1,13 +1,22 @@
+import base64
 import copy
 import json
 from pathlib import Path
+import platform
+import subprocess
+import sys
 
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from futures_foundation.finetune import native_contracts
 from futures_foundation.finetune.native_contracts import (
     NativeContractError,
     REGISTRY_PATH,
+    approval_signature_payload,
     attach_integrity,
+    build_admission_request,
     build_admission_report,
     evidence_sha256,
     get_arm,
@@ -15,6 +24,7 @@ from futures_foundation.finetune.native_contracts import (
     load_evidence,
     load_registry,
     file_sha256,
+    measure_runtime_environment,
     registry_sha256,
     resolve_registry_path,
     technical_evidence,
@@ -31,6 +41,150 @@ def _all_passing_checks(registry):
             for name in registry["required_checks"]}
 
 
+def _measured_test_environment():
+    return {
+        "python": platform.python_version(),
+        "executable": str(Path(sys.executable).resolve()),
+        "dtype": "float32",
+        "profile": "test",
+        "network_policy": "python_socket_deny",
+    }
+
+
+def _test_runtime_controls():
+    environment = _measured_test_environment()
+    return {
+        name: environment[name]
+        for name in native_contracts.RUNTIME_CONTROL_FIELDS
+        if name in environment
+    }
+
+
+def _test_runtime_lock():
+    return {
+        "schema_version": "ffm_native_runtime_lock_v1",
+        "comparison_policy": {
+            "portable_software": "exact",
+            "hardware_runtime": "exact_when_measurable_explicit_when_unavailable",
+        },
+        "portable_software": {
+            "python_executable": str(Path(sys.executable).resolve()),
+            "python_version": platform.python_version(),
+            "python_implementation": platform.python_implementation(),
+            "platform": platform.platform(),
+            "distributions": [{"name": "test-runtime", "version": "1.0"}],
+        },
+        "hardware_runtime": {
+            "torch_importable": False,
+            "cuda_available": False,
+            "visible_devices": None,
+            "torch_cuda_runtime": None,
+            "cudnn_version": None,
+            "devices": [],
+            "driver_probe": {"status": "unavailable", "rows": []},
+        },
+    }
+
+
+def _write_trust_store(registry_path: Path):
+    private_keys = {}
+    records = {}
+    for reviewer in ("reviewer-a", "reviewer-b"):
+        key = Ed25519PrivateKey.generate()
+        key_id = f"{reviewer}-key"
+        public_pem = key.public_key().public_bytes(
+            serialization.Encoding.PEM,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        ).decode("ascii")
+        records[key_id] = {
+            "reviewer": reviewer,
+            "algorithm": "ed25519",
+            "public_key_pem": public_pem,
+        }
+        private_keys[key_id] = key
+    registry_path.with_name("trusted_approvers.json").write_text(
+        json.dumps({"schema_version": "ffm_trusted_approvers_v1", "keys": records}),
+        encoding="utf-8",
+    )
+    return private_keys
+
+
+def _sign_approvals(request, private_keys):
+    approvals = []
+    for offset, reviewer in enumerate(("reviewer-a", "reviewer-b")):
+        key_id = f"{reviewer}-key"
+        approval = {
+            "reviewer": reviewer,
+            "key_id": key_id,
+            "algorithm": "ed25519",
+            "decision": "approve",
+            "approved_utc": f"2026-07-17T00:0{offset}:00Z",
+        }
+        approval["signature"] = base64.b64encode(
+            private_keys[key_id].sign(
+                approval_signature_payload(request["approval_target_sha256"], approval)
+            )
+        ).decode("ascii")
+        approvals.append(approval)
+    return approvals
+
+
+def _runtime_artifacts(tmp_path: Path, monkeypatch):
+    from futures_foundation.finetune import native_parity_runtime
+
+    monkeypatch.setattr(
+        native_parity_runtime, "measure_runtime_lock",
+        lambda: copy.deepcopy(_test_runtime_lock()),
+    )
+    model = tmp_path / "model.bin"
+    model.write_bytes(b"exact-model")
+    source = tmp_path / "source"
+    source.mkdir()
+    subprocess.run(["git", "init", "-q", str(source)], check=True)
+    subprocess.run(["git", "-C", str(source), "config", "user.email", "test@example.com"], check=True)
+    subprocess.run(["git", "-C", str(source), "config", "user.name", "Test"], check=True)
+    (source / "model.py").write_text("VALUE = 1\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(source), "add", "model.py"], check=True)
+    subprocess.run(["git", "-C", str(source), "commit", "-q", "-m", "fixture"], check=True)
+    artifacts = {"model": model, "source": source}
+    technical = {
+        name: native_contracts._runtime_artifact_description(name, path)
+        for name, path in artifacts.items()
+    }
+    runner = copy.deepcopy(technical["source"])
+    runner["path"] = str(source)
+    technical["runner"] = runner
+    monkeypatch.setattr(
+        native_contracts,
+        "_technical_runtime_artifacts",
+        lambda *args, **kwargs: copy.deepcopy(technical),
+    )
+    monkeypatch.setattr(
+        native_contracts, "_current_execution_artifact",
+        lambda: copy.deepcopy(runner),
+    )
+    return artifacts
+
+
+def _signed_report(
+    *, registry_path, registry, artifacts, private_keys, approvals_mutator=None,
+    environment=None, extra_artifacts=None,
+):
+    all_artifacts = {**artifacts, **(extra_artifacts or {})}
+    kwargs = dict(
+        arm_key="kronos_small", track="F", status="native_valid",
+        checks=_all_passing_checks(registry),
+        environment=environment or _measured_test_environment(),
+        artifacts=all_artifacts,
+        created_utc="2026-07-17T00:00:00Z", path=registry_path,
+    )
+    request = build_admission_request(**kwargs)
+    approvals = _sign_approvals(request, private_keys)
+    if approvals_mutator:
+        approvals_mutator(approvals)
+    return build_admission_report(**kwargs, approvals=approvals)
+
+
 def _admitted_registry(tmp_path, arm_key="kronos_small", track="F"):
     registry = copy.deepcopy(load_registry(REGISTRY_PATH))
     evidence = copy.deepcopy(load_evidence(REGISTRY_PATH))
@@ -44,6 +198,8 @@ def _admitted_registry(tmp_path, arm_key="kronos_small", track="F"):
     evidence["records"][evidence_id]["profile"] = "test_transitional"
     evidence["records"][evidence_id].pop("bundle", None)
     checks = evidence["records"][evidence_id].setdefault("checks", {})
+    evidence["records"][evidence_id]["environment"] = _measured_test_environment()
+    evidence["records"][evidence_id]["runtime_lock"] = _test_runtime_lock()
     for name in (
         "gradient_freeze_surface", "repeated_batch_loss_decrease",
         "exact_resume", "save_reload_export",
@@ -54,8 +210,9 @@ def _admitted_registry(tmp_path, arm_key="kronos_small", track="F"):
     path.with_name("native_contract_evidence.json").write_text(
         json.dumps(evidence), encoding="utf-8"
     )
+    private_keys = _write_trust_store(path)
     load_registry.cache_clear(); load_evidence.cache_clear()
-    return path, registry
+    return path, registry, private_keys
 
 
 def test_registry_resolution_uses_installed_fallback_when_source_is_absent(tmp_path):
@@ -90,54 +247,50 @@ def test_kronos_identity_rejects_wrong_native_tokenizer():
 
 
 def test_default_registry_cannot_admit_training_without_training_evidence():
-    registry = load_registry(REGISTRY_PATH)
-    report = build_admission_report(
-        arm_key="kronos_small", track="F", status="native_valid",
-        checks=_all_passing_checks(registry),
-        approvals=[
-            {"reviewer": "reviewer-a", "decision": "approve", "approved_utc": "2026-07-17T00:00:00Z"},
-            {"reviewer": "reviewer-b", "decision": "approve", "approved_utc": "2026-07-17T00:01:00Z"},
-        ],
-        environment={
-            **technical_evidence("kronos_small", "F")[1]["environment"],
-            "lock_sha256": "a" * 64,
-        },
-        created_utc="2026-07-17T00:02:00Z",
-    )
-    with pytest.raises(NativeContractError, match="technical=.*exact_resume"):
-        verify_admission_report(report, arm_key="kronos_small", track="F", require_training=True)
+    assert get_arm("kronos_small").training_admitted is False
+    with pytest.raises(NativeContractError, match="predates the complete runtime lock"):
+        native_contracts._verified_runtime_lock(
+            technical_evidence("kronos_small", "F")[1]
+        )
 
 
-def test_hash_bound_report_requires_current_registry_two_approvals_and_all_training_checks(tmp_path):
-    registry_path, registry = _admitted_registry(tmp_path)
+def test_hash_bound_report_requires_current_registry_two_approvals_and_all_training_checks(tmp_path, monkeypatch):
+    registry_path, registry, private_keys = _admitted_registry(tmp_path)
+    artifacts = _runtime_artifacts(tmp_path, monkeypatch)
     checkpoint = tmp_path / "checkpoint.pt"
     checkpoint.write_bytes(b"admitted checkpoint")
-    report = build_admission_report(
-        arm_key="kronos_small", track="F", status="native_valid",
-        checks=_all_passing_checks(registry),
-        approvals=[
-            {"reviewer": "reviewer-a", "decision": "approve", "approved_utc": "2026-07-17T00:00:00Z"},
-            {"reviewer": "reviewer-b", "decision": "approve", "approved_utc": "2026-07-17T00:01:00Z"},
-        ],
-        environment={
-            **technical_evidence("kronos_small", "F", registry_path)[1]["environment"],
-            "lock_sha256": "b" * 64,
-        },
-        artifacts={"checkpoint": checkpoint},
-        created_utc="2026-07-17T00:02:00Z", path=registry_path,
+    report = _signed_report(
+        registry_path=registry_path, registry=registry, artifacts=artifacts,
+        private_keys=private_keys, extra_artifacts={"checkpoint": checkpoint},
     )
     verified = verify_admission_report(
         report, arm_key="kronos_small", track="F", require_training=True,
-        required_artifacts={"checkpoint": checkpoint}, path=registry_path,
+        required_artifacts={**artifacts, "checkpoint": checkpoint},
+        runtime_controls=_test_runtime_controls(), path=registry_path,
     )
     assert verified["status"] == "native_valid"
 
-    replacement = tmp_path / "replacement.pt"
-    replacement.write_bytes(b"different checkpoint")
-    with pytest.raises(NativeContractError, match="artifact 'checkpoint' hash mismatch"):
+    with pytest.raises(NativeContractError, match="runtime controls must be supplied"):
         verify_admission_report(
             report, arm_key="kronos_small", track="F", require_training=True,
-            required_artifacts={"checkpoint": replacement}, path=registry_path,
+            required_artifacts={**artifacts, "checkpoint": checkpoint},
+            path=registry_path,
+        )
+    with pytest.raises(NativeContractError, match="runtime controls must be supplied"):
+        verify_admission_report(
+            report, arm_key="kronos_small", track="F", require_training=True,
+            required_artifacts={**artifacts, "checkpoint": checkpoint},
+            runtime_controls={**_test_runtime_controls(), "device": "cpu"},
+            path=registry_path,
+        )
+
+    replacement = tmp_path / "replacement.pt"
+    replacement.write_bytes(b"different checkpoint")
+    with pytest.raises(NativeContractError, match="artifact 'checkpoint' tree hash mismatch"):
+        verify_admission_report(
+                report, arm_key="kronos_small", track="F", require_training=True,
+                required_artifacts={**artifacts, "checkpoint": replacement},
+                runtime_controls=_test_runtime_controls(), path=registry_path,
         )
 
     tampered = copy.deepcopy(report)
@@ -148,9 +301,9 @@ def test_hash_bound_report_requires_current_registry_two_approvals_and_all_train
             path=registry_path,
         )
 
-    one_reviewer = copy.deepcopy(report)
-    one_reviewer["approvals"] = one_reviewer["approvals"][:1]
-    one_reviewer = attach_integrity(one_reviewer)
+    one_reviewer = attach_integrity({
+        **copy.deepcopy(report), "approvals": report["approvals"][:1]
+    })
     with pytest.raises(NativeContractError, match="independent approvals"):
         verify_admission_report(
             one_reviewer, arm_key="kronos_small", track="F", require_training=True,
@@ -160,7 +313,7 @@ def test_hash_bound_report_requires_current_registry_two_approvals_and_all_train
     aliased_reviewer = copy.deepcopy(report)
     aliased_reviewer["approvals"][1]["reviewer"] = " REVIEWER-A "
     aliased_reviewer = attach_integrity(aliased_reviewer)
-    with pytest.raises(NativeContractError, match="independent approvals"):
+    with pytest.raises(NativeContractError, match="not trusted for reviewer"):
         verify_admission_report(
             aliased_reviewer, arm_key="kronos_small", track="F",
             require_training=True, path=registry_path,
@@ -172,39 +325,175 @@ def test_hash_bound_report_requires_current_registry_two_approvals_and_all_train
             minimum_approvals=0, path=registry_path,
         )
 
+    invalid_finalization = copy.deepcopy(report)
+    invalid_finalization["finalized_utc"] = "2026-07-17T00:02:00Z"
+    invalid_finalization = attach_integrity(invalid_finalization)
+    with pytest.raises(NativeContractError, match="latest authenticated approval"):
+        verify_admission_report(
+            invalid_finalization, arm_key="kronos_small", track="F",
+            require_training=True, path=registry_path,
+        )
 
-def test_admission_report_rejects_unsupported_check_claims_and_bad_approval_time(tmp_path):
-    registry_path, registry = _admitted_registry(tmp_path)
+
+def test_invented_reviewer_and_empty_trust_store_fail_closed(tmp_path, monkeypatch):
+    registry_path, registry, private_keys = _admitted_registry(tmp_path)
+    artifacts = _runtime_artifacts(tmp_path, monkeypatch)
+    with pytest.raises(NativeContractError, match="not trusted for reviewer"):
+        _signed_report(
+            registry_path=registry_path, registry=registry,
+            artifacts=artifacts, private_keys=private_keys,
+            approvals_mutator=lambda values: values[0].update({"reviewer": "invented-a"}),
+        )
+
+    trust_path = registry_path.with_name("trusted_approvers.json")
+    aliased = json.loads(trust_path.read_text(encoding="utf-8"))
+    aliased["keys"]["reviewer-b-key"]["public_key_pem"] = (
+        aliased["keys"]["reviewer-a-key"]["public_key_pem"]
+    )
+    trust_path.write_text(json.dumps(aliased), encoding="utf-8")
+    with pytest.raises(NativeContractError, match="alias one public key"):
+        _signed_report(
+            registry_path=registry_path, registry=registry,
+            artifacts=artifacts, private_keys=private_keys,
+        )
+
+    trust_path.write_text(
+        json.dumps({"schema_version": "ffm_trusted_approvers_v1", "keys": {}}),
+        encoding="utf-8",
+    )
+    with pytest.raises(NativeContractError, match="registry is empty"):
+        _signed_report(
+            registry_path=registry_path, registry=registry,
+            artifacts=artifacts, private_keys=private_keys,
+        )
+
+
+def test_runner_is_measured_and_distribution_record_binds_imported_code(tmp_path, monkeypatch):
+    registry_path, registry, private_keys = _admitted_registry(tmp_path)
+    artifacts = _runtime_artifacts(tmp_path, monkeypatch)
+    with pytest.raises(NativeContractError, match="runner artifact is measured"):
+        _signed_report(
+            registry_path=registry_path, registry=registry,
+            artifacts={**artifacts, "runner": tmp_path}, private_keys=private_keys,
+        )
+    monkeypatch.undo()
+    site = tmp_path / "site"
+    dist_info = site / "example-1.0.dist-info"
+    dist_info.mkdir(parents=True)
+    module = site / "example.py"
+    module.write_bytes(b"VALUE = 1\n")
+    digest = base64.urlsafe_b64encode(
+        __import__("hashlib").sha256(module.read_bytes()).digest()
+    ).decode("ascii").rstrip("=")
+    (dist_info / "RECORD").write_text(
+        f"example.py,sha256={digest},{module.stat().st_size}\n"
+        "example-1.0.dist-info/RECORD,,\n",
+        encoding="utf-8",
+    )
+    assert native_contracts._runtime_artifact_description("source", dist_info)["kind"] == "directory"
+    module.write_bytes(b"VALUE = 2\n")
+    with pytest.raises(NativeContractError, match="RECORD hash mismatch"):
+        native_contracts._runtime_artifact_description("source", dist_info)
+
+
+def test_verification_remeasures_environment_and_runtime_artifact_trees(tmp_path, monkeypatch):
+    registry_path, registry, private_keys = _admitted_registry(tmp_path)
+    artifacts = _runtime_artifacts(tmp_path, monkeypatch)
+    checkpoint = tmp_path / "checkpoint.pt"
+    checkpoint.write_bytes(b"checkpoint")
+    report = _signed_report(
+        registry_path=registry_path, registry=registry, artifacts=artifacts,
+        private_keys=private_keys, extra_artifacts={"checkpoint": checkpoint},
+    )
+    execution_artifacts = {**artifacts, "checkpoint": checkpoint}
+
+    monkeypatch.setattr(platform, "python_version", lambda: "0.0.0")
+    with pytest.raises(NativeContractError, match="measured runtime environment drift"):
+        verify_admission_report(
+            report, arm_key="kronos_small", track="F", require_training=True,
+            required_artifacts=execution_artifacts,
+            runtime_controls=_test_runtime_controls(), path=registry_path,
+        )
+    monkeypatch.undo()
+    # Restore the technical-artifact test seam after undoing all monkeypatches.
+    from futures_foundation.finetune import native_parity_runtime
+    monkeypatch.setattr(
+        native_parity_runtime, "measure_runtime_lock",
+        lambda: copy.deepcopy(_test_runtime_lock()),
+    )
+    technical = {
+        name: native_contracts._runtime_artifact_description(name, path)
+        for name, path in artifacts.items()
+    }
+    runner = copy.deepcopy(technical["source"])
+    runner["path"] = str(artifacts["source"])
+    technical["runner"] = runner
+    monkeypatch.setattr(
+        native_contracts, "_technical_runtime_artifacts",
+        lambda *args, **kwargs: copy.deepcopy(technical),
+    )
+    monkeypatch.setattr(
+        native_contracts, "_current_execution_artifact",
+        lambda: copy.deepcopy(runner),
+    )
+
+    drifted_lock = _test_runtime_lock()
+    drifted_lock["portable_software"]["distributions"][0]["version"] = "2.0"
+    monkeypatch.setattr(
+        native_parity_runtime, "measure_runtime_lock",
+        lambda: copy.deepcopy(drifted_lock),
+    )
+    with pytest.raises(NativeContractError, match="complete runtime lock drifted"):
+        verify_admission_report(
+            report, arm_key="kronos_small", track="F", require_training=True,
+            required_artifacts=execution_artifacts,
+            runtime_controls=_test_runtime_controls(), path=registry_path,
+        )
+    monkeypatch.setattr(
+        native_parity_runtime, "measure_runtime_lock",
+        lambda: copy.deepcopy(_test_runtime_lock()),
+    )
+
+    (artifacts["source"] / "untracked.py").write_text("raise RuntimeError\n")
+    with pytest.raises(NativeContractError, match="untracked files"):
+        verify_admission_report(
+            report, arm_key="kronos_small", track="F", require_training=True,
+            required_artifacts=execution_artifacts,
+            runtime_controls=_test_runtime_controls(), path=registry_path,
+        )
+    (artifacts["source"] / "untracked.py").unlink()
+
+    artifacts["model"].write_bytes(b"tampered-model")
+    with pytest.raises(NativeContractError, match="tree hash mismatch"):
+        verify_admission_report(
+            report, arm_key="kronos_small", track="F", require_training=True,
+            required_artifacts=execution_artifacts,
+            runtime_controls=_test_runtime_controls(), path=registry_path,
+        )
+
+
+def test_admission_report_rejects_unsupported_check_claims_and_bad_approval_time(tmp_path, monkeypatch):
+    registry_path, registry, private_keys = _admitted_registry(tmp_path)
+    artifacts = _runtime_artifacts(tmp_path, monkeypatch)
     unsupported = _all_passing_checks(registry)
     unsupported["fp32_finite"] = {"status": "pass"}
     with pytest.raises(NativeContractError, match="needs concrete evidence"):
         build_admission_report(
             arm_key="kronos_small", track="F", status="native_valid",
             checks=unsupported,
-            approvals=[
-                {"reviewer": "reviewer-a", "decision": "approve", "approved_utc": "2026-07-17T00:00:00Z"},
-                {"reviewer": "reviewer-b", "decision": "approve", "approved_utc": "2026-07-17T00:01:00Z"},
-            ],
-            environment={
-                **technical_evidence("kronos_small", "F", registry_path)[1]["environment"],
-                "lock_sha256": "c" * 64,
-            },
-            created_utc="2026-07-17T00:02:00Z", path=registry_path,
+            approvals=[],
+            environment=_measured_test_environment(),
+            artifacts=artifacts,
+            created_utc="2026-07-17T00:00:00Z", path=registry_path,
         )
 
-    with pytest.raises(NativeContractError, match="later than report creation"):
-        build_admission_report(
-            arm_key="kronos_small", track="F", status="native_valid",
-            checks=_all_passing_checks(registry),
-            approvals=[
-                {"reviewer": "reviewer-a", "decision": "approve", "approved_utc": "2026-07-17T00:00:00Z"},
-                {"reviewer": "reviewer-b", "decision": "approve", "approved_utc": "2026-07-17T00:03:00Z"},
-            ],
-            environment={
-                **technical_evidence("kronos_small", "F", registry_path)[1]["environment"],
-                "lock_sha256": "d" * 64,
-            },
-            created_utc="2026-07-17T00:02:00Z", path=registry_path,
+    with pytest.raises(NativeContractError, match="predates the signed admission request"):
+        _signed_report(
+            registry_path=registry_path, registry=registry,
+            artifacts=artifacts, private_keys=private_keys,
+            approvals_mutator=lambda values: values[1].update(
+                {"approved_utc": "2026-07-16T23:59:00Z"}
+            ),
         )
 
 
@@ -231,19 +520,10 @@ def test_runtime_contracts_are_exact_and_reject_uncovered_shapes():
         )
 
 
-def test_report_environment_must_match_technical_evidence():
-    registry = load_registry(REGISTRY_PATH)
-    with pytest.raises(NativeContractError, match="environment does not match"):
-        build_admission_report(
-            arm_key="kronos_small", track="F", status="native_valid",
-            checks=_all_passing_checks(registry),
-            approvals=[
-                {"reviewer": "reviewer-a", "decision": "approve", "approved_utc": "2026-07-17T00:00:00Z"},
-                {"reviewer": "reviewer-b", "decision": "approve", "approved_utc": "2026-07-17T00:01:00Z"},
-            ],
-            environment={"python": "3.11", "dtype": "float32"},
-            created_utc="2026-07-17T00:02:00Z",
-        )
+def test_report_environment_must_match_measured_runtime():
+    expected = _measured_test_environment()
+    with pytest.raises(NativeContractError, match="disagrees with measurement"):
+        measure_runtime_environment(expected, {**expected, "python": "0.0.0"})
 
 
 def test_historical_dispositions_cover_known_invalid_contracts():
