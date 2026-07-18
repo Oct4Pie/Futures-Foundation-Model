@@ -258,6 +258,28 @@ verification item is also checked.
 - [x] Pass exporter process-safety tests on the isolated AlphaForge scale branch: independent-process
   cold-cache contention, pre-publication verification, hard-death staging cleanup and post-rename
   warm recovery. Local commit `9f4c4bd`; focused exporter-plus-coverage tests pass 20/20.
+- [x] Implement and independently red-team a contract-bound session-denominator mechanism on the
+  isolated AlphaForge scale branch. The implementation at commits `fa3f4e6` and `914c65b` forces
+  the complete consumer-admitted root-by-calendar-date Cartesian scope, derives the permitted
+  interval from actual non-OOS FFM splits, binds physical calendar sources plus the installed
+  dependency closure/Python/TZif/lock
+  bytes, supports segmented/closed/prelisting/delisted/shortened/extended/irregular sessions, and
+  reload-verifies crash-safe publication. Official effective-dated rules—not a calendar library's
+  historically backfilled timestamps—own normal geometry; the pinned library is an open/closed and
+  early/late-exception diagnostic only. The focused suite passes 26/26; calendar/export/coverage
+  tests pass 46/46; the independent authority-boundary review found no remaining code blocker.
+- [ ] Build and review the production `market_calendar_rules_v2` evidence set: exact effective
+  dates for all 43 roots, historical product-rule periods, and complete source-backed exceptional
+  sessions. Fixture tests do not admit these facts. US equity and NKD require separate histories;
+  grain/oilseed requires four regimes; pre/post-2015 metals and energy hours differ; every weekday
+  closure and early/late exception must carry an official source ID.
+- [ ] Resolve or quarantine pre-2017 `RTY` provider history. Official CME RTY starts on
+  `2017-07-10`; older files cannot silently inherit that product identity.
+- [ ] Define contract-lifecycle/last-trade semantics separately from the root/venue denominator so
+  legitimate expiring-contract inactivity is not mislabeled missing market data.
+- [ ] Generate the actual consumer-bound 43-root pre-OOS denominator and record wall time, peak RSS,
+  artifact size and independent reload-verification time. No observed file may define whether a
+  denominator row exists.
 - [ ] Pass the remaining exporter scale-admission tests: broader calendar/DST/session coverage,
   complete source-schema variants, explicit market-break semantics, effective dates and bounded
   memory/throughput measurements. See

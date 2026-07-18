@@ -12,17 +12,28 @@ factor, win rate, model prediction or holdout outcome may influence this matrix 
 ## Current evidence
 
 - Pilot producer: AlphaForge `0a955b4`.
-- Scale-safety branch: AlphaForge `corpus-v3-scale-safety` at local commit `9f4c4bd`.
+- Scale-safety branch: AlphaForge `corpus-v3-scale-safety` at local commit `914c65b`.
 - Scale-safety exporter changes: full verification before atomic publication, destination-keyed
   staging, stale-stage scavenging under the exact destination lock, and post-rename recovery.
 - Process tests: 14 exporter tests and 20 exporter-plus-coverage tests pass.
-- Full AlphaForge suite: 281 pass; three pre-existing burn-ledger/trap-oracle failures remain.
+- Session-denominator tests: 26 focused tests and 46 combined calendar/export/coverage tests pass.
+  Two independent adversarial reviews cleared the implementation after trust-boundary repairs.
+- Full AlphaForge suite: 301 pass; the same three pre-existing burn-ledger/trap-oracle failures
+  remain and are unrelated to the Corpus v3 scale branch.
 - FFM suite: 1,105 pass and 96 skip.
 - Coverage report: rebuilt deterministically against the current pilot contract; still selects
   zero roots pending a sessionized liquidity matrix and scale admission.
 
 The scale-safety AlphaForge commit is local-only. It is research evidence, not durable producer
 provenance, until pushed to an authorized remote or stored in a hash-pinned source archive.
+
+The denominator implementation is admitted as a mechanism, not as market-calendar evidence.
+Production rules, source artifacts, all 43 effective-date histories, exceptional sessions, the
+complete pre-OOS artifact and cross-repository consumption are still blocked.
+
+Official effective-dated rules are authoritative for normal geometry. The pinned calendar library
+is only an independent open/closed and early/late-exception diagnostic because it backfills modern
+hours into older years and still reports the removed US-equity maintenance pause after 2021.
 
 ## Required scale artifacts
 
@@ -127,8 +138,8 @@ or after the source cutoff must reject before raw access.
 For representatives `ES, CL, GC, 6E, ZN, BTC, ZC`:
 
 - `2023-11-24` rejects until an exact early-session override is pinned.
-- `2023-12-25` rejects as closed.
-- `2023-11-05` rejects as Sunday/closed.
+- `2023-12-25` rejects until an exact sourced closed-session override is pinned.
+- `2023-11-05` is an explicit normal-weekly closed denominator row; raw export rejects it.
 - Dates outside calendar coverage reject.
 - Synthetic override tests must assert exact UTC nanosecond bounds.
 
@@ -145,14 +156,22 @@ For representatives `ES, CL, GC, 6E, ZN, BTC, ZC`:
 
 ## Remaining blockers
 
-1. Add root listing/effective dates; do not count pre-inception sessions.
-2. Implement agriculture's official `19:00–07:45 CT` and `08:30–13:20 CT` segments and filter
-   exported rows to those half-open intervals.
-3. Add and pin effective-dated early/shortened-session overrides.
-4. Pin timezone database and calendar dependency versions in producer and verifier evidence.
-5. Run bounded-memory and throughput tests on realistic large contract-days.
-6. Push or archive AlphaForge `9f4c4bd` durably.
-7. Implement and independently review the four scale artifacts above.
+1. Create the production source-artifact table and exact root listing/effective dates; do not count
+   pre-inception sessions. Resolve or quarantine the pre-2017 `RTY` provider identity.
+2. Populate independently reviewed historical product rules and complete exceptional-session
+   overrides. Domestic US equity and NKD require separate products. Grain/oilseed requires four
+   regimes across 2012, 2013 and 2015 boundaries. Metals/energy require the 2015 close transition.
+   Every weekday closure and library-flagged early/late session must have a source-backed override;
+   fixture evidence is not production proof.
+3. Generate the contract-derived complete 43-root denominator through the end of development,
+   excluding the reserved OOS interval by construction.
+4. Measure full-range wall time, peak RSS, artifact bytes and reload verification, then run the
+   complete schema/DST matrix.
+5. Make AlphaForge export consume exact denominator segments and make FFM independently verify
+   full root-date coverage and segmented raw membership.
+6. Define contract-lifecycle/last-trade semantics separately from the root/venue denominator.
+7. Push or archive AlphaForge `914c65b` durably.
+8. Implement and independently review the four scale artifacts above.
 
 Only after those gates and the complete schema matrix pass may the project build the sessionized
 liquidity/continuity denominator and freeze `core_comparable` versus `supplemental_pretraining`
