@@ -144,6 +144,14 @@ def test_bundle_verification_rejects_output_and_model_tampering(tmp_path):
     Path(json.loads((bundle / "bundle_manifest.json").read_text())["bound_artifacts"]["model"]["path"]).write_bytes(b"changed")
     with pytest.raises(NativeEvidenceError, match="bound_artifacts.model drifted"):
         verify_parity_bundle(bundle, registry_path=registry_path)
+    # The installed archive remains internally verifiable after the producing
+    # runtime artifact moves or changes.  Operational admission separately binds
+    # the current runtime artifact.
+    manifest, result = verify_parity_bundle(
+        bundle, registry_path=registry_path, verify_external_artifacts=False
+    )
+    assert manifest["arm_key"] == "mantis_v1"
+    assert result["status"] == "pass"
 
 
 def test_bundle_binds_hf_file_symlinks_and_worker_source(tmp_path):

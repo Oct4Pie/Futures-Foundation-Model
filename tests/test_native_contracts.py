@@ -35,6 +35,14 @@ def _admitted_registry(tmp_path, arm_key="kronos_small", track="F"):
     registry = copy.deepcopy(load_registry(REGISTRY_PATH))
     evidence = copy.deepcopy(load_evidence(REGISTRY_PATH))
     evidence_id = registry["models"][arm_key]["tracks"][track]["evidence_id"]
+    # Admission-report unit tests mutate technical training checks deliberately.
+    # Keep that synthetic record transitional so it does not pretend to retain the
+    # canonical raw-bundle binding after being copied into a temporary directory.
+    evidence["check_profiles"]["test_transitional"] = copy.deepcopy(
+        evidence["check_profiles"][evidence["records"][evidence_id]["profile"]]
+    )
+    evidence["records"][evidence_id]["profile"] = "test_transitional"
+    evidence["records"][evidence_id].pop("bundle", None)
     checks = evidence["records"][evidence_id].setdefault("checks", {})
     for name in (
         "gradient_freeze_surface", "repeated_batch_loss_decrease",

@@ -530,7 +530,15 @@ def verify_technical_evidence_bundle(
     from .native_evidence_bundle import NativeEvidenceError, verify_parity_bundle
 
     try:
-        manifest, result = verify_parity_bundle(bundle_path, registry_path=path)
+        manifest, result = verify_parity_bundle(
+            bundle_path,
+            registry_path=path,
+            # The bundle records the clean source/model trees used to produce it.
+            # Installing reviewed evidence advances the repository, so canonical
+            # replay verifies the immutable archived files.  Admission reports bind
+            # and verify the current execution artifacts separately.
+            verify_external_artifacts=False,
+        )
     except NativeEvidenceError as exc:
         raise NativeContractError(
             f"technical evidence {evidence_id!r} raw bundle failed verification: {exc}"

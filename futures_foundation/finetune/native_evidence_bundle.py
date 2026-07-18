@@ -724,7 +724,10 @@ def run_parity_bundle(
 
 
 def verify_parity_bundle(
-    directory: str | Path, *, registry_path: str | Path | None = None
+    directory: str | Path,
+    *,
+    registry_path: str | Path | None = None,
+    verify_external_artifacts: bool = True,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     bundle = Path(directory).resolve()
     manifest = _read_json(bundle / "bundle_manifest.json", "bundle manifest")
@@ -763,9 +766,6 @@ def verify_parity_bundle(
     command = manifest.get("command")
     if not isinstance(command, Mapping):
         raise NativeEvidenceError("bundle command record is missing")
-    for name, description in (manifest.get("bound_artifacts") or {}).items():
-        _verify_tree(description, f"bound_artifacts.{name}")
-    _validate_source_checkout(dossier, manifest["bound_artifacts"]["source"])
     required_artifacts, allowed_artifacts = _required_artifacts(dossier, command)
     artifact_names = set(manifest.get("bound_artifacts") or {})
     if not required_artifacts.issubset(artifact_names) or not artifact_names.issubset(allowed_artifacts):
@@ -774,11 +774,16 @@ def verify_parity_bundle(
             f"required={sorted(required_artifacts)}, allowed={sorted(allowed_artifacts)}, "
             f"got={sorted(artifact_names)}"
         )
+    if verify_external_artifacts:
+        for name, description in (manifest.get("bound_artifacts") or {}).items():
+            _verify_tree(description, f"bound_artifacts.{name}")
+        _validate_source_checkout(dossier, manifest["bound_artifacts"]["source"])
     command_integrity = dict(command)
     command_digest = command_integrity.pop("command_sha256", None)
     if command_digest != content_sha256(command_integrity):
         raise NativeEvidenceError("command record integrity mismatch")
-    _verify_tree(command["executable"], "command.executable")
+    if verify_external_artifacts:
+        _verify_tree(command["executable"], "command.executable")
     for index, item in enumerate(command.get("file_arguments") or []):
         if not isinstance(item, Mapping) or not isinstance(item.get("artifact"), Mapping):
             raise NativeEvidenceError(f"command.file_arguments[{index}] is invalid")
@@ -787,7 +792,8 @@ def verify_parity_bundle(
             raise NativeEvidenceError(f"command.file_arguments[{index}] index is invalid")
         if command["argv"][argv_index] != item["artifact"].get("path"):
             raise NativeEvidenceError(f"command.file_arguments[{index}] argv binding mismatch")
-        _verify_tree(item["artifact"], f"command.file_arguments[{index}]")
+        if verify_external_artifacts:
+            _verify_tree(item["artifact"], f"command.file_arguments[{index}]")
     for name, item in (manifest.get("logs") or {}).items():
         path = bundle / _safe_relative(str(item.get("path", "")), f"logs.{name}.path")
         if not path.is_file() or file_sha256(path) != item.get("sha256"):

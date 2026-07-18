@@ -107,30 +107,34 @@ Add both of these for TimesFM:
 Every path passed to the worker must equal the corresponding
 `FFM_NATIVE_PARITY_ARTIFACT_*` path injected by the sealing process.
 
-## Real offline smoke commands executed
+## Canonical real-checkpoint evidence
 
-These used only the generated synthetic OHLCV fixture and exact cached revisions:
+The canonical and replay matrices use only the generated synthetic OHLCV fixture and exact cached
+revisions. The canonical tracked archive is:
 
-| Arm/track | Result | Bundle path during development |
-|---|---|---|
-| Mantis V1 `R` | Passed; official transform versus adapter, full/partition parity, unpooled `[B,C,D]` | `/tmp/ffm-real-smoke-mantis-v1` |
-| Mantis V2 `R` | Passed; enhanced layer-2 combined output, full/partition parity, unpooled `[B,C,D]` | `/tmp/ffm-real-smoke-mantis-v2` |
-| Chronos V1 `F` | Passed; seeded native forecast quantiles | `/tmp/ffm-real-smoke-chronos-v1-f` |
-| Chronos V1 `R` | Passed; documented concrete `embed`, unpooled tokens/state, full/partition parity | `/tmp/ffm-real-smoke-chronos-v1-r` |
-| Kronos Mini `F` | Passed with mandatory Tokenizer-2k; joint OHLCVA and full/partition outputs | `/tmp/ffm-real-smoke-kronos-mini-f` |
-| Kronos Small `F` | Passed with mandatory Tokenizer-base; joint OHLCVA and full/partition outputs | `/tmp/ffm-real-smoke-kronos-small-f` |
-| MOMENT Small `R` | Passed; official masked mean embedding, internal RevIN, full/partition parity | `/tmp/ffm-real-smoke-moment-r` |
-| TimesFM 2.5 `F` | Passed; Transformers wrapper versus separately bound official PyTorch reference, raw point/quantiles | `/tmp/ffm-real-smoke-timesfm-f` |
-| TTM R2 `F` | Passed in isolated profile; exact official selector, native 512-bar input, no artificial padding/channel mixer | `/tmp/ffm-real-smoke-ttm-f` |
-| Moirai-2 Small `F` | Research-only pass in Python 3.11 profile; packed five-variate raw quantiles | `/tmp/ffm-real-smoke-moirai-f` |
-| Toto 2.0 22M `F` | Passed; grouped five-variate raw quantiles with `decode_block_size=None` | `/tmp/ffm-real-smoke-toto-f` |
-| Sundial Base `F` | Passed in isolated profile; seeded public forecast samples, hidden states forbidden | `/tmp/ffm-real-smoke-sundial-f` |
-| Chronos Bolt `F/R` | Both passed; native quantiles and documented unpooled patch/REG tokens plus loc/scale | `/tmp/ffm-real-smoke-chronos-bolt-{f,r}` |
-| Chronos 2 `F/R` | Both passed; grouped five-variate quantiles and unpooled tokens plus scaling state | `/tmp/ffm-real-smoke-chronos-v2-{f,r}` |
+```text
+output/native_parity_evidence_canonical/
+```
 
-Temporary smoke bundles are not canonical evidence and must not be installed. Canonical
-bundles require the final frozen registry and worker revision, followed by an independent
-rerun and aggregation.
+The independent local replay is written separately and is not installed as canonical evidence.
+Both runs must cover all 16 registry-admitted F/R pairs and produce byte-identical native arrays.
+The canonical evidence JSON uses paths relative to the registry directory, so copying it out of the
+aggregate does not change path meaning. Admission-report build and verification reopen the archive
+and fail closed on missing or altered internal proof.
+
+The family-level expectations are:
+
+| Arm/track | Required evidence |
+|---|---|
+| Mantis V1/V2 `R` | Official transform/API parity, full/partition parity, unpooled `[B,C,D]` |
+| MOMENT Small `R` | Official masked mean embedding, mask perturbation and full/partition parity |
+| Kronos Mini/Small `F` | Exact tokenizer pair, joint OHLCVA, six UTC bar cadences, affine raw-scale check |
+| Chronos V1/Bolt/2 `F/R` | Public forecast and unpooled `embed` surfaces; exact native scaling state |
+| TimesFM 2.5 `F` | Transformers wrapper versus bound official PyTorch reference, raw point/quantiles |
+| TTM R2 `F` | Exact selector, six resolution tokens, real 512-bar input, affine scale check |
+| Moirai-2 Small `F` | Research-only packed multivariate quantiles, mask and affine scale checks |
+| Toto 2.0 22M `F` | Grouped quantiles, masks, native scale and `decode_block_size=None` |
+| Sundial Base `F` | Seeded finite samples and affine inverse scaling; hidden states forbidden |
 
 The first Kronos smoke also caught an upstream-interface detail: the pinned predictor
 documents a `DatetimeIndex` but calls the pandas `.dt` accessor internally. The worker

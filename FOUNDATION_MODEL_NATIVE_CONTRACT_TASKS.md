@@ -158,7 +158,8 @@ new ranking is authorized until the relevant admission items pass.
 - [ ] Add lower/upper boundary rejection and sensitivity tests where the upstream API exposes
   variable context or horizon.
 - [x] Structural no-future/no-label input-surface assertion for the synthetic parity worker.
-- [ ] Add numerical prefix-invariance tests where an API accepts a larger composite input.
+- [ ] Add numerical prefix-invariance tests where an API accepts a larger composite input. Base
+  native APIs receive context only and therefore report this check as not applicable, not passed.
 - [ ] Gradient/freeze-surface tests.
 - [ ] Native repeated-batch loss-decrease smoke.
 - [ ] Exact resume, save/reload and deployment/export parity.
@@ -168,6 +169,9 @@ new ranking is authorized until the relevant admission items pass.
   valid approval/report timestamp ordering.
 - [ ] Authenticate reviewer identity and organizational independence through external governance
   or a trusted-signature mechanism before any operational authorization.
+- [x] Install a durable canonical raw-bundle archive and require admission-report build/verification
+  to reopen its fixture, result, log, manifest and raw-output hashes. Current runtime artifacts are
+  bound separately because installing reviewed evidence necessarily advances the source checkout.
 
 ## Phase 3 — data and label contract
 

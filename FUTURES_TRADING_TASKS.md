@@ -86,8 +86,9 @@ verification item is also checked.
 - [x] Every causal-baseline scaler and feature transform is fit on earlier rows only; repeat this
   verification for representation arms.
 - [x] Split purge uses label end plus the declared embargo.
-- [x] Cross-family embedding extraction passes deterministic batch-parity tests for admitted arms;
-  Sundial remains explicitly blocked by non-finite hidden states.
+- [x] Official representation extraction passes deterministic batch-parity tests for the admitted
+  Mantis, MOMENT and Chronos tracks. Sundial forecasting is separately native-valid; Sundial hidden
+  states remain explicitly excluded because they are non-finite.
 - [x] Causal-baseline and representation-arm row-level predictions and fold assignments are saved.
 - [x] Causal-baseline paired uncertainty uses calendar blocks, not iid rows; finalist comparisons
   will use the larger predeclared resample count.
@@ -231,9 +232,10 @@ verification item is also checked.
   The current evidence is 45.0M one-minute rows in the nine-root FFM corpus and 15.59B admitted
   tick rows across 43 roots before 2026. General depth and Databento use remains blocked. See
   [DATA_SCALE_AUDIT.md](DATA_SCALE_AUDIT.md).
-- [ ] **BLOCKED BY NATIVE-CONTRACT GATE:** complete the model-by-model admission and parity work in
-  [FOUNDATION_MODEL_NATIVE_CONTRACT_TASKS.md](FOUNDATION_MODEL_NATIVE_CONTRACT_TASKS.md). Corpus v3
-  materialization and all new training remain prohibited until the relevant families pass.
+- [x] Complete real-checkpoint native forecast/representation parity for the locally verifiable
+  families in [FOUNDATION_MODEL_NATIVE_CONTRACT_TASKS.md](FOUNDATION_MODEL_NATIVE_CONTRACT_TASKS.md).
+  This unblocks governed Corpus v3 design/materialization, not model training. Training remains
+  prohibited until the family-specific training surface and Phase 3/4/5 gates pass.
 - [ ] Pin a Corpus v3 development contract to the admitted Sierra tick source, registry,
   admission artifact, loader, instrument economics and lake hash-of-hashes.
 - [ ] Produce a root-by-year liquidity, continuity, roll and gap matrix; select roots without

@@ -15,6 +15,12 @@ environment, applicable artifacts, and two independent approvals. Base inference
 admit training: all persistent training, tuning, and adapted-checkpoint routes remain blocked until
 the training-specific checks pass.
 
+Generated technical records point to the tracked canonical raw-bundle archive. Admission-report
+build and verification reopen that archive and fail on missing or altered fixture, result, logs,
+manifest, or native arrays. The archive binds the exact producing model/source trees; a current
+runtime binds its own artifacts separately. The repository records selected package versions and
+source revisions but does not claim a portable binary environment or kernel-level network sandbox.
+
 Reviewer labels are normalized and the two-approval floor cannot be lowered, but reviewer identity
 is not cryptographically authenticated by the repository. A report is therefore not sufficient by
 itself to prove organizational independence; that remains an external operational gate.

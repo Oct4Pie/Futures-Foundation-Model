@@ -1,4 +1,17 @@
+from pathlib import Path
+
 from setuptools import setup, find_packages
+
+
+def _data_tree(root: str):
+    """Preserve a tracked evidence tree under the wheel installation prefix."""
+    base = Path(root)
+    if not base.is_dir():
+        return []
+    grouped = {}
+    for path in sorted(item for item in base.rglob("*") if item.is_file()):
+        grouped.setdefault(str(path.parent), []).append(str(path))
+    return sorted(grouped.items())
 
 setup(
     name="futures-foundation-model",
@@ -15,6 +28,7 @@ setup(
             "config/foundation_models/native_contract_evidence.json",
             "config/foundation_models/historical_native_contract_snapshot.json",
         ]),
+        *_data_tree("output/native_parity_evidence_canonical"),
     ],
     python_requires=">=3.9",
     # Core install is torch-free (the parent process must never load torch —
