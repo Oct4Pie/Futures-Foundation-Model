@@ -189,3 +189,8 @@ labels must remain separate from costs.
 
 The representative seam, raw reconstruction and label-index boundary now pass. The remaining list
 must pass at corpus scale before training is authorized.
+
+The separately versioned scale gate, exact outcome-blind root/date matrix, process-safety result and
+remaining calendar blockers are recorded in
+[`CORPUS_V3_SCALE_ADMISSION_PLAN.md`](CORPUS_V3_SCALE_ADMISSION_PLAN.md). The pilot contract is not
+the scale contract and must not be widened in place.

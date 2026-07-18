@@ -249,9 +249,13 @@ verification item is also checked.
   AlphaForge commit `0a955b4` and the independent FFM verifier passed the exact
   `CL/CLK20/2020-04-20` pilot, including reconstruction of all 61,150 rows from two pinned raw
   leaves. This admits only the interoperability seam, not an all-contract run.
-- [ ] Pass the exporter scale-admission tests: multiprocess cold-cache contention, crash recovery
-  around the atomic rename, broader calendar/DST/session coverage, complete source-schema variants,
-  and bounded memory/throughput measurements.
+- [x] Pass exporter process-safety tests on the isolated AlphaForge scale branch: independent-process
+  cold-cache contention, pre-publication verification, hard-death staging cleanup and post-rename
+  warm recovery. Local commit `9f4c4bd`; focused exporter-plus-coverage tests pass 20/20.
+- [ ] Pass the remaining exporter scale-admission tests: broader calendar/DST/session coverage,
+  complete source-schema variants, explicit market-break semantics, effective dates and bounded
+  memory/throughput measurements. See
+  [CORPUS_V3_SCALE_ADMISSION_PLAN.md](CORPUS_V3_SCALE_ADMISSION_PLAN.md).
 - [ ] Freeze a separately versioned corpus-scale contract and materialization manifest. Do not widen
   the successful pilot contract in place.
 - [ ] Produce the sessionized valid-tick liquidity, continuity, roll and gap matrix, then freeze
