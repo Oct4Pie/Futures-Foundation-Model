@@ -5,6 +5,7 @@ implemented, the parent API must fail before data materialization, subprocess cr
 model construction, or optimizer use.  Lower-level training mechanics remain testable only
 when their tests explicitly replace the central blocker; no runtime bypass exists here.
 """
+import ast
 from pathlib import Path
 
 import pytest
@@ -107,3 +108,46 @@ def test_optimizer_call_sites_remain_covered_by_gated_entrypoints():
         assert "block_unadmitted_optimizer(" in (repo / relative).read_text(
             encoding="utf-8"
         )
+
+
+def test_optimizer_bearing_scripts_fail_at_train_entry_before_work():
+    """Every direct Torch training script must put the kill switch first.
+
+    The script inventory is derived from executable optimizer/backward call sites, not
+    maintained as a second route roster.  Requiring the first two ``train`` statements
+    to import and invoke the blocker prevents model, data, checkpoint, or output access
+    from preceding admission.
+    """
+    repo = Path(__file__).resolve().parents[1]
+    scripts = []
+    for path in sorted((repo / "scripts").glob("*.py")):
+        source = path.read_text(encoding="utf-8")
+        if "torch.optim." in source or ".backward(" in source:
+            scripts.append((path, source))
+    assert scripts, "optimizer-bearing script scan unexpectedly found no handlers"
+    for path, source in scripts:
+        tree = ast.parse(source, filename=str(path))
+        train = next(
+            (node for node in tree.body if isinstance(node, ast.FunctionDef)
+             and node.name == "train"),
+            None,
+        )
+        assert train is not None, f"{path.name} has optimizer work without train()"
+        assert len(train.body) >= 2, f"{path.name} train() is malformed"
+        import_stmt, guard_stmt = train.body[:2]
+        assert isinstance(import_stmt, ast.ImportFrom), (
+            f"{path.name} must import the admission blocker first"
+        )
+        assert import_stmt.module == (
+            "futures_foundation.finetune.native_training_routes"
+        )
+        assert [alias.name for alias in import_stmt.names] == [
+            "block_unadmitted_optimizer"
+        ]
+        assert isinstance(guard_stmt, ast.Expr) and isinstance(
+            guard_stmt.value, ast.Call
+        ), f"{path.name} must invoke the admission blocker second"
+        call = guard_stmt.value
+        assert isinstance(call.func, ast.Name) and call.func.id == (
+            "block_unadmitted_optimizer"
+        ), f"{path.name} invokes work before the admission blocker"

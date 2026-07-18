@@ -145,6 +145,8 @@ def _signature(args):
 
 
 def train(args):
+    from futures_foundation.finetune.native_training_routes import block_unadmitted_optimizer
+    block_unadmitted_optimizer("scripts.train_moirai2_tournament.train")
     import torch
     arm = get_arm("moirai2_small")
     require_admission_from_args(

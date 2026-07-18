@@ -200,7 +200,7 @@ verification item is also checked.
 
 ## Gate 6 — full cross-family training, blocked until route admission
 
-- [ ] Re-freeze the roster as 15 arms. The previous 14-arm roster incorrectly conflated the
+- [x] Re-freeze the roster as 15 arms. The previous 14-arm roster incorrectly conflated the
   official TabPFN-TS3 forecast checkpoint with the separate generic TabPFN V3 downstream model.
   Both replacement arms remain blocked on terms, exact local checkpoints and hashes.
 - [x] Independently audit every declared family's actual upstream training methodology and retire
@@ -210,6 +210,23 @@ verification item is also checked.
 - [ ] Replace the v1 free-text profiles with strict architecture route templates, data/session-bound
   route instances, and separately hash-bound pipeline DAGs. A project Stage 1→2→3 pipeline may use
   compatible route nodes, but it is not a native contract shared by all model families.
+- [x] Replace the duplicated v1 training-route/evidence JSON authority with one packaged,
+  non-authorizing 42-route catalog. It references the 15 authoritative inference dossiers by
+  content hash and owns only training semantics. The compatibility facade derives its display
+  from that catalog and admits zero routes.
+- [x] Add semantic mutation tests that reject arm/profile swaps, invented routes and objectives,
+  false provenance/pathways, blocker substitution, license escalation, Kronos cross-tokenizer
+  lineage and dossier tampering. All 17 constructive corruptions are rejected.
+- [x] Replace caller-authored route-instance data digests with one packaged training-data
+  authority reference. It binds the actual Corpus v3 contract by schema, contract ID and content
+  hash while leaving sample, session, expected-request, lifecycle, roll and label bundles
+  explicitly unresolved. The authority is blocked and no route instance can currently exist.
+- [x] Independently anchor that authority by a code-pinned semantic digest. A fresh installed-wheel
+  attack that rewrites both the Corpus contract and its pointer hash before import now fails; the
+  pin duplicates no corpus semantics and deliberately requires code review for authority changes.
+- [x] Gate every currently discovered direct Torch optimizer/backward entrypoint, including all
+  optimizer-bearing scripts, before model/data/checkpoint/output access. The scan is derived from
+  code call sites rather than a duplicated route list.
 - [ ] Add raw route-evidence bundles keyed by arm, track, route, template hash and route-instance
   hash. Require route-specific FP32 smokes, controls, exact next-batch/loss resume and deployment
   parity before any optimizer can be authorized.
@@ -236,6 +253,24 @@ verification item is also checked.
   model training.
 - [ ] **BLOCKED:** generic TabPFN V3 nested downstream support/query control, with all preprocessing
   fit on purged support rows only.
+
+### Gate 6 integration verification
+
+- [x] Complete repository suite after the 15-arm/catalog/facade/schema/data-authority migration:
+  1,212 passed,
+  96 skipped and 8 existing warnings.
+- [x] Build and install the wheel outside the source checkout; the installed package resolved the
+  exact 15-arm registry, 42-route catalog (`e83b59d1…71c`), Corpus v3 parent and blocked training
+  data authority (`5bc2ecbb…528`), and rejected training admission and template materialization.
+- [x] Bind v2 templates to exact catalog routes; self-supplied family/governance maps cannot
+  attest a template.
+- [x] Resolve every route-instance data/session/lifecycle/roll/label reference through its typed
+  authority and enforce one compatible data contract across the complete pipeline DAG. The
+  current authority is deliberately blocked until its six governed inputs exist.
+- [x] Require full parent route keys, template hashes, exact slot/cardinality and arm-compatible
+  lineage on every DAG edge.
+- [ ] Produce route-specific synthetic/non-OOS smoke evidence and obtain two independent approvals
+  before changing any route from blocked.
 
 ## Gate 7 — confirmation and deployment
 

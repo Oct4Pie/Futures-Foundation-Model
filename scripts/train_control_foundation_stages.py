@@ -218,6 +218,8 @@ def _archive_sources(output, args, source):
 
 
 def train(args):
+    from futures_foundation.finetune.native_training_routes import block_unadmitted_optimizer
+    block_unadmitted_optimizer("scripts.train_control_foundation_stages.train")
     import torch
     arm = get_arm(args.family)
     require_admission_from_args(

@@ -11,7 +11,12 @@ import math
 import re
 from typing import Any, Mapping
 
-from .native_contracts import NativeContractError, content_sha256
+from .native_contracts import NativeContractError, content_sha256, load_registry
+from .native_family_route_catalog_v2 import (
+    catalog_sha256,
+    load_family_route_catalog,
+)
+from .native_training_data_authority import resolve_training_data_authority
 
 
 ROUTE_TEMPLATE_SCHEMA = "ffm_native_route_template_v2"
@@ -130,9 +135,6 @@ SMOKE_PROFILE_TAGS = frozenset({
     "continuous_forecast_fp32_v1", "quantile_forecast_fp32_v1",
     "token_forecast_fp32_v1", "tokenizer_fp32_v1", "path_fp32_v1",
     "generative_forecast_fp32_v1", "support_query_v1",
-})
-AMOUNT_SOURCE_TAGS = frozenset({
-    "provider_turnover", "volume_times_mean_ohlc", "not_applicable",
 })
 PIPELINE_ARTIFACT_TAGS = frozenset({
     "vanilla_checkpoint_bundle", "frozen_encoder_bundle", "frozen_tokenizer_bundle",
@@ -338,17 +340,75 @@ def _validate_identity(value: Any) -> Mapping[str, Any]:
     return item
 
 
-def _resolve_hash_mapping(
-    sha256: Any, mapping: Mapping[str, Any] | None, field: str,
-) -> None:
-    digest = _sha(sha256, field)
-    if mapping is None:
-        raise NativeContractError(f"{field} requires an explicit resolved evidence mapping")
-    record = mapping.get(str(digest))
-    if record is None:
-        raise NativeContractError(f"{field} is not present in its resolved evidence mapping")
-    if content_sha256(record) != digest:
-        raise NativeContractError(f"{field} mapping is stale or content-swapped")
+def _route_key(identity: Mapping[str, Any]) -> str:
+    return ":".join((
+        str(identity["arm_key"]), str(identity["track"]), str(identity["route_id"]),
+    ))
+
+
+def _allowed_blocker_tags() -> frozenset[str]:
+    catalog = load_family_route_catalog()
+    return frozenset(UNSUPPORTED_BLOCKER_TAGS).union(
+        blocker
+        for route in catalog["routes"].values()
+        for blocker in route["blocker_tags"]
+    )
+
+
+def _canonical_route_binding(identity: Mapping[str, Any]) -> dict[str, Any]:
+    """Resolve one route only through the canonical catalog and inference registry."""
+    catalog = load_family_route_catalog()
+    registry = load_registry()
+    key = _route_key(identity)
+    route = catalog["routes"].get(key)
+    if not isinstance(route, Mapping):
+        raise NativeContractError(f"route template is not declared by the canonical catalog: {key}")
+    profile_id = route["constraint_profile"]
+    profile = catalog["constraint_profiles"].get(profile_id)
+    dossier = registry["models"].get(identity["arm_key"])
+    if not isinstance(profile, Mapping) or not isinstance(dossier, Mapping):
+        raise NativeContractError(f"canonical route binding is incomplete: {key}")
+    for field in (
+        "arm_key", "track", "route_id", "pathway_kind", "task_kind",
+        "method_provenance",
+    ):
+        if identity[field] != route[field]:
+            raise NativeContractError(
+                f"route template {field} differs from canonical catalog route {key}"
+            )
+    profile_binding = {
+        "catalog_sha256": catalog_sha256(),
+        "route_key": key,
+        "route": route,
+        "constraint_profile_id": profile_id,
+        "constraint_profile": profile,
+    }
+    return {
+        "key": key,
+        "route": route,
+        "profile": profile,
+        "profile_binding_sha256": content_sha256(profile_binding),
+        "dossier": dossier,
+        "dossier_sha256": content_sha256(dossier),
+        "governance_sha256": content_sha256(dossier["license"]),
+    }
+
+
+def canonical_route_profile_sha256(arm_key: str, track: str, route_id: str) -> str:
+    """Return the canonical route/profile binding hash; it conveys no admission."""
+    identity = {
+        "arm_key": arm_key, "track": track, "route_id": route_id,
+        "pathway_kind": "", "method_provenance": "",
+    }
+    catalog = load_family_route_catalog()
+    key = f"{arm_key}:{track}:{route_id}"
+    route = catalog["routes"].get(key)
+    if not isinstance(route, Mapping):
+        raise NativeContractError(f"undeclared canonical catalog route: {key}")
+    identity["pathway_kind"] = route["pathway_kind"]
+    identity["task_kind"] = route["task_kind"]
+    identity["method_provenance"] = route["method_provenance"]
+    return str(_canonical_route_binding(identity)["profile_binding_sha256"])
 
 
 def _validate_base_binding(value: Any, *, status: str) -> None:
@@ -630,33 +690,65 @@ def _validate_optimization(value: Any, *, pathway: str) -> None:
 
 def _validate_lineage(value: Any, *, pathway: str) -> None:
     item = _object(value, {
-        "initialization_tag", "allowed_parent_route_tags", "forbidden_parent_route_tags",
-        "parent_artifact_requirements", "parent_input_slots",
+        "initialization_tag", "parent_bindings", "forbidden_parent_route_keys",
     }, "lineage")
     initialization = _enum(item["initialization_tag"], INITIALIZATION_TAGS,
                            "lineage.initialization_tag")
-    allowed = _string_list(item["allowed_parent_route_tags"],
-                           "lineage.allowed_parent_route_tags", identifiers=True)
-    forbidden = _string_list(item["forbidden_parent_route_tags"],
-                             "lineage.forbidden_parent_route_tags", identifiers=True)
-    if set(allowed) & set(forbidden):
-        raise NativeContractError("lineage allowed and forbidden parents overlap")
-    requirements = _string_list(item["parent_artifact_requirements"],
-                                "lineage.parent_artifact_requirements",
-                                allowed=PIPELINE_ARTIFACT_TAGS)
-    slots = _string_list(
-        item["parent_input_slots"], "lineage.parent_input_slots", identifiers=True,
+    forbidden = _string_list(
+        item["forbidden_parent_route_keys"], "lineage.forbidden_parent_route_keys",
     )
-    has_parent_contract = bool(allowed or requirements or slots)
+    for key in forbidden:
+        parts = key.split(":")
+        if (
+            len(parts) != 3 or not _IDENTIFIER.fullmatch(parts[0])
+            or parts[1] not in TRACKS or not _IDENTIFIER.fullmatch(parts[2])
+        ):
+            raise NativeContractError("lineage forbidden parents must use arm:track:route keys")
+    bindings = item["parent_bindings"]
+    if not isinstance(bindings, list):
+        raise NativeContractError("lineage.parent_bindings must be a list")
+    binding_keys: set[tuple[str, str, str, str]] = set()
+    bound_input_slots: set[str] = set()
+    allowed_route_keys: set[str] = set()
+    for index, raw in enumerate(bindings):
+        binding = _object(raw, {
+            "route_key", "template_sha256", "artifact_tag", "child_input_slot",
+        }, f"lineage.parent_bindings[{index}]")
+        route_key = _string(binding["route_key"], f"lineage.parent_bindings[{index}].route_key")
+        parts = route_key.split(":")
+        if (
+            len(parts) != 3 or not _IDENTIFIER.fullmatch(parts[0])
+            or parts[1] not in TRACKS or not _IDENTIFIER.fullmatch(parts[2])
+        ):
+            raise NativeContractError("lineage parent route must use an arm:track:route key")
+        template_sha = _sha(
+            binding["template_sha256"],
+            f"lineage.parent_bindings[{index}].template_sha256",
+        )
+        artifact = _enum(
+            binding["artifact_tag"], PIPELINE_ARTIFACT_TAGS,
+            f"lineage.parent_bindings[{index}].artifact_tag",
+        )
+        slot = _identifier_value(
+            binding["child_input_slot"],
+            f"lineage.parent_bindings[{index}].child_input_slot",
+        )
+        key = (route_key, str(template_sha), artifact, slot)
+        if key in binding_keys:
+            raise NativeContractError("lineage parent bindings must be unique")
+        if slot in bound_input_slots:
+            raise NativeContractError(
+                "lineage child input slot must have exactly one parent binding"
+            )
+        binding_keys.add(key)
+        bound_input_slots.add(slot)
+        allowed_route_keys.add(route_key)
+    if allowed_route_keys & set(forbidden):
+        raise NativeContractError("lineage allowed and forbidden parents overlap")
+    has_parent_contract = bool(bindings)
     if (initialization == "parent_route_artifact") != has_parent_contract:
         raise NativeContractError(
             "parent-route initialization and artifact requirements must agree"
-        )
-    if initialization == "parent_route_artifact" and not (
-        allowed and requirements and slots
-    ):
-        raise NativeContractError(
-            "parent-route initialization requires parent routes, artifacts, and input slots"
         )
     if pathway == "in_context_fit" and initialization != "support_query_only":
         raise NativeContractError("in-context fit requires support_query_only initialization")
@@ -708,31 +800,61 @@ def _validate_governance(value: Any, *, unsupported: bool = False) -> None:
     _sha(item["terms_evidence_sha256"], "governance.terms_evidence_sha256", nullable=True)
 
 
-def validate_route_template(
-    value: Any, *, family_contracts_by_sha256: Mapping[str, Any] | None = None,
-    governance_evidence_by_sha256: Mapping[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Validate and return an isolated copy of one strict v2 route template."""
+def validate_route_template_candidate(value: Any) -> dict[str, Any]:
+    """Validate a non-authorizing handwritten candidate against catalog identity.
+
+    Candidate validation checks shape and prevents identity/profile/dossier substitution. It does
+    not make handwritten objective or preprocessing sections authoritative; only deterministic
+    materialization from a fully resolved canonical profile can do that.
+    """
     if not isinstance(value, Mapping):
         raise NativeContractError("route template must be an object")
     identity = _validate_identity(value.get("identity"))
+    canonical = _canonical_route_binding(identity)
     pathway = str(identity["pathway_kind"])
     status = _enum(value.get("template_status"), TEMPLATE_STATUSES, "template_status")
     blocker_tags = _string_list(
-        value.get("blocker_tags"), "blocker_tags", allowed=UNSUPPORTED_BLOCKER_TAGS,
+        value.get("blocker_tags"), "blocker_tags", allowed=_allowed_blocker_tags(),
         nonempty=status == "blocked",
     )
     if status == "verified" and blocker_tags:
         raise NativeContractError("verified route templates cannot retain blockers")
     family_contract_sha = value.get("family_contract_sha256")
     governance_evidence_sha = value.get("governance_evidence_sha256")
-    if status == "verified":
-        # Resolution happens below after exact top-level field validation.
-        _sha(family_contract_sha, "family_contract_sha256")
-        _sha(governance_evidence_sha, "governance_evidence_sha256")
-    else:
-        _sha(family_contract_sha, "family_contract_sha256", nullable=True)
-        _sha(governance_evidence_sha, "governance_evidence_sha256", nullable=True)
+    _sha(family_contract_sha, "family_contract_sha256")
+    _sha(governance_evidence_sha, "governance_evidence_sha256")
+    if family_contract_sha != canonical["profile_binding_sha256"]:
+        raise NativeContractError("route template is not bound to its canonical route/profile")
+    if governance_evidence_sha != canonical["governance_sha256"]:
+        raise NativeContractError("route template governance differs from its inference dossier")
+    route = canonical["route"]
+    profile = canonical["profile"]
+    unresolved = sorted(
+        name for name, constraint in profile.items()
+        if constraint["state"] != "resolved"
+    )
+    if status != route["status"] or blocker_tags != route["blocker_tags"]:
+        raise NativeContractError("route template status/blockers differ from canonical catalog")
+    if status == "verified" and (route["status"] != "verified" or unresolved):
+        raise NativeContractError(
+            f"blocked or unresolved catalog route cannot be verified: {canonical['key']}"
+        )
+    dossier = canonical["dossier"]
+    tokenizer = dossier.get("tokenizer") or {}
+    capability = dossier["tracks"].get(identity["track"]) or {}
+    expected_base = {
+        "inference_dossier_sha256": canonical["dossier_sha256"],
+        "inference_evidence_id": capability.get("evidence_id"),
+        "model_revision": dossier.get("model_revision"),
+        "source_revision": dossier.get("source_revision"),
+        "tokenizer_revision": tokenizer.get("revision", "not_applicable"),
+        "processor_revision": "not_applicable",
+    }
+    expected_governance = {
+        "license_id": dossier["license"]["id"],
+        "permitted_use_scopes": route["permitted_use_scopes"],
+        "terms_evidence_sha256": canonical["governance_sha256"],
+    }
     if pathway == "unsupported":
         item = _object(value, {
             "schema_version", "template_status", "blocker_tags", "identity",
@@ -745,6 +867,10 @@ def validate_route_template(
             raise NativeContractError("unsupported routes must remain blocked")
         _validate_base_binding(item["base_binding"], status=status)
         _validate_governance(item["governance"], unsupported=True)
+        if dict(item["base_binding"]) != expected_base:
+            raise NativeContractError("route template base binding differs from inference dossier")
+        if dict(item["governance"]) != expected_governance:
+            raise NativeContractError("route template governance contract is not canonical")
         return deepcopy(dict(item))
 
     item = _object(value, {
@@ -755,16 +881,9 @@ def validate_route_template(
     }, "route template")
     if item["schema_version"] != ROUTE_TEMPLATE_SCHEMA:
         raise NativeContractError(f"route template schema must be {ROUTE_TEMPLATE_SCHEMA!r}")
-    if status == "verified":
-        _resolve_hash_mapping(
-            item["family_contract_sha256"], family_contracts_by_sha256,
-            "family_contract_sha256",
-        )
-        _resolve_hash_mapping(
-            item["governance_evidence_sha256"], governance_evidence_by_sha256,
-            "governance_evidence_sha256",
-        )
     _validate_base_binding(item["base_binding"], status=status)
+    if dict(item["base_binding"]) != expected_base:
+        raise NativeContractError("route template base binding differs from inference dossier")
     context, horizon, parent, layout = _validate_input(item["input"])
     _validate_time(item["time"], horizon=horizon)
     _validate_preprocessing(item["preprocessing"])
@@ -775,6 +894,8 @@ def validate_route_template(
     _validate_resume(item["resume"], pathway=pathway)
     output = _validate_export(item["export"])
     _validate_governance(item["governance"])
+    if dict(item["governance"]) != expected_governance:
+        raise NativeContractError("route template governance contract is not canonical")
     smoke = _enum(item["smoke_profile_tag"], SMOKE_PROFILE_TAGS, "smoke_profile_tag")
     task = str(identity["task_kind"])
     if loss not in _TASK_LOSSES[task]:
@@ -820,14 +941,51 @@ def validate_route_template(
     return deepcopy(dict(item))
 
 
-def route_template_sha256(
-    value: Any, *, family_contracts_by_sha256: Mapping[str, Any] | None = None,
-    governance_evidence_by_sha256: Mapping[str, Any] | None = None,
-) -> str:
-    return content_sha256(validate_route_template(
-        value, family_contracts_by_sha256=family_contracts_by_sha256,
-        governance_evidence_by_sha256=governance_evidence_by_sha256,
-    ))
+def materialize_canonical_route_template(
+    arm_key: str, track: str, route_id: str,
+) -> dict[str, Any]:
+    """Materialize one authoritative template, or fail while its route is unresolved.
+
+    No compiler exists yet because every canonical route remains blocked and at least one exact
+    method field is unresolved. Returning a handwritten approximation here would create a second
+    method authority, so the only correct current behavior is to fail closed.
+    """
+    catalog = load_family_route_catalog()
+    key = f"{arm_key}:{track}:{route_id}"
+    route = catalog["routes"].get(key)
+    if not isinstance(route, Mapping):
+        raise NativeContractError(f"undeclared canonical catalog route: {key}")
+    profile = catalog["constraint_profiles"][route["constraint_profile"]]
+    unresolved = sorted(
+        name for name, constraint in profile.items()
+        if constraint["state"] != "resolved"
+    )
+    if route["status"] != "verified" or unresolved:
+        raise NativeContractError(
+            f"blocked or unresolved catalog route cannot materialize a template: {key}; "
+            f"unresolved={unresolved}"
+        )
+    raise NativeContractError(
+        f"deterministic catalog profile-to-template compiler is not implemented: {key}"
+    )
+
+
+def validate_route_template(value: Any) -> dict[str, Any]:
+    """Validate only an exact deterministic canonical materialization."""
+    candidate = validate_route_template_candidate(value)
+    identity = candidate["identity"]
+    materialized = materialize_canonical_route_template(
+        str(identity["arm_key"]), str(identity["track"]), str(identity["route_id"]),
+    )
+    if candidate != materialized:
+        raise NativeContractError(
+            "route template differs from deterministic canonical materialization"
+        )
+    return candidate
+
+
+def route_template_sha256(value: Any) -> str:
+    return content_sha256(validate_route_template(value))
 
 
 def _instance_payload(value: Mapping[str, Any]) -> dict[str, Any]:
@@ -836,12 +994,10 @@ def _instance_payload(value: Mapping[str, Any]) -> dict[str, Any]:
 
 def validate_route_instance(
     value: Any, *, templates_by_sha256: Mapping[str, Any],
-    family_contracts_by_sha256: Mapping[str, Any],
-    governance_evidence_by_sha256: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Validate an exact template plus governed data-authority binding."""
     item = _object(value, {
-        "schema_version", "template_sha256", "data_binding", "exact_choices",
+        "schema_version", "template_sha256", "data_binding",
         "template_evidence_bundle_sha256", "instance_sha256",
     }, "route instance")
     if item["schema_version"] != ROUTE_INSTANCE_SCHEMA:
@@ -850,58 +1006,21 @@ def validate_route_instance(
     _sha(item["template_evidence_bundle_sha256"],
          "route instance.template_evidence_bundle_sha256")
     data = _object(item["data_binding"], {
-        "corpus_contract_sha256", "sample_manifest_sha256", "split_contract_sha256",
-        "session_denominator_sha256", "expected_request_denominator_sha256",
-        "lifecycle_registry_sha256", "roll_registry_sha256", "label_contract_sha256",
-        "allowed_training_splits", "allowed_validation_splits", "forbidden_splits",
-        "timeframes_minutes",
+        "training_data_authority_id", "training_data_authority_sha256",
     }, "route instance.data_binding")
-    for name in (
-        "corpus_contract_sha256", "sample_manifest_sha256", "split_contract_sha256",
-        "session_denominator_sha256", "expected_request_denominator_sha256",
-        "lifecycle_registry_sha256", "roll_registry_sha256",
-    ):
-        _sha(data[name], f"route instance.data_binding.{name}")
-    _sha(data["label_contract_sha256"],
-         "route instance.data_binding.label_contract_sha256", nullable=True)
-    training = _string_list(data["allowed_training_splits"],
-                            "route instance.data_binding.allowed_training_splits",
-                            allowed=frozenset({"pretrain", "shared_train"}), nonempty=True)
-    validation = _string_list(data["allowed_validation_splits"],
-                              "route instance.data_binding.allowed_validation_splits",
-                              allowed=frozenset({"development"}), nonempty=True)
-    forbidden = _string_list(data["forbidden_splits"],
-                             "route instance.data_binding.forbidden_splits", nonempty=True)
-    required_holdouts = {"legacy_holdout", "prospective_holdout"}
-    if not required_holdouts.issubset(forbidden):
+    authority_id = _string(
+        data["training_data_authority_id"],
+        "route instance.data_binding.training_data_authority_id",
+    )
+    authority_sha = _sha(
+        data["training_data_authority_sha256"],
+        "route instance.data_binding.training_data_authority_sha256",
+    )
+    authority = resolve_training_data_authority(authority_id, authority_sha)
+    if authority["status"] != "verified" or authority["non_authorizing"] is not False:
         raise NativeContractError(
-            "route instance must explicitly forbid legacy_holdout and prospective_holdout"
+            "route instance training data authority is blocked and non-authorizing"
         )
-    if set(training + validation) & set(forbidden):
-        raise NativeContractError("allowed and forbidden route-instance splits overlap")
-    for name in training + validation:
-        lowered = name.lower()
-        if "holdout" in lowered or "oos" in lowered:
-            raise NativeContractError("OOS/holdout split cannot be authorized")
-    frames = data["timeframes_minutes"]
-    if not isinstance(frames, list) or not frames:
-        raise NativeContractError("route instance timeframes must be nonempty")
-    parsed_frames = [
-        _integer(frame, "route instance.data_binding.timeframes_minutes", minimum=1)
-        for frame in frames
-    ]
-    if parsed_frames != sorted(set(parsed_frames)):
-        raise NativeContractError("route instance timeframes must be unique and increasing")
-    choices = _object(item["exact_choices"], {
-        "amount_source_tag", "venue_timezone_registry_sha256",
-        "session_calendar_registry_sha256",
-    }, "route instance.exact_choices")
-    _enum(choices["amount_source_tag"], AMOUNT_SOURCE_TAGS,
-          "route instance.exact_choices.amount_source_tag")
-    _sha(choices["venue_timezone_registry_sha256"],
-         "route instance.exact_choices.venue_timezone_registry_sha256")
-    _sha(choices["session_calendar_registry_sha256"],
-         "route instance.exact_choices.session_calendar_registry_sha256")
     instance_sha = _sha(item["instance_sha256"], "route instance.instance_sha256")
     expected_sha = content_sha256(_instance_payload(item))
     if instance_sha != expected_sha:
@@ -909,14 +1028,8 @@ def validate_route_instance(
     template = templates_by_sha256.get(str(template_sha))
     if template is None:
         raise NativeContractError("route instance references an unknown template")
-    validated_template = validate_route_template(
-        template, family_contracts_by_sha256=family_contracts_by_sha256,
-        governance_evidence_by_sha256=governance_evidence_by_sha256,
-    )
-    if route_template_sha256(
-        validated_template, family_contracts_by_sha256=family_contracts_by_sha256,
-        governance_evidence_by_sha256=governance_evidence_by_sha256,
-    ) != template_sha:
+    validated_template = validate_route_template(template)
+    if route_template_sha256(validated_template) != template_sha:
         raise NativeContractError("route instance template mapping is stale or swapped")
     if validated_template["template_status"] != "verified":
         raise NativeContractError("only verified route templates can have route instances")
@@ -928,8 +1041,6 @@ def validate_route_instance(
 def build_route_instance(
     value_without_instance_sha256: Mapping[str, Any], *,
     templates_by_sha256: Mapping[str, Any],
-    family_contracts_by_sha256: Mapping[str, Any],
-    governance_evidence_by_sha256: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Add the deterministic self-hash, then apply full validation."""
     if "instance_sha256" in value_without_instance_sha256:
@@ -938,16 +1049,12 @@ def build_route_instance(
     value["instance_sha256"] = content_sha256(value)
     return validate_route_instance(
         value, templates_by_sha256=templates_by_sha256,
-        family_contracts_by_sha256=family_contracts_by_sha256,
-        governance_evidence_by_sha256=governance_evidence_by_sha256,
     )
 
 
 def validate_pipeline_dag(
     value: Any, *, instances_by_sha256: Mapping[str, Any],
     templates_by_sha256: Mapping[str, Any],
-    family_contracts_by_sha256: Mapping[str, Any],
-    governance_evidence_by_sha256: Mapping[str, Any],
     artifact_manifests_by_sha256: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Validate exact node closure, edge closure, acyclicity, and the pipeline self-hash."""
@@ -962,6 +1069,8 @@ def validate_pipeline_dag(
         raise NativeContractError("pipeline.nodes must be a nonempty list")
     node_map: dict[str, str] = {}
     node_templates: dict[str, dict[str, Any]] = {}
+    node_template_shas: dict[str, str] = {}
+    pipeline_data_binding: Mapping[str, Any] | None = None
     referenced_template_shas: set[str] = set()
     for index, raw in enumerate(nodes):
         node = _object(raw, {"node_id", "route_instance_sha256"},
@@ -976,19 +1085,20 @@ def validate_pipeline_dag(
             raise NativeContractError("pipeline references an unknown route instance")
         validated = validate_route_instance(
             instance, templates_by_sha256=templates_by_sha256,
-            family_contracts_by_sha256=family_contracts_by_sha256,
-            governance_evidence_by_sha256=governance_evidence_by_sha256,
         )
         if validated["instance_sha256"] != instance_sha:
             raise NativeContractError("pipeline route-instance mapping is stale or swapped")
+        if pipeline_data_binding is None:
+            pipeline_data_binding = validated["data_binding"]
+        elif validated["data_binding"] != pipeline_data_binding:
+            raise NativeContractError(
+                "pipeline nodes must share one exact data_binding contract"
+            )
         node_map[node_id] = str(instance_sha)
         template_sha = str(validated["template_sha256"])
+        node_template_shas[node_id] = template_sha
         referenced_template_shas.add(template_sha)
-        node_templates[node_id] = validate_route_template(
-            templates_by_sha256[template_sha],
-            family_contracts_by_sha256=family_contracts_by_sha256,
-            governance_evidence_by_sha256=governance_evidence_by_sha256,
-        )
+        node_templates[node_id] = validate_route_template(templates_by_sha256[template_sha])
     if set(instances_by_sha256) != set(node_map.values()):
         raise NativeContractError("pipeline instance mapping must have exact node closure")
     if set(templates_by_sha256) != referenced_template_shas:
@@ -998,7 +1108,9 @@ def validate_pipeline_dag(
         raise NativeContractError("pipeline.edges must be a list")
     adjacency = {node_id: set() for node_id in node_map}
     edge_keys: set[tuple[str, str, str, str]] = set()
-    incoming: dict[str, list[dict[str, str]]] = {node: [] for node in node_map}
+    incoming: dict[str, list[tuple[str, str, str, str]]] = {
+        node: [] for node in node_map
+    }
     referenced_manifest_shas: set[str] = set()
     for index, raw in enumerate(edges):
         edge = _object(raw, {
@@ -1047,25 +1159,30 @@ def validate_pipeline_dag(
         if parent_output_slot not in parent_template["export"]["output_slots"]:
             raise NativeContractError("pipeline parent output slot is undeclared")
         lineage = child_template["lineage"]
-        parent_route_id = str(parent_template["identity"]["route_id"])
+        parent_route_key = _route_key(parent_template["identity"])
+        parent_template_sha = node_template_shas[parent]
         if lineage["initialization_tag"] != "parent_route_artifact":
             raise NativeContractError("pipeline child does not declare parent-route initialization")
-        if (
-            parent_route_id not in lineage["allowed_parent_route_tags"]
-            or parent_route_id in lineage["forbidden_parent_route_tags"]
-            or artifact not in lineage["parent_artifact_requirements"]
-            or child_input_slot not in lineage["parent_input_slots"]
-        ):
+        binding = (parent_route_key, parent_template_sha, artifact, child_input_slot)
+        declared = {
+            (
+                item["route_key"], item["template_sha256"], item["artifact_tag"],
+                item["child_input_slot"],
+            )
+            for item in lineage["parent_bindings"]
+        }
+        if parent_route_key in lineage["forbidden_parent_route_keys"] or binding not in declared:
             raise NativeContractError("pipeline edge violates the child lineage contract")
         key = (parent, child, artifact, child_input_slot)
         if key in edge_keys:
             raise NativeContractError("pipeline contains a duplicate edge")
+        if any(item[3] == child_input_slot for item in incoming[child]):
+            raise NativeContractError(
+                "pipeline child input slot must have exactly one incoming edge"
+            )
         edge_keys.add(key)
         adjacency[parent].add(child)
-        incoming[child].append({
-            "parent_route_id": parent_route_id, "artifact_tag": artifact,
-            "child_input_slot": child_input_slot,
-        })
+        incoming[child].append(binding)
     if set(artifact_manifests_by_sha256) != referenced_manifest_shas:
         raise NativeContractError("pipeline artifact-manifest mapping must have exact edge closure")
     indegree = {node: 0 for node in node_map}
@@ -1083,14 +1200,14 @@ def validate_pipeline_dag(
             if degree == 0:
                 raise NativeContractError("parent-initialized pipeline node has no parent edge")
             incoming_items = incoming[node_id]
-            if (
-                {item["parent_route_id"] for item in incoming_items}
-                != set(lineage["allowed_parent_route_tags"])
-                or {item["artifact_tag"] for item in incoming_items}
-                != set(lineage["parent_artifact_requirements"])
-                or {item["child_input_slot"] for item in incoming_items}
-                != set(lineage["parent_input_slots"])
-            ):
+            declared = [
+                (
+                    item["route_key"], item["template_sha256"], item["artifact_tag"],
+                    item["child_input_slot"],
+                )
+                for item in lineage["parent_bindings"]
+            ]
+            if sorted(incoming_items) != sorted(declared):
                 raise NativeContractError("pipeline child parent/artifact/slot closure is not exact")
     queue = [node for node, degree in indegree.items() if degree == 0]
     visited = 0
@@ -1113,8 +1230,6 @@ def validate_pipeline_dag(
 def build_pipeline_dag(
     value_without_pipeline_sha256: Mapping[str, Any], *,
     instances_by_sha256: Mapping[str, Any], templates_by_sha256: Mapping[str, Any],
-    family_contracts_by_sha256: Mapping[str, Any],
-    governance_evidence_by_sha256: Mapping[str, Any],
     artifact_manifests_by_sha256: Mapping[str, Any],
 ) -> dict[str, Any]:
     if "pipeline_sha256" in value_without_pipeline_sha256:
@@ -1124,30 +1239,18 @@ def build_pipeline_dag(
     return validate_pipeline_dag(
         value, instances_by_sha256=instances_by_sha256,
         templates_by_sha256=templates_by_sha256,
-        family_contracts_by_sha256=family_contracts_by_sha256,
-        governance_evidence_by_sha256=governance_evidence_by_sha256,
         artifact_manifests_by_sha256=artifact_manifests_by_sha256,
     )
 
 
 def evidence_key(
-    route_template: Any, route_instance: Any, *,
-    family_contracts_by_sha256: Mapping[str, Any],
-    governance_evidence_by_sha256: Mapping[str, Any],
+    route_template: Any, route_instance: Any,
 ) -> str:
     """Return the canonical evidence key for one exact method/data combination."""
-    template = validate_route_template(
-        route_template, family_contracts_by_sha256=family_contracts_by_sha256,
-        governance_evidence_by_sha256=governance_evidence_by_sha256,
-    )
-    template_sha = route_template_sha256(
-        template, family_contracts_by_sha256=family_contracts_by_sha256,
-        governance_evidence_by_sha256=governance_evidence_by_sha256,
-    )
+    template = validate_route_template(route_template)
+    template_sha = route_template_sha256(template)
     instance = validate_route_instance(
         route_instance, templates_by_sha256={template_sha: template},
-        family_contracts_by_sha256=family_contracts_by_sha256,
-        governance_evidence_by_sha256=governance_evidence_by_sha256,
     )
     identity = template["identity"]
     return ":".join((

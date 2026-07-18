@@ -680,8 +680,9 @@ def score(args):
         row["delta_vs_vanilla"] = delta
 
     expected = {}
-    all_arms = tuple(EXTRACTORS) + ("sundial_base", "tabpfn_ts")
-    for arm in all_arms:
+    # Coverage follows the authoritative roster. Extractor availability is a separate
+    # capability and must not silently remove a blocked or unsupported arm from reporting.
+    for arm in ARMS:
         expected[arm] = {}
         for stage in ("stage1", "stage2", "stage3"):
             key = f"{arm}:{stage}"
@@ -691,7 +692,7 @@ def score(args):
                           if "_diagnostic.pt" in checkpoint else "complete")
             elif arm == "sundial_base":
                 status = "blocked_nonfinite_native_hidden_states"
-            elif arm == "tabpfn_ts":
+            elif arm in {"tabpfn_ts3_forecast", "tabpfn_v3_downstream"}:
                 status = "not_applicable_in_context_model"
             else:
                 status = "missing_checkpoint_or_embedding"

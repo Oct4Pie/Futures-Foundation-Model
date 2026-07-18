@@ -4,7 +4,10 @@ This checklist is governed by
 [FOUNDATION_MODEL_NATIVE_CONTRACT_PLAN.md](FOUNDATION_MODEL_NATIVE_CONTRACT_PLAN.md). No training or
 new ranking is authorized until the relevant admission items pass.
 
-## Hardened native F/R evidence checkpoint — 2026-07-17 PDT / 2026-07-18 UTC
+## Historical native F/R evidence checkpoint — 2026-07-17 PDT / 2026-07-18 UTC
+
+This checkpoint predates the mandatory 15-arm TabPFN identity split. Its bundles remain historical
+technical evidence, but its registry-bound reports do not authorize the refrozen registry.
 
 - Methodology source: `8e2bd47d8fd6dc333dfa74ad0eea3d3613e63469`.
 - Registry content SHA-256: `6134f06aa223671f521099f35332dab23a240fc3db7cd9a6a3b18650b06fa233`.
@@ -157,11 +160,19 @@ new ranking is authorized until the relevant admission items pass.
 - [x] Keep hidden states and tuning excluded in the executable registry and legacy gates.
 - [ ] Obtain independent dossier approval.
 
-### TabPFN-TS
+### TabPFN-TS3 forecast
 
 - [ ] Pin package/model/license revisions.
 - [x] Prove support sets remain inside each training fold.
-- [x] Define in-context forecast and downstream-control roles only.
+- [x] Separate the in-context forecast identity from generic TabPFN downstream fitting.
+- [ ] Obtain the gated checkpoint, accept its terms and verify native forecast outputs.
+- [ ] Obtain independent dossier approval.
+
+### TabPFN V3 downstream
+
+- [ ] Pin the exact generic model, source, package and license revisions.
+- [x] Prove support sets remain inside each training fold.
+- [x] Keep this identity out of persistent encoder/SSL training.
 - [ ] Obtain independent dossier approval.
 
 ## Phase 2 — shared contract harness
@@ -200,6 +211,21 @@ new ranking is authorized until the relevant admission items pass.
   The executable-code binding uses a stable package/script source manifest rather than Git HEAD.
 - [x] Restrict operational consumers to a clean source checkout. Wheel installs may inspect the
   canonical archive but cannot authorize model execution in this phase.
+
+## Phase 2B — training-route authority
+
+- [x] Refreeze the inference roster as 15 arms and split TabPFN forecast/downstream identities.
+- [x] Install one packaged, declarative 42-route/29-profile training catalog bound to inference
+  dossiers by content hash; remove duplicated model/license pins from training semantics.
+- [x] Delete the v1 free-text route/evidence JSON authority and retain only an always-blocked,
+  catalog-derived compatibility facade.
+- [x] Reject the 17 demonstrated coherent semantic corruptions.
+- [x] Gate every discovered direct Torch optimizer/backward script before model or data access.
+- [x] Install a minimal blocked training-data authority bound to the Corpus v3 contract. Remove
+  arbitrary digest bags from route instances; unresolved materialized data dependencies remain
+  explicit blockers rather than placeholder hashes.
+- [ ] Bind strict route templates to exact resolved catalog routes and authoritative data contracts.
+- [ ] Admit route-specific synthetic smoke, exact-resume and export evidence.
 
 ## Phase 3 — data and label contract
 

@@ -102,6 +102,8 @@ def _archive_sources(output):
 
 
 def train(args):
+    from futures_foundation.finetune.native_training_routes import block_unadmitted_optimizer
+    block_unadmitted_optimizer("scripts.train_ttm_contrastive.train")
     import torch
     arm = get_arm("ttm_r2")
     require_admission_from_args(

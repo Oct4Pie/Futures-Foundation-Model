@@ -218,59 +218,6 @@ def _admitted_registry(tmp_path, arm_key="kronos_small", track="F"):
     return path, registry, private_keys
 
 
-def _copy_training_route_contracts(registry_path: Path):
-    from futures_foundation.finetune import native_training_routes
-
-    registry_path.with_name("native_training_routes.json").write_bytes(
-        native_training_routes.route_registry_path(REGISTRY_PATH).read_bytes()
-    )
-    registry_path.with_name("native_training_route_evidence.json").write_bytes(
-        native_training_routes.route_evidence_path(REGISTRY_PATH).read_bytes()
-    )
-    native_training_routes.load_route_registry.cache_clear()
-    native_training_routes.load_route_evidence.cache_clear()
-
-
-def _admit_training_route(registry_path: Path, key: str):
-    from futures_foundation.finetune import native_training_routes
-
-    _copy_training_route_contracts(registry_path)
-    route_path = registry_path.with_name("native_training_routes.json")
-    evidence_path = registry_path.with_name("native_training_route_evidence.json")
-    routes = json.loads(route_path.read_text(encoding="utf-8"))
-    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
-    source = {"kind": "git_commit", "revision": "a" * 40}
-    routes["training_methodology_source"] = source
-    route = routes["routes"][key]
-    route["status"] = "admitted"
-    evidence_id = f"{key}:fixture"
-    route["evidence_id"] = evidence_id
-    evidence["training_methodology_source"] = source
-    evidence["records"] = {
-        evidence_id: {
-            "arm_key": route["arm_key"],
-            "track": route["track"],
-            "route_id": route["route_id"],
-            "route_key": key,
-            "route_sha256": native_contracts.content_sha256(route),
-            "status": "pass",
-            "checks": {
-                name: {"status": "pass", "evidence": f"fixture:{name}"}
-                for name in native_training_routes.TRAINING_CHECKS
-            },
-            "environment": {"python": "fixture", "dtype": "float32"},
-            "artifacts": {"trainer": {"sha256": "b" * 64}},
-            "reason": "synthetic admitted-route fixture",
-        }
-    }
-    evidence["route_registry_sha256"] = native_contracts.content_sha256(routes)
-    route_path.write_text(json.dumps(routes), encoding="utf-8")
-    evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
-    native_training_routes.load_route_registry.cache_clear()
-    native_training_routes.load_route_evidence.cache_clear()
-    return route["route_id"]
-
-
 def test_registry_resolution_uses_installed_fallback_when_source_is_absent(tmp_path):
     missing = tmp_path / "missing.json"
     installed = tmp_path / "installed" / "native_contracts.json"
@@ -316,7 +263,6 @@ def test_training_gate_rejects_previous_null_and_flat_custom_false_admissions(
     tmp_path, monkeypatch
 ):
     registry_path, registry, private_keys = _admitted_registry(tmp_path)
-    _copy_training_route_contracts(registry_path)
     artifacts = _runtime_artifacts(tmp_path, monkeypatch)
     report = _signed_report(
         registry_path=registry_path,
@@ -325,7 +271,7 @@ def test_training_gate_rejects_previous_null_and_flat_custom_false_admissions(
         private_keys=private_keys,
     )
 
-    with pytest.raises(NativeContractError, match="requires a non-null route"):
+    with pytest.raises(NativeContractError, match="v1 route/evidence authority was retired"):
         verify_admission_report(
             report,
             arm_key="kronos_small",
@@ -334,7 +280,7 @@ def test_training_gate_rejects_previous_null_and_flat_custom_false_admissions(
             require_training=True,
             path=registry_path,
         )
-    with pytest.raises(NativeContractError, match="undeclared training route"):
+    with pytest.raises(NativeContractError, match="v1 route/evidence authority was retired"):
         verify_admission_report(
             report,
             arm_key="kronos_small",
@@ -343,7 +289,7 @@ def test_training_gate_rejects_previous_null_and_flat_custom_false_admissions(
             require_training=True,
             path=registry_path,
         )
-    with pytest.raises(NativeContractError, match="is blocked"):
+    with pytest.raises(NativeContractError, match="v1 route/evidence authority was retired"):
         verify_admission_report(
             report,
             arm_key="kronos_small",
@@ -358,15 +304,12 @@ def test_phase_a_rejects_self_authored_route_before_training_report_build(tmp_pa
     registry_path, registry, _ = _admitted_registry(
         tmp_path, arm_key="moment_small", track="R"
     )
-    route = _admit_training_route(
-        registry_path, "moment_small:C:classification"
-    )
     environment = {**_measured_test_environment(), "use_scope": "production"}
-    with pytest.raises(NativeContractError, match="Phase A forbids nonblocked"):
+    with pytest.raises(NativeContractError, match="v1 route/evidence authority was retired"):
         build_admission_request(
             arm_key="moment_small", track="C", status="admitted",
             checks=_all_passing_checks(registry), environment=environment,
-            route=route,
+            route="classification_head_only",
             require_training=True,
             artifacts={}, created_utc="2026-07-17T00:00:00Z", path=registry_path,
         )

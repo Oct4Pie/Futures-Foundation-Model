@@ -766,12 +766,10 @@ def _arm_from_dossier(
     # Only independently admitted production routes are exposed as executable adaptation.
     from . import native_training_routes
 
-    training_registry_path = native_training_routes.route_registry_path(path)
-    admitted_routes = (
-        native_training_routes.admitted_routes_for_arm(key, path)
-        if training_registry_path.is_file()
-        else ()
-    )
+    # The v2 family-route catalog is the sole training-route inventory.  Its legacy
+    # facade is deliberately non-authorizing, so no parallel JSON registry or file
+    # existence check may influence executable adaptation.
+    admitted_routes = native_training_routes.admitted_routes_for_arm(key, path)
     routes = tuple(str(route["route_id"]) for route in admitted_routes)
     return FoundationArm(
         key=key,

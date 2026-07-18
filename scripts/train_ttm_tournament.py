@@ -166,6 +166,8 @@ def _load_model(args, *, source=None):
 
 
 def train(args):
+    from futures_foundation.finetune.native_training_routes import block_unadmitted_optimizer
+    block_unadmitted_optimizer("scripts.train_ttm_tournament.train")
     import torch
     arm = validate_identity(
         "ttm_r2", model_id=args.model_id, model_revision=args.model_revision,

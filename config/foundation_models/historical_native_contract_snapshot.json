@@ -4,7 +4,7 @@
     "artifact_directory_count": 12,
     "indexed_model_count": 11,
     "native_ranking_eligible_count": 0,
-    "registered_model_count": 14
+    "registered_model_count": 15
   },
   "evidence_sha256": "88c0d1c594747668d57354a900ffa42a3e90ceec89be0daa8bacd7f072003d2a",
   "methodology": "Historical scores remain evidence under their exact adapter contracts. No row in this snapshot is eligible for a native cross-family ranking.",
@@ -119,14 +119,25 @@
       "shared_validation_present": false,
       "status": "blocked"
     },
-    "tabpfn_ts": {
+    "tabpfn_ts3_forecast": {
+      "artifact_directory": null,
+      "artifact_file_count": 0,
+      "complete_chain_claim": null,
+      "historical_key": "tabpfn_ts3_forecast",
+      "index_present": false,
+      "native_ranking_eligible": false,
+      "reason": "forecast_control_not_a_staged_encoder_arm_and_terms_checkpoint_parity_unresolved",
+      "shared_validation_present": false,
+      "status": "blocked"
+    },
+    "tabpfn_v3_downstream": {
       "artifact_directory": null,
       "artifact_file_count": 0,
       "complete_chain_claim": null,
       "historical_key": "tabpfn_ts",
       "index_present": false,
       "native_ranking_eligible": false,
-      "reason": "downstream_only_control_not_a_staged_encoder_arm",
+      "reason": "downstream_only_control_not_a_staged_encoder_arm_and_identity_terms_unresolved",
       "shared_validation_present": false,
       "status": "blocked"
     },
@@ -164,7 +175,7 @@
       "status": "invalid_contract"
     }
   },
-  "registry_sha256": "6134f06aa223671f521099f35332dab23a240fc3db7cd9a6a3b18650b06fa233",
+  "registry_sha256": "b8a597990ce330043601a6d3668dfcaa41ff9eb19c110186e322b545c3931216",
   "schema_version": "ffm_historical_native_contract_snapshot_v1",
   "source_index": {
     "created_utc": "2026-07-16T03:06:39.661324+00:00",

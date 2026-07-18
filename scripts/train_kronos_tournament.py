@@ -180,6 +180,8 @@ def _predictor_loss(predictor, tokenizer, values, stamps):
 
 
 def train(args):
+    from futures_foundation.finetune.native_training_routes import block_unadmitted_optimizer
+    block_unadmitted_optimizer("scripts.train_kronos_tournament.train")
     import torch
     arm = validate_identity(
         args.arm,

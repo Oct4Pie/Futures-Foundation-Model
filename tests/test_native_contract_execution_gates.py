@@ -63,7 +63,7 @@ def test_control_trainer_fails_before_source_or_data(monkeypatch):
         "load_adaptation_data",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("data touched")),
     )
-    with pytest.raises(NativeContractError, match="blocked without --admission-report"):
+    with pytest.raises(NativeContractError, match="optimizer entrypoint"):
         train_control_foundation_stages.train(SimpleNamespace(family="toto2_22m"))
 
 

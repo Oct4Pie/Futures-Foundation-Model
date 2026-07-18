@@ -71,10 +71,12 @@ become valid merely because a different native track now passes.
 | `moirai2_small` | complete | CC-BY-NC-4.0 | **research only** | unsupported | blocked | none; noncommercial report + approvals required |
 | `toto2_22m` | complete | Apache-2.0 | **native valid** | unsupported | blocked | none; report + 2 approvals required |
 | `sundial_base` | complete | Apache-2.0 | **native valid** | explicitly excluded | blocked | none; isolated-env report + approvals required |
-| `tabpfn_ts` | incomplete artifact pin | separate model terms unresolved | unsupported | unsupported | **D blocked** | impossible until terms and checkpoint are available |
+| `tabpfn_ts3_forecast` | incomplete artifact pin | separate model terms unresolved | blocked | unsupported | blocked | impossible until terms and checkpoint are available |
+| `tabpfn_v3_downstream` | identity and artifact unresolved | separate model terms unresolved | unsupported | unsupported | **D blocked** | impossible until identity, terms and checkpoint are available |
 
 Totals: 12 unrestricted arms have at least one technically valid native track, Moirai has one
-research-only native track, and TabPFN-TS remains externally blocked. No arm is training-admitted.
+research-only native track, and both separate TabPFN arms remain externally blocked. No arm is
+training-admitted.
 No arm is operationally authorized without a current independently approved report.
 
 ## Evidence-covered runtime surfaces
@@ -169,13 +171,13 @@ Only seeded forecast sampling in the isolated pinned environment is technically 
 contract covers 20 samples at 512×16 in FP32. Hidden-state extraction and persistent training remain
 excluded because prior hidden outputs were non-finite.
 
-### TabPFN-TS
+### TabPFN-TS3 forecast and TabPFN V3 downstream
 
-The code role is repaired to downstream in-context control only, with an executable fold-containment
-guard that forbids support rows after the training-fold boundary and query rows at or before it.
-Technical admission cannot proceed because the TabPFN-TS-3 checkpoint is not locally available, its
-exact artifact hash is unresolved, and the separate model terms have not been accepted. It is not an
-SSL encoder and never joins universal staged pretraining.
+These are distinct identities. The TS3 arm is an in-context time-series forecast control; the
+generic V3 arm is a nested downstream support/query control. The fold-containment guard forbids
+support rows after the training-fold boundary and query rows at or before it. Neither can proceed:
+TS3 lacks its gated checkpoint hash and accepted terms, while generic V3 also lacks a pinned model
+and source identity. Neither is an SSL encoder or joins universal staged pretraining.
 
 ## Admission invariants
 

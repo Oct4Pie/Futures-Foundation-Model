@@ -90,6 +90,8 @@ def _archive(output):
 
 
 def train(args):
+    from futures_foundation.finetune.native_training_routes import block_unadmitted_optimizer
+    block_unadmitted_optimizer("scripts.train_timesfm_contrastive.train")
     import torch
     from peft import set_peft_model_state_dict
     arm = get_arm("timesfm25")

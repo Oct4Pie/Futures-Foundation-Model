@@ -100,6 +100,8 @@ def _archive_sources(output):
 
 
 def train(args):
+    from futures_foundation.finetune.native_training_routes import block_unadmitted_optimizer
+    block_unadmitted_optimizer("scripts.train_moirai2_contrastive.train")
     import torch
     arm = get_arm("moirai2_small")
     require_admission_from_args(

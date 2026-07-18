@@ -26,8 +26,8 @@ setup(
         ("config/foundation_models", [
             "config/foundation_models/native_contracts.json",
             "config/foundation_models/native_contract_evidence.json",
-            "config/foundation_models/native_training_routes.json",
-            "config/foundation_models/native_training_route_evidence.json",
+            "config/foundation_models/native_family_route_catalog_v2.json",
+            "config/foundation_models/native_training_data_authority_v1.json",
             "config/foundation_models/trusted_approvers.json",
             "config/foundation_models/historical_native_contract_snapshot.json",
         ]),

@@ -17,7 +17,11 @@
 > of truth are
 > [`config/foundation_models/native_contracts.json`](config/foundation_models/native_contracts.json)
 > and
-> [`config/foundation_models/native_contract_evidence.json`](config/foundation_models/native_contract_evidence.json).
+> [`config/foundation_models/native_contract_evidence.json`](config/foundation_models/native_contract_evidence.json)
+> for inference identity/capability, plus
+> [`config/foundation_models/native_family_route_catalog_v2.json`](config/foundation_models/native_family_route_catalog_v2.json)
+> as the sole, currently non-authorizing source of training-route semantics. Model pins and
+> licenses are not duplicated in the training catalog; they are bound by inference-dossier hash.
 > The downstream trading/data policy remains in
 > [FUTURES_TRADING_FOUNDATION_PLAN.md](FUTURES_TRADING_FOUNDATION_PLAN.md) and
 > [FUTURES_TRADING_TASKS.md](FUTURES_TRADING_TASKS.md). README stage descriptions below are
@@ -137,7 +141,7 @@ The cross-family tournament uses one locked calendar and exposure budget:
 
 Native losses select hyperparameters only within one family; they are never put on a cross-model leaderboard. Forecast models are compared on the same immutable 512-bar contexts and 16-bar futures. Representation models are compared with the same purged expanding walk-forward linear probes. Joint-OHLCV and channel-independent arms are labeled separately.
 
-`scripts/audit_foundation_tournament.py` fails on date, exposure, stream, checkpoint, or source-attestation drift. `scripts/build_foundation_validation_windows.py` creates the immutable validation artifact; model adapters emit fingerprint-bound predictions; `scripts/score_foundation_forecasts.py` scores them against persistence. The native-contract registry has locally reproduced, real-checkpoint forecast or official-representation tracks for 12 unrestricted arms plus a research-only Moirai forecast track. Their canonical raw parity archive is reopened and hash-verified before an admission report can authorize execution. This is synthetic-fixture technical parity, not forecast quality, classification quality, training admission, or portable environment reproduction. TabPFN-TS remains blocked on separate model terms and an unavailable checkpoint. No arm is operationally authorized without a current evidence-bound report and two independently authenticated approvals, and no arm is training-admitted. Historical Toto Stage 1/2/3 artifacts remain unsupported custom adaptation rather than native Toto training.
+`scripts/audit_foundation_tournament.py` fails on date, exposure, stream, checkpoint, or source-attestation drift. `scripts/build_foundation_validation_windows.py` creates the immutable validation artifact; model adapters emit fingerprint-bound predictions; `scripts/score_foundation_forecasts.py` scores them against persistence. The native-contract registry has locally reproduced, real-checkpoint forecast or official-representation tracks for 12 unrestricted arms plus a research-only Moirai forecast track. Their canonical raw parity archive is reopened and hash-verified before an admission report can authorize execution. This is synthetic-fixture technical parity, not forecast quality, classification quality, training admission, or portable environment reproduction. TabPFN-TS3 forecasting and generic TabPFN V3 downstream fitting are separate blocked arms; both still lack accepted terms and exact checkpoint/output evidence. No arm is operationally authorized without a current evidence-bound report and two independently authenticated approvals, and no arm is training-admitted. Historical Toto Stage 1/2/3 artifacts remain unsupported custom adaptation rather than native Toto training.
 
 The exclusion is valid for this tournament's code path, but it does not make previously examined 2025–2026 project history globally untouched again. A final deployment claim still requires subsequently arriving data that has never influenced model or experiment selection.
 

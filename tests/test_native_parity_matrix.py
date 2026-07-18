@@ -36,7 +36,7 @@ def test_registry_matrix_covers_every_admitted_native_track_including_chronos_r(
         ("chronos_bolt", "F"), ("chronos_bolt", "R"),
         ("chronos_v2", "F"), ("chronos_v2", "R"),
     }.issubset(pairs)
-    assert not any(arm == "tabpfn_ts" for arm, _ in pairs)
+    assert not any(arm.startswith("tabpfn_") for arm, _ in pairs)
 
 
 def test_offline_snapshot_resolution_requires_one_exact_materialized_commit(tmp_path):

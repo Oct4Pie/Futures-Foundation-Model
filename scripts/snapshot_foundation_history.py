@@ -22,7 +22,12 @@ from futures_foundation.finetune.native_contracts import (
 
 
 SCHEMA = "ffm_historical_native_contract_snapshot_v1"
-HISTORICAL_ALIASES = {"moment": "moment_small"}
+HISTORICAL_ALIASES = {
+    "moment": "moment_small",
+    # The historical combined arm was used as the downstream in-context control. The
+    # new TS3 forecast arm is a distinct identity and must not inherit those artifacts.
+    "tabpfn_ts": "tabpfn_v3_downstream",
+}
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 

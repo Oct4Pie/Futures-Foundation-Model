@@ -95,7 +95,8 @@ transfer, `B` is the project-specific supervised barrier task, and `D` is downst
 | Moirai-2 Small | research only | — | blocked | blocked | Packed native forecast, noncommercial only |
 | Toto-2 22M | native valid | — | blocked | blocked | Zero-shot forecast only |
 | Sundial Base | native valid | excluded | blocked | blocked | Isolated forecast-only environment |
-| TabPFN-TS | — | — | — | D blocked | Fold guard repaired; model terms/artifact unavailable |
+| TabPFN-TS3 forecast | blocked | — | — | — | Separate forecast checkpoint; terms/artifact unavailable |
+| TabPFN V3 downstream | — | — | — | D blocked | Fold guard repaired; identity/terms/artifact unavailable |
 
 A technically valid cell still requires a current evidence-bound report and two independent
 approvals before execution. Every custom/adaptation cell remains blocked until its own evidence
@@ -333,10 +334,11 @@ resource feasibility. It is excluded from every ranking and may not select econo
 - Admit only finite official forecast samples with normalization/inverse-transform parity.
 - Exclude hidden-state and trained-stage arms.
 
-### TabPFN-TS
+### TabPFN-TS3 forecast and TabPFN V3 downstream
 
 - Keep the support set entirely inside each training fold.
-- Use only as a nested in-context forecast/downstream control.
+- Keep the forecast checkpoint and generic downstream checkpoint as separate identities.
+- Use only as nested in-context controls; neither participates in persistent SSL training.
 
 ## Data and label contract
 

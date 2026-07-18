@@ -105,6 +105,8 @@ def _load_parent(path, candidate, model):
 
 
 def train(args):
+    from futures_foundation.finetune.native_training_routes import block_unadmitted_optimizer
+    block_unadmitted_optimizer("scripts.train_chronos_contrastive.train")
     import torch
     if args.family not in CANDIDATES:
         raise ValueError(f"unsupported Chronos family: {args.family}")

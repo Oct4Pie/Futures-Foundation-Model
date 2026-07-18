@@ -80,6 +80,8 @@ def _encode_half(predictor, tokenizer, values, stamps, projector):
 
 
 def train(args):
+    from futures_foundation.finetune.native_training_routes import block_unadmitted_optimizer
+    block_unadmitted_optimizer("scripts.train_kronos_contrastive.train")
     import torch
     arm = validate_identity(
         args.arm,

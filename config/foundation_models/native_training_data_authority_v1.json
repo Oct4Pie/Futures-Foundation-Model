@@ -1,0 +1,51 @@
+{
+  "authority_id": "corpus_v3_native_training_data_v1",
+  "blocker_tags": [
+    "expected_request_denominator_unresolved",
+    "label_bundle_unresolved",
+    "lifecycle_registry_unresolved",
+    "roll_registry_unresolved",
+    "sample_manifest_unresolved",
+    "session_denominator_unresolved"
+  ],
+  "corpus_contract_ref": {
+    "content_sha256": "e14f370f3c79b1ea7292f3ccd0f47f1f83800e8ea29820bcacd794554d6f131b",
+    "contract_id": "corpus_v3_sierra_ticks_pre2026_v1",
+    "schema_version": "ffm_corpus_v3_contract_v1"
+  },
+  "non_authorizing": true,
+  "schema_version": "ffm_native_training_data_authority_v1",
+  "status": "blocked",
+  "unresolved_bindings": {
+    "expected_request_denominator": {
+      "blocker_tag": "expected_request_denominator_unresolved",
+      "state": "unresolved",
+      "value": null
+    },
+    "label_bundle": {
+      "blocker_tag": "label_bundle_unresolved",
+      "state": "unresolved",
+      "value": null
+    },
+    "lifecycle_registry": {
+      "blocker_tag": "lifecycle_registry_unresolved",
+      "state": "unresolved",
+      "value": null
+    },
+    "roll_registry": {
+      "blocker_tag": "roll_registry_unresolved",
+      "state": "unresolved",
+      "value": null
+    },
+    "sample_manifest": {
+      "blocker_tag": "sample_manifest_unresolved",
+      "state": "unresolved",
+      "value": null
+    },
+    "session_denominator": {
+      "blocker_tag": "session_denominator_unresolved",
+      "state": "unresolved",
+      "value": null
+    }
+  }
+}

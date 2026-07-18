@@ -383,8 +383,8 @@
         "D": {"status": "blocked", "reason": "not_a_downstream_only_model"}
       }
     },
-    "tabpfn_ts": {
-      "family": "tabpfn_ts",
+    "tabpfn_ts3_forecast": {
+      "family": "tabpfn_ts3",
       "model_id": "tabpfn-v3-regressor-v3_20260506_timeseries.ckpt",
       "model_revision": "license_gated_unresolved_sha256",
       "source_url": "https://github.com/PriorLabs/tabpfn-time-series.git",
@@ -394,18 +394,43 @@
       "license": {"id": "Apache-2.0/model-terms", "deployment": "blocked_until_terms_and_version_verified"},
       "pin_complete": false,
       "overall_status": "blocked",
-      "role": "nested_downstream_in_context_control",
-      "ohlcv_mode": "decomposed_univariate_or_tabular_support_set",
+      "role": "support_query_timeseries_forecast_control",
+      "ohlcv_mode": "support_query_timeseries_rows",
       "native_context": {"minimum": null, "maximum": null, "selection": "support_set_inside_training_fold"},
       "native_preprocessing": "nested_support_set_fit_inside_each_training_fold",
-      "official_outputs": {"forecast": "in_context_control", "representation": null},
+      "official_outputs": {"forecast": "support_query_forecast", "representation": null},
       "adaptation_routes": [],
       "tracks": {
-        "F": {"status": "blocked", "reason": "control_only_not_native_persistent_forecast_training"},
+        "F": {"status": "blocked", "reason": "terms_unaccepted_and_exact_checkpoint_hash_and_native_output_parity_unavailable"},
         "R": {"status": "blocked", "reason": "no_official_representation_contract"},
         "C": {"status": "blocked", "reason": "not_applicable"},
+        "B": {"status": "blocked", "reason": "not_a_barrier_model"},
+        "D": {"status": "blocked", "reason": "separate_downstream_identity_required"}
+      }
+    },
+    "tabpfn_v3_downstream": {
+      "family": "tabpfn_v3",
+      "model_id": "unresolved_tabpfn_v3_downstream_checkpoint",
+      "model_revision": "unresolved_checkpoint_revision",
+      "source_url": "unresolved_until_exact_tabpfn_v3_source_is_evidenced",
+      "source_revision": "unresolved_source_revision",
+      "package": {"name": "tabpfn", "version": "unresolved"},
+      "tokenizer": null,
+      "license": {"id": "Apache-2.0/model-terms", "deployment": "blocked_until_terms_and_version_verified"},
+      "pin_complete": false,
+      "overall_status": "blocked",
+      "role": "nested_downstream_in_context_control",
+      "ohlcv_mode": "tabular_support_query_rows",
+      "native_context": {"minimum": null, "maximum": null, "selection": "support_set_inside_training_fold"},
+      "native_preprocessing": "nested_support_set_fit_inside_each_training_fold",
+      "official_outputs": {"forecast": null, "representation": null, "downstream": "support_query_prediction"},
+      "adaptation_routes": [],
+      "tracks": {
+        "F": {"status": "blocked", "reason": "separate_timeseries_forecast_identity_required"},
+        "R": {"status": "blocked", "reason": "no_official_representation_contract"},
+        "C": {"status": "blocked", "reason": "not_a_persistent_classifier_training_route"},
         "B": {"status": "blocked", "reason": "downstream_control_only"},
-        "D": {"status": "blocked", "reason": "fold-containment guard is repaired, but local TabPFN-TS-3 terms, artifact hash, and native output parity remain unavailable", "evidence_id": "tabpfn_ts:D:2026-07-18"}
+        "D": {"status": "blocked", "reason": "terms_unaccepted_and_exact_model_identity_checkpoint_hash_and_native_output_parity_unavailable"}
       }
     }
   },
@@ -462,9 +487,13 @@
       "default_status": "research_only",
       "reason": "CC-BY-NC_weights_and_custom_token_pooling_prohibit_deployment_native_representation_claims"
     },
-    "tabpfn_ts": {
+    "tabpfn_ts3_forecast": {
       "default_status": "blocked",
-      "reason": "downstream_only_control_not_a_staged_encoder_arm"
+      "reason": "forecast_control_not_a_staged_encoder_arm_and_terms_checkpoint_parity_unresolved"
+    },
+    "tabpfn_v3_downstream": {
+      "default_status": "blocked",
+      "reason": "downstream_only_control_not_a_staged_encoder_arm_and_identity_terms_unresolved"
     }
   }
 }

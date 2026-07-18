@@ -1,0 +1,3315 @@
+{
+  "arms": {
+    "chronos_bolt": {
+      "dossier_ref": {
+        "arm_key": "chronos_bolt",
+        "content_sha256": "3510de059de16e19d6a71f5e0b851654021782da3c908ce20e78b14293bd6499",
+        "registry_schema": "ffm_native_contract_registry_v1"
+      },
+      "status": "blocked"
+    },
+    "chronos_v1": {
+      "dossier_ref": {
+        "arm_key": "chronos_v1",
+        "content_sha256": "a55216ac17d5fe7b0e00fff541b0e5fa1ef05a8b53f8e2ab69bcb165db01a7e0",
+        "registry_schema": "ffm_native_contract_registry_v1"
+      },
+      "status": "blocked"
+    },
+    "chronos_v2": {
+      "dossier_ref": {
+        "arm_key": "chronos_v2",
+        "content_sha256": "8187d4f1833170ad7f241b4298545e284c52b28a21bfc1fdf3ccdc96ae7d2642",
+        "registry_schema": "ffm_native_contract_registry_v1"
+      },
+      "status": "blocked"
+    },
+    "kronos_mini": {
+      "dossier_ref": {
+        "arm_key": "kronos_mini",
+        "content_sha256": "cd50a357e55883c63b014b9f9bb33c8f794ba46fa83a8e3f4f4573b4139d38b3",
+        "registry_schema": "ffm_native_contract_registry_v1"
+      },
+      "status": "blocked"
+    },
+    "kronos_small": {
+      "dossier_ref": {
+        "arm_key": "kronos_small",
+        "content_sha256": "55199fb0f29c8d381bf8747e64bd36cfba34bcb765af01f7f45623754050e5a0",
+        "registry_schema": "ffm_native_contract_registry_v1"
+      },
+      "status": "blocked"
+    },
+    "mantis_v1": {
+      "dossier_ref": {
+        "arm_key": "mantis_v1",
+        "content_sha256": "b6145c27bcd86843a4170cec38c5d22f9b48aa6fc76139654353cf470ffad6d5",
+        "registry_schema": "ffm_native_contract_registry_v1"
+      },
+      "status": "blocked"
+    },
+    "mantis_v2": {
+      "dossier_ref": {
+        "arm_key": "mantis_v2",
+        "content_sha256": "1b9392b9565acc89596fb1a2082e46b2a33c823f65116d503b25d003e082f3b2",
+        "registry_schema": "ffm_native_contract_registry_v1"
+      },
+      "status": "blocked"
+    },
+    "moirai2_small": {
+      "dossier_ref": {
+        "arm_key": "moirai2_small",
+        "content_sha256": "43a25692b91e83aab028a1db994560cadea385ed9db08c133534a5cfea755536",
+        "registry_schema": "ffm_native_contract_registry_v1"
+      },
+      "status": "blocked"
+    },
+    "moment_small": {
+      "dossier_ref": {
+        "arm_key": "moment_small",
+        "content_sha256": "9e7aada59ece7f61aad2a4f2e78b797f70b41df8dc672e3df045bc618329f8a6",
+        "registry_schema": "ffm_native_contract_registry_v1"
+      },
+      "status": "blocked"
+    },
+    "sundial_base": {
+      "dossier_ref": {
+        "arm_key": "sundial_base",
+        "content_sha256": "9864f632815a13a8f0ff838b4b6a84411c26fd9929e228332f923128402fd819",
+        "registry_schema": "ffm_native_contract_registry_v1"
+      },
+      "status": "blocked"
+    },
+    "tabpfn_ts3_forecast": {
+      "dossier_ref": {
+        "arm_key": "tabpfn_ts3_forecast",
+        "content_sha256": "663ba2567c4687e655b6c270bb199bf1eb6ad9ecff0713a87b0c1a2e7f660e45",
+        "registry_schema": "ffm_native_contract_registry_v1"
+      },
+      "status": "blocked"
+    },
+    "tabpfn_v3_downstream": {
+      "dossier_ref": {
+        "arm_key": "tabpfn_v3_downstream",
+        "content_sha256": "e4e4c9c43c1ce033047be1fd6aeac7d313348aa2dd27dbffab7191ce69b13ebe",
+        "registry_schema": "ffm_native_contract_registry_v1"
+      },
+      "status": "blocked"
+    },
+    "timesfm25": {
+      "dossier_ref": {
+        "arm_key": "timesfm25",
+        "content_sha256": "54e7b6379361759c75c1a7f62d67695edfc24b24b45eea354a67630c93d75820",
+        "registry_schema": "ffm_native_contract_registry_v1"
+      },
+      "status": "blocked"
+    },
+    "toto2_22m": {
+      "dossier_ref": {
+        "arm_key": "toto2_22m",
+        "content_sha256": "40781690aad6181e105ac62dc222a08b12f35b05addc44e974adc128292a802a",
+        "registry_schema": "ffm_native_contract_registry_v1"
+      },
+      "status": "blocked"
+    },
+    "ttm_r2": {
+      "dossier_ref": {
+        "arm_key": "ttm_r2",
+        "content_sha256": "034ff9c17c91c46a824446d9e1df30097ffff6c0e1895f47d00b05c4eb0736ee",
+        "registry_schema": "ffm_native_contract_registry_v1"
+      },
+      "status": "blocked"
+    }
+  },
+  "constraint_profiles": {
+    "chronos2_full": {
+      "export": {
+        "state": "resolved",
+        "value": {
+          "bundle_tag": "forecast_bundle",
+          "output_tag": "grouped_quantiles_public_tokens"
+        }
+      },
+      "input": {
+        "state": "resolved",
+        "value": {
+          "channel_order": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume"
+          ],
+          "context_length": 512,
+          "dtype": "fp32",
+          "grouping_tag": "same_parent_group_ids",
+          "horizon_length": 16,
+          "layout_tag": "grouped_multivariate",
+          "parent_length": 528
+        }
+      },
+      "lineage": {
+        "state": "resolved",
+        "value": {
+          "initialization_tag": "vanilla_pinned_checkpoint",
+          "parent_artifacts": []
+        }
+      },
+      "objective": {
+        "state": "resolved",
+        "value": {
+          "loss_tag": "native_13_quantile"
+        }
+      },
+      "optimization_hyperparameters": {
+        "state": "unresolved",
+        "value": null
+      },
+      "optimization_surface": {
+        "state": "resolved",
+        "value": {
+          "frozen_tag": "none",
+          "precision": "fp32",
+          "trainable_tag": "full_model"
+        }
+      },
+      "preprocessing": {
+        "state": "resolved",
+        "value": {
+          "mask_tag": "native_grouped_mask",
+          "scaler_tag": "chronos2_native"
+        }
+      },
+      "target": {
+        "state": "resolved",
+        "value": {
+          "interval": [
+            512,
+            528
+          ],
+          "target_tag": "future_quantiles"
+        }
+      },
+      "time": {
+        "state": "resolved",
+        "value": {
+          "horizon_unit": "bars",
+          "timestamp_tag": "utc_bar_close",
+          "timezone_tag": "utc"
+        }
+      }
+    },
+    "chronos2_lora": {
+      "export": {
+        "state": "resolved",
+        "value": {
+          "bundle_tag": "base_plus_adapter",
+          "output_tag": "grouped_quantiles_public_tokens"
+        }
+      },
+      "input": {
+        "state": "resolved",
+        "value": {
+          "channel_order": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume"
+          ],
+          "context_length": 512,
+          "dtype": "fp32",
+          "grouping_tag": "same_parent_group_ids",
+          "horizon_length": 16,
+          "layout_tag": "grouped_multivariate",
+          "parent_length": 528
+        }
+      },
+      "lineage": {
+        "state": "resolved",
+        "value": {
+          "initialization_tag": "vanilla_pinned_checkpoint",
+          "parent_artifacts": []
+        }
+      },
+      "objective": {
+        "state": "resolved",
+        "value": {
+          "loss_tag": "native_13_quantile"
+        }
+      },
+      "optimization_hyperparameters": {
+        "state": "unresolved",
+        "value": null
+      },
+      "optimization_surface": {
+        "state": "resolved",
+        "value": {
+          "frozen_tag": "base_model",
+          "precision": "fp32",
+          "trainable_tag": "lora_only_fail_closed_without_peft"
+        }
+      },
+      "preprocessing": {
+        "state": "resolved",
+        "value": {
+          "mask_tag": "native_grouped_mask",
+          "scaler_tag": "chronos2_native"
+        }
+      },
+      "target": {
+        "state": "resolved",
+        "value": {
+          "interval": [
+            512,
+            528
+          ],
+          "target_tag": "future_quantiles"
+        }
+      },
+      "time": {
+        "state": "resolved",
+        "value": {
+          "horizon_unit": "bars",
+          "timestamp_tag": "utc_bar_close",
+          "timezone_tag": "utc"
+        }
+      }
+    },
+    "chronos_bolt_forecast": {
+      "export": {
+        "state": "resolved",
+        "value": {
+          "bundle_tag": "forecast_bundle",
+          "output_tag": "quantiles_unpooled_tokens_loc_scale"
+        }
+      },
+      "input": {
+        "state": "resolved",
+        "value": {
+          "channel_order": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume"
+          ],
+          "context_length": 512,
+          "dtype": "fp32",
+          "grouping_tag": "no_cross_channel_interaction",
+          "horizon_length": 16,
+          "layout_tag": "independent_univariate_passes",
+          "parent_length": 528
+        }
+      },
+      "lineage": {
+        "state": "resolved",
+        "value": {
+          "initialization_tag": "vanilla_pinned_checkpoint",
+          "parent_artifacts": []
+        }
+      },
+      "objective": {
+        "state": "resolved",
+        "value": {
+          "effective_horizon": 16,
+          "loss_tag": "native_quantile_pinball",
+          "patch_length": 16
+        }
+      },
+      "optimization_hyperparameters": {
+        "state": "unresolved",
+        "value": null
+      },
+      "optimization_surface": {
+        "state": "resolved",
+        "value": {
+          "frozen_tag": "none",
+          "precision": "fp32",
+          "trainable_tag": "full_model"
+        }
+      },
+      "preprocessing": {
+        "state": "resolved",
+        "value": {
+          "mask_tag": "unused_48_horizon_masked",
+          "scaler_tag": "bolt_native"
+        }
+      },
+      "target": {
+        "state": "resolved",
+        "value": {
+          "interval": [
+            512,
+            528
+          ],
+          "target_tag": "future_quantiles"
+        }
+      },
+      "time": {
+        "state": "resolved",
+        "value": {
+          "horizon_unit": "bars",
+          "timestamp_tag": "utc_bar_close",
+          "timezone_tag": "utc"
+        }
+      }
+    },
+    "chronos_v1_forecast": {
+      "export": {
+        "state": "resolved",
+        "value": {
+          "bundle_tag": "forecast_bundle",
+          "deployment_filter_tag": "first_16_of_native_64",
+          "output_tag": "forecast_distribution_unpooled_tokens"
+        }
+      },
+      "input": {
+        "state": "resolved",
+        "value": {
+          "channel_order": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume"
+          ],
+          "context_length": 512,
+          "dtype": "fp32",
+          "grouping_tag": "no_cross_channel_interaction",
+          "horizon_length": 64,
+          "layout_tag": "independent_univariate_passes",
+          "parent_length": 576
+        }
+      },
+      "lineage": {
+        "state": "resolved",
+        "value": {
+          "initialization_tag": "vanilla_pinned_checkpoint",
+          "parent_artifacts": []
+        }
+      },
+      "objective": {
+        "state": "resolved",
+        "value": {
+          "effective_horizon": 16,
+          "loss_tag": "token_cross_entropy",
+          "missing_label_id": -100,
+          "native_horizon": 64
+        }
+      },
+      "optimization_hyperparameters": {
+        "state": "unresolved",
+        "value": null
+      },
+      "optimization_surface": {
+        "state": "resolved",
+        "value": {
+          "frozen_tag": "none",
+          "precision": "fp32",
+          "trainable_tag": "full_model"
+        }
+      },
+      "preprocessing": {
+        "state": "resolved",
+        "value": {
+          "mask_tag": "eos_after_native_64_missing_minus_100",
+          "scaler_tag": "chronos_mean_abs"
+        }
+      },
+      "target": {
+        "state": "resolved",
+        "value": {
+          "interval": [
+            512,
+            576
+          ],
+          "target_tag": "future_tokens"
+        }
+      },
+      "time": {
+        "state": "resolved",
+        "value": {
+          "horizon_unit": "bars",
+          "timestamp_tag": "utc_bar_close",
+          "timezone_tag": "utc"
+        }
+      }
+    },
+    "kronos_mini_predictor": {
+      "export": {
+        "state": "resolved",
+        "value": {
+          "bundle_tag": "kronos_mini_predictor_plus_tokenizer_bundle",
+          "output_tag": "joint_ohlcva_forecast"
+        }
+      },
+      "input": {
+        "state": "resolved",
+        "value": {
+          "channel_order": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "amount"
+          ],
+          "context_length": 512,
+          "dtype": "fp32",
+          "grouping_tag": "same_parent_joint_channels",
+          "horizon_length": 16,
+          "layout_tag": "joint_multivariate",
+          "parent_length": 528,
+          "stamp_shape": [
+            528,
+            5
+          ]
+        }
+      },
+      "lineage": {
+        "state": "resolved",
+        "value": {
+          "initialization_tag": "same_arm_parent_route_artifact",
+          "parent_artifacts": [
+            "kronos_mini_tokenizer_2k_bundle"
+          ]
+        }
+      },
+      "objective": {
+        "state": "resolved",
+        "value": {
+          "loss_tag": "hierarchical_autoregressive_cross_entropy"
+        }
+      },
+      "optimization_hyperparameters": {
+        "state": "unresolved",
+        "value": null
+      },
+      "optimization_surface": {
+        "state": "resolved",
+        "value": {
+          "frozen_tag": "tokenizer",
+          "precision": "fp32",
+          "trainable_tag": "predictor_only"
+        }
+      },
+      "preprocessing": {
+        "state": "partial",
+        "value": {
+          "known": {
+            "mask_tag": "none",
+            "scaler_tag": "kronos_context_only_normalize_clip5"
+          },
+          "unresolved_fields": [
+            "amount_source_route_instance_choice"
+          ]
+        }
+      },
+      "target": {
+        "state": "resolved",
+        "value": {
+          "interval": [
+            512,
+            528
+          ],
+          "target_tag": "future_tokens"
+        }
+      },
+      "time": {
+        "state": "resolved",
+        "value": {
+          "horizon_unit": "bars",
+          "timestamp_tag": "venue_local_calendar_stamps",
+          "timezone_tag": "venue_registry"
+        }
+      }
+    },
+    "kronos_mini_tokenizer": {
+      "export": {
+        "state": "resolved",
+        "value": {
+          "bundle_tag": "kronos_mini_tokenizer_2k_bundle",
+          "output_tag": "coarse_and_fine_codes"
+        }
+      },
+      "input": {
+        "state": "resolved",
+        "value": {
+          "channel_order": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "amount"
+          ],
+          "context_length": 528,
+          "dtype": "fp32",
+          "grouping_tag": "same_parent_joint_channels",
+          "horizon_length": 0,
+          "layout_tag": "joint_multivariate",
+          "parent_length": 528,
+          "stamp_shape": [
+            528,
+            5
+          ]
+        }
+      },
+      "lineage": {
+        "state": "resolved",
+        "value": {
+          "initialization_tag": "vanilla_pinned_checkpoint",
+          "parent_artifacts": []
+        }
+      },
+      "objective": {
+        "state": "resolved",
+        "value": {
+          "loss_tag": "tokenizer_reconstruction_plus_bsq"
+        }
+      },
+      "optimization_hyperparameters": {
+        "state": "unresolved",
+        "value": null
+      },
+      "optimization_surface": {
+        "state": "resolved",
+        "value": {
+          "frozen_tag": "predictor",
+          "precision": "fp32",
+          "trainable_tag": "tokenizer_only"
+        }
+      },
+      "preprocessing": {
+        "state": "partial",
+        "value": {
+          "known": {
+            "mask_tag": "none",
+            "scaler_tag": "kronos_context_only_normalize_clip5"
+          },
+          "unresolved_fields": [
+            "amount_source_route_instance_choice"
+          ]
+        }
+      },
+      "target": {
+        "state": "resolved",
+        "value": {
+          "interval": [
+            0,
+            528
+          ],
+          "target_tag": "tokenizer_reconstruction"
+        }
+      },
+      "time": {
+        "state": "resolved",
+        "value": {
+          "horizon_unit": "none",
+          "timestamp_tag": "venue_local_calendar_stamps",
+          "timezone_tag": "venue_registry"
+        }
+      }
+    },
+    "kronos_small_predictor": {
+      "export": {
+        "state": "resolved",
+        "value": {
+          "bundle_tag": "kronos_small_predictor_plus_tokenizer_bundle",
+          "output_tag": "joint_ohlcva_forecast"
+        }
+      },
+      "input": {
+        "state": "resolved",
+        "value": {
+          "channel_order": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "amount"
+          ],
+          "context_length": 512,
+          "dtype": "fp32",
+          "grouping_tag": "same_parent_joint_channels",
+          "horizon_length": 16,
+          "layout_tag": "joint_multivariate",
+          "parent_length": 528,
+          "stamp_shape": [
+            528,
+            5
+          ]
+        }
+      },
+      "lineage": {
+        "state": "resolved",
+        "value": {
+          "initialization_tag": "same_arm_parent_route_artifact",
+          "parent_artifacts": [
+            "kronos_small_tokenizer_base_bundle"
+          ]
+        }
+      },
+      "objective": {
+        "state": "resolved",
+        "value": {
+          "loss_tag": "hierarchical_autoregressive_cross_entropy"
+        }
+      },
+      "optimization_hyperparameters": {
+        "state": "unresolved",
+        "value": null
+      },
+      "optimization_surface": {
+        "state": "resolved",
+        "value": {
+          "frozen_tag": "tokenizer",
+          "precision": "fp32",
+          "trainable_tag": "predictor_only"
+        }
+      },
+      "preprocessing": {
+        "state": "partial",
+        "value": {
+          "known": {
+            "mask_tag": "none",
+            "scaler_tag": "kronos_context_only_normalize_clip5"
+          },
+          "unresolved_fields": [
+            "amount_source_route_instance_choice"
+          ]
+        }
+      },
+      "target": {
+        "state": "resolved",
+        "value": {
+          "interval": [
+            512,
+            528
+          ],
+          "target_tag": "future_tokens"
+        }
+      },
+      "time": {
+        "state": "resolved",
+        "value": {
+          "horizon_unit": "bars",
+          "timestamp_tag": "venue_local_calendar_stamps",
+          "timezone_tag": "venue_registry"
+        }
+      }
+    },
+    "kronos_small_tokenizer": {
+      "export": {
+        "state": "resolved",
+        "value": {
+          "bundle_tag": "kronos_small_tokenizer_base_bundle",
+          "output_tag": "coarse_and_fine_codes"
+        }
+      },
+      "input": {
+        "state": "resolved",
+        "value": {
+          "channel_order": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "amount"
+          ],
+          "context_length": 528,
+          "dtype": "fp32",
+          "grouping_tag": "same_parent_joint_channels",
+          "horizon_length": 0,
+          "layout_tag": "joint_multivariate",
+          "parent_length": 528,
+          "stamp_shape": [
+            528,
+            5
+          ]
+        }
+      },
+      "lineage": {
+        "state": "resolved",
+        "value": {
+          "initialization_tag": "vanilla_pinned_checkpoint",
+          "parent_artifacts": []
+        }
+      },
+      "objective": {
+        "state": "resolved",
+        "value": {
+          "loss_tag": "tokenizer_reconstruction_plus_bsq"
+        }
+      },
+      "optimization_hyperparameters": {
+        "state": "unresolved",
+        "value": null
+      },
+      "optimization_surface": {
+        "state": "resolved",
+        "value": {
+          "frozen_tag": "predictor",
+          "precision": "fp32",
+          "trainable_tag": "tokenizer_only"
+        }
+      },
+      "preprocessing": {
+        "state": "partial",
+        "value": {
+          "known": {
+            "mask_tag": "none",
+            "scaler_tag": "kronos_context_only_normalize_clip5"
+          },
+          "unresolved_fields": [
+            "amount_source_route_instance_choice"
+          ]
+        }
+      },
+      "target": {
+        "state": "resolved",
+        "value": {
+          "interval": [
+            0,
+            528
+          ],
+          "target_tag": "tokenizer_reconstruction"
+        }
+      },
+      "time": {
+        "state": "resolved",
+        "value": {
+          "horizon_unit": "none",
+          "timestamp_tag": "venue_local_calendar_stamps",
+          "timezone_tag": "venue_registry"
+        }
+      }
+    },
+    "mantis_v1_classifier_full": {
+      "export": {
+        "state": "resolved",
+        "value": {
+          "bundle_tag": "classifier_bundle",
+          "output_tag": "classification_logits"
+        }
+      },
+      "input": {
+        "state": "resolved",
+        "value": {
+          "channel_order": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume"
+          ],
+          "context_length": 512,
+          "dtype": "fp32",
+          "grouping_tag": "no_cross_channel_interaction",
+          "horizon_length": 0,
+          "layout_tag": "independent_univariate_passes",
+          "parent_length": 512
+        }
+      },
+      "lineage": {
+        "state": "resolved",
+        "value": {
+          "initialization_tag": "vanilla_pinned_checkpoint",
+          "parent_artifacts": []
+        }
+      },
+      "objective": {
+        "state": "resolved",
+        "value": {
+          "encoder_embedding_tag": "final_cls_per_channel",
+          "fusion_tag": "concat_5_channels",
+          "loss_tag": "classification_cross_entropy"
+        }
+      },
+      "optimization_hyperparameters": {
+        "state": "unresolved",
+        "value": null
+      },
+      "optimization_surface": {
+        "state": "resolved",
+        "value": {
+          "frozen_tag": "none",
+          "precision": "fp32",
+          "trainable_tag": "encoder_and_head"
+        }
+      },
+      "preprocessing": {
+        "state": "resolved",
+        "value": {
+          "mask_tag": "none",
+          "scaler_tag": "mantis_raw"
+        }
+      },
+      "target": {
+        "state": "resolved",
+        "value": {
+          "interval": null,
+          "target_tag": "class_label"
+        }
+      },
+      "time": {
+        "state": "resolved",
+        "value": {
+          "horizon_unit": "none",
+          "timestamp_tag": "utc_bar_close",
+          "timezone_tag": "utc"
+        }
+      }
+    },
+    "mantis_v1_classifier_head": {
+      "export": {
+        "state": "resolved",
+        "value": {
+          "bundle_tag": "classifier_bundle",
+          "output_tag": "classification_logits"
+        }
+      },
+      "input": {
+        "state": "resolved",
+        "value": {
+          "channel_order": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume"
+          ],
+          "context_length": 512,
+          "dtype": "fp32",
+          "grouping_tag": "no_cross_channel_interaction",
+          "horizon_length": 0,
+          "layout_tag": "independent_univariate_passes",
+          "parent_length": 512
+        }
+      },
+      "lineage": {
+        "state": "resolved",
+        "value": {
+          "initialization_tag": "vanilla_pinned_checkpoint",
+          "parent_artifacts": []
+        }
+      },
+      "objective": {
+        "state": "resolved",
+        "value": {
+          "encoder_embedding_tag": "final_cls_per_channel",
+          "fusion_tag": "concat_5_channels",
+          "loss_tag": "classification_cross_entropy"
+        }
+      },
+      "optimization_hyperparameters": {
+        "state": "unresolved",
+        "value": null
+      },
+      "optimization_surface": {
+        "state": "resolved",
+        "value": {
+          "frozen_tag": "encoder",
+          "precision": "fp32",
+          "trainable_tag": "head_only"
+        }
+      },
+      "preprocessing": {
+        "state": "resolved",
+        "value": {
+          "mask_tag": "none",
+          "scaler_tag": "mantis_raw"
+        }
+      },
+      "target": {
+        "state": "resolved",
+        "value": {
+          "interval": null,
+          "target_tag": "class_label"
+        }
+      },
+      "time": {
+        "state": "resolved",
+        "value": {
+          "horizon_unit": "none",
+          "timestamp_tag": "utc_bar_close",
+          "timezone_tag": "utc"
+        }
+      }
+    },
+    "mantis_v1_contrastive": {
+      "export": {
+        "state": "resolved",
+        "value": {
+          "bundle_tag": "representation_bundle",
+          "output_tag": "final_cls_per_channel"
+        }
+      },
+      "input": {
+        "state": "resolved",
+        "value": {
+          "channel_order": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume"
+          ],
+          "context_length": 512,
+          "dtype": "fp32",
+          "grouping_tag": "no_cross_channel_interaction",
+          "horizon_length": 0,
+          "layout_tag": "independent_univariate_passes",
+          "parent_length": 512
+        }
+      },
+      "lineage": {
+        "state": "resolved",
+        "value": {
+          "initialization_tag": "vanilla_pinned_checkpoint",
+          "parent_artifacts": []
+        }
+      },
+      "objective": {
+        "state": "resolved",
+        "value": {
+          "direction_tag": "query_to_key",
+          "loss_tag": "mantis_v1_one_way_info_nce",
+          "negative_eligibility_tag": "other_parent_windows_only",
+          "resize_length": 512,
+          "sibling_parent_policy_tag": "exclude_ohlcv_siblings",
+          "temperature": 0.1
+        }
+      },
+      "optimization_hyperparameters": {
+        "state": "unresolved",
+        "value": null
+      },
+      "optimization_surface": {
+        "state": "resolved",
+        "value": {
+          "frozen_tag": "none",
+          "precision": "fp32",
+          "trainable_tag": "encoder_and_projector"
+        }
+      },
+      "preprocessing": {
+        "state": "resolved",
+        "value": {
+          "mask_tag": "official_batch_global_crop_resize",
+          "scaler_tag": "mantis_raw",
+          "statistics_interval_tag": "none"
+        }
+      },
+      "target": {
+        "state": "resolved",
+        "value": {
+          "interval": [
+            0,
+            512
+          ],
+          "target_tag": "same_context_views"
+        }
+      },
+      "time": {
+        "state": "resolved",
+        "value": {
+          "horizon_unit": "none",
+          "timestamp_tag": "utc_bar_close",
+          "timezone_tag": "utc"
+        }
+      }
+    },
+    "mantis_v2_classifier_full": {
+      "export": {
+        "state": "resolved",
+        "value": {
+          "bundle_tag": "classifier_bundle",
+          "output_tag": "classification_logits"
+        }
+      },
+      "input": {
+        "state": "resolved",
+        "value": {
+          "channel_order": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume"
+          ],
+          "context_length": 512,
+          "dtype": "fp32",
+          "grouping_tag": "no_cross_channel_interaction",
+          "horizon_length": 0,
+          "layout_tag": "independent_univariate_passes",
+          "parent_length": 512
+        }
+      },
+      "lineage": {
+        "state": "resolved",
+        "value": {
+          "initialization_tag": "vanilla_pinned_checkpoint",
+          "parent_artifacts": []
+        }
+      },
+      "objective": {
+        "state": "resolved",
+        "value": {
+          "encoder_embedding_tag": "final_layer_cls_per_channel",
+          "fusion_tag": "concat_5_channels",
+          "loss_tag": "classification_cross_entropy"
+        }
+      },
+      "optimization_hyperparameters": {
+        "state": "unresolved",
+        "value": null
+      },
+      "optimization_surface": {
+        "state": "resolved",
+        "value": {
+          "frozen_tag": "none",
+          "precision": "fp32",
+          "trainable_tag": "encoder_and_head"
+        }
+      },
+      "preprocessing": {
+        "state": "resolved",
+        "value": {
+          "mask_tag": "none",
+          "scaler_tag": "mantis_raw"
+        }
+      },
+      "target": {
+        "state": "resolved",
+        "value": {
+          "interval": null,
+          "target_tag": "class_label"
+        }
+      },
+      "time": {
+        "state": "resolved",
+        "value": {
+          "horizon_unit": "none",
+          "timestamp_tag": "utc_bar_close",
+          "timezone_tag": "utc"
+        }
+      }
+    },
+    "mantis_v2_classifier_head": {
+      "export": {
+        "state": "resolved",
+        "value": {
+          "bundle_tag": "classifier_bundle",
+          "output_tag": "classification_logits"
+        }
+      },
+      "input": {
+        "state": "resolved",
+        "value": {
+          "channel_order": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume"
+          ],
+          "context_length": 512,
+          "dtype": "fp32",
+          "grouping_tag": "no_cross_channel_interaction",
+          "horizon_length": 0,
+          "layout_tag": "independent_univariate_passes",
+          "parent_length": 512
+        }
+      },
+      "lineage": {
+        "state": "resolved",
+        "value": {
+          "initialization_tag": "vanilla_pinned_checkpoint",
+          "parent_artifacts": []
+        }
+      },
+      "objective": {
+        "state": "resolved",
+        "value": {
+          "encoder_embedding_tag": "final_layer_cls_per_channel",
+          "fusion_tag": "concat_5_channels",
+          "loss_tag": "classification_cross_entropy"
+        }
+      },
+      "optimization_hyperparameters": {
+        "state": "unresolved",
+        "value": null
+      },
+      "optimization_surface": {
+        "state": "resolved",
+        "value": {
+          "frozen_tag": "encoder",
+          "precision": "fp32",
+          "trainable_tag": "head_only"
+        }
+      },
+      "preprocessing": {
+        "state": "resolved",
+        "value": {
+          "mask_tag": "none",
+          "scaler_tag": "mantis_raw"
+        }
+      },
+      "target": {
+        "state": "resolved",
+        "value": {
+          "interval": null,
+          "target_tag": "class_label"
+        }
+      },
+      "time": {
+        "state": "resolved",
+        "value": {
+          "horizon_unit": "none",
+          "timestamp_tag": "utc_bar_close",
+          "timezone_tag": "utc"
+        }
+      }
+    },
+    "mantis_v2_contrastive": {
+      "export": {
+        "state": "resolved",
+        "value": {
+          "bundle_tag": "representation_bundle",
+          "output_tag": "layer2_cls_mean_per_channel"
+        }
+      },
+      "input": {
+        "state": "resolved",
+        "value": {
+          "channel_order": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume"
+          ],
+          "context_length": 512,
+          "dtype": "fp32",
+          "grouping_tag": "no_cross_channel_interaction",
+          "horizon_length": 0,
+          "layout_tag": "independent_univariate_passes",
+          "parent_length": 512
+        }
+      },
+      "lineage": {
+        "state": "resolved",
+        "value": {
+          "initialization_tag": "vanilla_pinned_checkpoint",
+          "parent_artifacts": []
+        }
+      },
+      "objective": {
+        "state": "partial",
+        "value": {
+          "known": {
+            "deployment_embedding_dim": 512,
+            "loss_tag": "mantis_v2_info_nce",
+            "negative_eligibility_tag": "other_parent_windows_only",
+            "sibling_parent_policy_tag": "exclude_ohlcv_siblings",
+            "training_projector_dim": 256
+          },
+          "unresolved_fields": [
+            "temperature",
+            "direction_tag",
+            "crop_sampling_scope_tag"
+          ]
+        }
+      },
+      "optimization_hyperparameters": {
+        "state": "unresolved",
+        "value": null
+      },
+      "optimization_surface": {
+        "state": "resolved",
+        "value": {
+          "frozen_tag": "none",
+          "precision": "fp32",
+          "trainable_tag": "encoder_and_projector"
+        }
+      },
+      "preprocessing": {
+        "state": "resolved",
+        "value": {
+          "mask_tag": "official_crop_resize",
+          "scaler_tag": "mantis_raw",
+          "statistics_interval_tag": "none"
+        }
+      },
+      "target": {
+        "state": "resolved",
+        "value": {
+          "interval": [
+            0,
+            512
+          ],
+          "target_tag": "same_context_views"
+        }
+      },
+      "time": {
+        "state": "resolved",
+        "value": {
+          "horizon_unit": "none",
+          "timestamp_tag": "utc_bar_close",
+          "timezone_tag": "utc"
+        }
+      }
+    },
+    "moirai_custom": {
+      "export": {
+        "state": "resolved",
+        "value": {
+          "bundle_tag": "research_forecast_bundle",
+          "output_tag": "probabilistic_quantiles"
+        }
+      },
+      "input": {
+        "state": "resolved",
+        "value": {
+          "channel_order": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume"
+          ],
+          "context_length": 512,
+          "dtype": "fp32",
+          "grouping_tag": "sample_time_variate_ids",
+          "horizon_length": 16,
+          "layout_tag": "packed_multivariate",
+          "parent_length": 528
+        }
+      },
+      "lineage": {
+        "state": "resolved",
+        "value": {
+          "initialization_tag": "vanilla_pinned_checkpoint",
+          "parent_artifacts": []
+        }
+      },
+      "objective": {
+        "state": "resolved",
+        "value": {
+          "loss_tag": "custom_scaled_pinball",
+          "output_patch_audit_tag": "every_output_patch",
+          "quantile_crossing_tag": "native_crossing_quantiles"
+        }
+      },
+      "optimization_hyperparameters": {
+        "state": "unresolved",
+        "value": null
+      },
+      "optimization_surface": {
+        "state": "resolved",
+        "value": {
+          "frozen_tag": "none",
+          "precision": "fp32",
+          "trainable_tag": "full_model_custom_trainer"
+        }
+      },
+      "preprocessing": {
+        "state": "resolved",
+        "value": {
+          "mask_tag": "observed_mask_zero_fill_before_pack",
+          "scaler_tag": "moirai_native"
+        }
+      },
+      "target": {
+        "state": "resolved",
+        "value": {
+          "interval": [
+            512,
+            528
+          ],
+          "target_tag": "future_quantiles"
+        }
+      },
+      "time": {
+        "state": "resolved",
+        "value": {
+          "horizon_unit": "bars",
+          "timestamp_tag": "utc_bar_close",
+          "timezone_tag": "utc"
+        }
+      }
+    },
+    "moment_classification_full": {
+      "export": {
+        "state": "resolved",
+        "value": {
+          "bundle_tag": "classifier_bundle",
+          "output_tag": "classification_logits"
+        }
+      },
+      "input": {
+        "state": "resolved",
+        "value": {
+          "channel_order": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume"
+          ],
+          "context_length": 512,
+          "dtype": "fp32",
+          "grouping_tag": "no_cross_channel_interaction",
+          "horizon_length": 0,
+          "layout_tag": "B_C_512_internal_fold_only",
+          "parent_length": 512
+        }
+      },
+      "lineage": {
+        "state": "resolved",
+        "value": {
+          "initialization_tag": "vanilla_pinned_checkpoint",
+          "parent_artifacts": []
+        }
+      },
+      "objective": {
+        "state": "resolved",
+        "value": {
+          "loss_tag": "classification_cross_entropy",
+          "n_channels": 5,
+          "reduction_tag": "concat"
+        }
+      },
+      "optimization_hyperparameters": {
+        "state": "unresolved",
+        "value": null
+      },
+      "optimization_surface": {
+        "state": "resolved",
+        "value": {
+          "frozen_tag": "none",
+          "precision": "fp32",
+          "trainable_tag": "encoder_and_head"
+        }
+      },
+      "preprocessing": {
+        "state": "resolved",
+        "value": {
+          "input_mask_tag": "valid_timestamp_mask",
+          "mask_tag": "valid_timestamp_mask",
+          "padding_side_tag": "left",
+          "scaler_tag": "moment_revin_per_channel"
+        }
+      },
+      "target": {
+        "state": "resolved",
+        "value": {
+          "interval": null,
+          "target_tag": "class_label"
+        }
+      },
+      "time": {
+        "state": "resolved",
+        "value": {
+          "horizon_unit": "none",
+          "timestamp_tag": "utc_bar_close",
+          "timezone_tag": "utc"
+        }
+      }
+    },
+    "moment_classification_head": {
+      "export": {
+        "state": "resolved",
+        "value": {
+          "bundle_tag": "classifier_bundle",
+          "output_tag": "classification_logits"
+        }
+      },
+      "input": {
+        "state": "resolved",
+        "value": {
+          "channel_order": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume"
+          ],
+          "context_length": 512,
+          "dtype": "fp32",
+          "grouping_tag": "no_cross_channel_interaction",
+          "horizon_length": 0,
+          "layout_tag": "B_C_512_internal_fold_only",
+          "parent_length": 512
+        }
+      },
+      "lineage": {
+        "state": "resolved",
+        "value": {
+          "initialization_tag": "vanilla_pinned_checkpoint",
+          "parent_artifacts": []
+        }
+      },
+      "objective": {
+        "state": "resolved",
+        "value": {
+          "loss_tag": "classification_cross_entropy",
+          "n_channels": 5,
+          "reduction_tag": "concat"
+        }
+      },
+      "optimization_hyperparameters": {
+        "state": "unresolved",
+        "value": null
+      },
+      "optimization_surface": {
+        "state": "resolved",
+        "value": {
+          "frozen_tag": "encoder",
+          "precision": "fp32",
+          "trainable_tag": "head_only"
+        }
+      },
+      "preprocessing": {
+        "state": "resolved",
+        "value": {
+          "input_mask_tag": "valid_timestamp_mask",
+          "mask_tag": "valid_timestamp_mask",
+          "padding_side_tag": "left",
+          "scaler_tag": "moment_revin_per_channel"
+        }
+      },
+      "target": {
+        "state": "resolved",
+        "value": {
+          "interval": null,
+          "target_tag": "class_label"
+        }
+      },
+      "time": {
+        "state": "resolved",
+        "value": {
+          "horizon_unit": "none",
+          "timestamp_tag": "utc_bar_close",
+          "timezone_tag": "utc"
+        }
+      }
+    },
+    "moment_forecast_full": {
+      "export": {
+        "state": "resolved",
+        "value": {
+          "bundle_tag": "forecast_bundle",
+          "output_tag": "B_C_16"
+        }
+      },
+      "input": {
+        "state": "resolved",
+        "value": {
+          "channel_order": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume"
+          ],
+          "context_length": 512,
+          "dtype": "fp32",
+          "grouping_tag": "no_cross_channel_interaction",
+          "horizon_length": 16,
+          "layout_tag": "independent_univariate_passes",
+          "parent_length": 528
+        }
+      },
+      "lineage": {
+        "state": "resolved",
+        "value": {
+          "initialization_tag": "vanilla_pinned_checkpoint",
+          "parent_artifacts": []
+        }
+      },
+      "objective": {
+        "state": "resolved",
+        "value": {
+          "loss_tag": "raw_mse"
+        }
+      },
+      "optimization_hyperparameters": {
+        "state": "unresolved",
+        "value": null
+      },
+      "optimization_surface": {
+        "state": "resolved",
+        "value": {
+          "frozen_tag": "none",
+          "precision": "fp32",
+          "trainable_tag": "full_model"
+        }
+      },
+      "preprocessing": {
+        "state": "resolved",
+        "value": {
+          "input_mask_tag": "valid_timestamp_mask",
+          "mask_tag": "valid_timestamp_mask",
+          "padding_side_tag": "left",
+          "scaler_tag": "moment_revin_per_channel",
+          "statistics_interval_tag": "context_only"
+        }
+      },
+      "target": {
+        "state": "resolved",
+        "value": {
+          "interval": [
+            512,
+            528
+          ],
+          "target_tag": "future_raw_channels"
+        }
+      },
+      "time": {
+        "state": "resolved",
+        "value": {
+          "horizon_unit": "bars",
+          "timestamp_tag": "utc_bar_close",
+          "timezone_tag": "utc"
+        }
+      }
+    },
+    "moment_forecast_head": {
+      "export": {
+        "state": "resolved",
+        "value": {
+          "bundle_tag": "forecast_bundle",
+          "output_tag": "B_C_16"
+        }
+      },
+      "input": {
+        "state": "resolved",
+        "value": {
+          "channel_order": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume"
+          ],
+          "context_length": 512,
+          "dtype": "fp32",
+          "grouping_tag": "no_cross_channel_interaction",
+          "horizon_length": 16,
+          "layout_tag": "independent_univariate_passes",
+          "parent_length": 528
+        }
+      },
+      "lineage": {
+        "state": "resolved",
+        "value": {
+          "initialization_tag": "vanilla_pinned_checkpoint",
+          "parent_artifacts": []
+        }
+      },
+      "objective": {
+        "state": "resolved",
+        "value": {
+          "loss_tag": "raw_mse"
+        }
+      },
+      "optimization_hyperparameters": {
+        "state": "unresolved",
+        "value": null
+      },
+      "optimization_surface": {
+        "state": "resolved",
+        "value": {
+          "frozen_tag": "encoder",
+          "precision": "fp32",
+          "trainable_tag": "head_only"
+        }
+      },
+      "preprocessing": {
+        "state": "resolved",
+        "value": {
+          "input_mask_tag": "valid_timestamp_mask",
+          "mask_tag": "valid_timestamp_mask",
+          "padding_side_tag": "left",
+          "scaler_tag": "moment_revin_per_channel",
+          "statistics_interval_tag": "context_only"
+        }
+      },
+      "target": {
+        "state": "resolved",
+        "value": {
+          "interval": [
+            512,
+            528
+          ],
+          "target_tag": "future_raw_channels"
+        }
+      },
+      "time": {
+        "state": "resolved",
+        "value": {
+          "horizon_unit": "bars",
+          "timestamp_tag": "utc_bar_close",
+          "timezone_tag": "utc"
+        }
+      }
+    },
+    "moment_reconstruction": {
+      "export": {
+        "state": "resolved",
+        "value": {
+          "bundle_tag": "representation_bundle",
+          "output_tag": "masked_embedding_mean"
+        }
+      },
+      "input": {
+        "state": "resolved",
+        "value": {
+          "channel_order": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume"
+          ],
+          "context_length": 512,
+          "dtype": "fp32",
+          "grouping_tag": "no_cross_channel_interaction",
+          "horizon_length": 0,
+          "layout_tag": "B_C_512_internal_fold_only",
+          "parent_length": 512
+        }
+      },
+      "lineage": {
+        "state": "resolved",
+        "value": {
+          "initialization_tag": "vanilla_pinned_checkpoint",
+          "parent_artifacts": []
+        }
+      },
+      "objective": {
+        "state": "resolved",
+        "value": {
+          "loss_tag": "masked_raw_mse"
+        }
+      },
+      "optimization_hyperparameters": {
+        "state": "unresolved",
+        "value": null
+      },
+      "optimization_surface": {
+        "state": "resolved",
+        "value": {
+          "frozen_tag": "none",
+          "precision": "fp32",
+          "trainable_tag": "encoder_and_reconstruction_head"
+        }
+      },
+      "preprocessing": {
+        "state": "resolved",
+        "value": {
+          "input_mask_tag": "valid_timestamp_mask",
+          "mask_tag": "valid_plus_shared_timestamp_pretrain_mask",
+          "padding_side_tag": "left",
+          "scaler_tag": "moment_revin_per_channel",
+          "statistics_interval_tag": "context_only"
+        }
+      },
+      "target": {
+        "state": "resolved",
+        "value": {
+          "interval": [
+            0,
+            512
+          ],
+          "target_tag": "masked_raw_values"
+        }
+      },
+      "time": {
+        "state": "resolved",
+        "value": {
+          "horizon_unit": "none",
+          "timestamp_tag": "utc_bar_close",
+          "timezone_tag": "utc"
+        }
+      }
+    },
+    "project_contrastive_unresolved": {
+      "export": {
+        "state": "unresolved",
+        "value": null
+      },
+      "input": {
+        "state": "unresolved",
+        "value": null
+      },
+      "lineage": {
+        "state": "unresolved",
+        "value": null
+      },
+      "objective": {
+        "state": "unresolved",
+        "value": null
+      },
+      "optimization_hyperparameters": {
+        "state": "unresolved",
+        "value": null
+      },
+      "optimization_surface": {
+        "state": "unresolved",
+        "value": null
+      },
+      "preprocessing": {
+        "state": "unresolved",
+        "value": null
+      },
+      "target": {
+        "state": "unresolved",
+        "value": null
+      },
+      "time": {
+        "state": "unresolved",
+        "value": null
+      }
+    },
+    "project_path_unresolved": {
+      "export": {
+        "state": "unresolved",
+        "value": null
+      },
+      "input": {
+        "state": "unresolved",
+        "value": null
+      },
+      "lineage": {
+        "state": "unresolved",
+        "value": null
+      },
+      "objective": {
+        "state": "unresolved",
+        "value": null
+      },
+      "optimization_hyperparameters": {
+        "state": "unresolved",
+        "value": null
+      },
+      "optimization_surface": {
+        "state": "unresolved",
+        "value": null
+      },
+      "preprocessing": {
+        "state": "unresolved",
+        "value": null
+      },
+      "target": {
+        "state": "unresolved",
+        "value": null
+      },
+      "time": {
+        "state": "unresolved",
+        "value": null
+      }
+    },
+    "sundial_timeflow": {
+      "export": {
+        "state": "unresolved",
+        "value": null
+      },
+      "input": {
+        "state": "resolved",
+        "value": {
+          "channel_order": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume"
+          ],
+          "context_length": 512,
+          "dtype": "fp32",
+          "grouping_tag": "no_cross_channel_interaction",
+          "horizon_length": 0,
+          "layout_tag": "independent_univariate_passes",
+          "parent_length": 512
+        }
+      },
+      "lineage": {
+        "state": "unresolved",
+        "value": null
+      },
+      "objective": {
+        "state": "resolved",
+        "value": {
+          "loss_tag": "differentiable_timeflow"
+        }
+      },
+      "optimization_hyperparameters": {
+        "state": "unresolved",
+        "value": null
+      },
+      "optimization_surface": {
+        "state": "unresolved",
+        "value": null
+      },
+      "preprocessing": {
+        "state": "unresolved",
+        "value": null
+      },
+      "target": {
+        "state": "unresolved",
+        "value": null
+      },
+      "time": {
+        "state": "unresolved",
+        "value": null
+      }
+    },
+    "tabpfn_ts3_support_query": {
+      "export": {
+        "state": "resolved",
+        "value": {
+          "bundle_tag": "support_query_contract",
+          "output_tag": "forecast"
+        }
+      },
+      "input": {
+        "state": "unresolved",
+        "value": null
+      },
+      "lineage": {
+        "state": "resolved",
+        "value": {
+          "initialization_tag": "support_query_only",
+          "parent_artifacts": []
+        }
+      },
+      "objective": {
+        "state": "resolved",
+        "value": {
+          "loss_tag": "official_ts3_in_context_fit"
+        }
+      },
+      "optimization_hyperparameters": {
+        "state": "resolved",
+        "value": {
+          "status": "not_applicable"
+        }
+      },
+      "optimization_surface": {
+        "state": "resolved",
+        "value": {
+          "precision": "fp32",
+          "trainable_tag": "no_persistent_weights"
+        }
+      },
+      "preprocessing": {
+        "state": "resolved",
+        "value": {
+          "mask_tag": "complete_label_end_purge",
+          "scaler_tag": "support_only"
+        }
+      },
+      "target": {
+        "state": "resolved",
+        "value": {
+          "interval": null,
+          "target_tag": "forecast_query"
+        }
+      },
+      "time": {
+        "state": "unresolved",
+        "value": null
+      }
+    },
+    "tabpfn_v3_downstream": {
+      "export": {
+        "state": "resolved",
+        "value": {
+          "bundle_tag": "support_query_contract",
+          "output_tag": "downstream_prediction"
+        }
+      },
+      "input": {
+        "state": "unresolved",
+        "value": null
+      },
+      "lineage": {
+        "state": "resolved",
+        "value": {
+          "initialization_tag": "support_query_only",
+          "parent_artifacts": []
+        }
+      },
+      "objective": {
+        "state": "resolved",
+        "value": {
+          "loss_tag": "official_tabpfn_in_context_fit"
+        }
+      },
+      "optimization_hyperparameters": {
+        "state": "resolved",
+        "value": {
+          "status": "not_applicable"
+        }
+      },
+      "optimization_surface": {
+        "state": "resolved",
+        "value": {
+          "precision": "fp32",
+          "trainable_tag": "no_persistent_weights"
+        }
+      },
+      "preprocessing": {
+        "state": "resolved",
+        "value": {
+          "mask_tag": "parent_interval_purge",
+          "scaler_tag": "support_only"
+        }
+      },
+      "target": {
+        "state": "resolved",
+        "value": {
+          "interval": null,
+          "target_tag": "downstream_query_label"
+        }
+      },
+      "time": {
+        "state": "resolved",
+        "value": {
+          "horizon_unit": "none",
+          "timestamp_tag": "purged_support_query"
+        }
+      }
+    },
+    "timesfm_lora": {
+      "export": {
+        "state": "resolved",
+        "value": {
+          "bundle_tag": "base_plus_adapter",
+          "output_tag": "point_and_raw_quantiles"
+        }
+      },
+      "input": {
+        "state": "resolved",
+        "value": {
+          "channel_order": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume"
+          ],
+          "context_length": 512,
+          "dtype": "fp32",
+          "grouping_tag": "no_cross_channel_interaction",
+          "horizon_length": 16,
+          "layout_tag": "independent_univariate_passes",
+          "parent_length": 528
+        }
+      },
+      "lineage": {
+        "state": "resolved",
+        "value": {
+          "initialization_tag": "vanilla_pinned_checkpoint",
+          "parent_artifacts": []
+        }
+      },
+      "objective": {
+        "state": "resolved",
+        "value": {
+          "fix_quantile_crossing": false,
+          "force_flip_invariance": true,
+          "loss_tag": "native_normalized_mse_plus_quantile_pinball",
+          "truncate_negative": false
+        }
+      },
+      "optimization_hyperparameters": {
+        "state": "unresolved",
+        "value": null
+      },
+      "optimization_surface": {
+        "state": "resolved",
+        "value": {
+          "adapter_target_tag": "all_linear",
+          "frozen_tag": "base_model",
+          "precision": "fp32",
+          "trainable_tag": "lora_only"
+        }
+      },
+      "preprocessing": {
+        "state": "resolved",
+        "value": {
+          "mask_tag": "native_padding_missing_mask",
+          "scaler_tag": "timesfm_internal_revin"
+        }
+      },
+      "target": {
+        "state": "resolved",
+        "value": {
+          "interval": [
+            512,
+            528
+          ],
+          "target_tag": "future_raw_channels"
+        }
+      },
+      "time": {
+        "state": "resolved",
+        "value": {
+          "horizon_unit": "bars",
+          "timestamp_tag": "utc_bar_close",
+          "timezone_tag": "utc"
+        }
+      }
+    },
+    "ttm_forecast_full": {
+      "export": {
+        "state": "resolved",
+        "value": {
+          "bundle_tag": "forecast_bundle",
+          "output_tag": "B_16_C"
+        }
+      },
+      "input": {
+        "state": "resolved",
+        "value": {
+          "channel_order": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume"
+          ],
+          "context_length": 512,
+          "dtype": "fp32",
+          "grouping_tag": "channel_independent_mixer_off",
+          "horizon_length": 16,
+          "layout_tag": "B_512_C",
+          "parent_length": 528
+        }
+      },
+      "lineage": {
+        "state": "resolved",
+        "value": {
+          "initialization_tag": "vanilla_pinned_checkpoint",
+          "parent_artifacts": []
+        }
+      },
+      "objective": {
+        "state": "resolved",
+        "value": {
+          "loss_tag": "native_raw_value_mse",
+          "native_horizon": 48,
+          "prediction_filter_length": 16
+        }
+      },
+      "optimization_hyperparameters": {
+        "state": "unresolved",
+        "value": null
+      },
+      "optimization_surface": {
+        "state": "resolved",
+        "value": {
+          "frozen_tag": "none",
+          "precision": "fp32",
+          "trainable_tag": "full_model"
+        }
+      },
+      "preprocessing": {
+        "state": "resolved",
+        "value": {
+          "frequency_prefix_tag": "exact_timeframe_prefix",
+          "frequency_tokens_by_timeframe": {
+            "1": 1,
+            "15": 5,
+            "3": 0,
+            "30": 6,
+            "5": 3,
+            "60": 7
+          },
+          "mask_tag": "native_observed_mask_no_future_padding",
+          "scaler_tag": "ttm_native_observed_mask",
+          "selector_id": "512-48-ft-r2.1",
+          "three_minute_prefix_id": 0
+        }
+      },
+      "target": {
+        "state": "resolved",
+        "value": {
+          "interval": [
+            512,
+            528
+          ],
+          "target_tag": "future_raw_channels"
+        }
+      },
+      "time": {
+        "state": "resolved",
+        "value": {
+          "horizon_unit": "bars",
+          "timestamp_tag": "utc_bar_close",
+          "timezone_tag": "utc"
+        }
+      }
+    },
+    "ttm_forecast_head_prefix": {
+      "export": {
+        "state": "resolved",
+        "value": {
+          "bundle_tag": "forecast_bundle",
+          "output_tag": "B_16_C"
+        }
+      },
+      "input": {
+        "state": "resolved",
+        "value": {
+          "channel_order": [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume"
+          ],
+          "context_length": 512,
+          "dtype": "fp32",
+          "grouping_tag": "channel_independent_mixer_off",
+          "horizon_length": 16,
+          "layout_tag": "B_512_C",
+          "parent_length": 528
+        }
+      },
+      "lineage": {
+        "state": "resolved",
+        "value": {
+          "initialization_tag": "vanilla_pinned_checkpoint",
+          "parent_artifacts": []
+        }
+      },
+      "objective": {
+        "state": "resolved",
+        "value": {
+          "loss_tag": "native_raw_value_mse",
+          "native_horizon": 48,
+          "prediction_filter_length": 16
+        }
+      },
+      "optimization_hyperparameters": {
+        "state": "unresolved",
+        "value": null
+      },
+      "optimization_surface": {
+        "state": "resolved",
+        "value": {
+          "frozen_tag": "backbone",
+          "precision": "fp32",
+          "trainable_tag": "head_decoder_frequency_prefix_initial"
+        }
+      },
+      "preprocessing": {
+        "state": "resolved",
+        "value": {
+          "frequency_prefix_tag": "exact_timeframe_prefix",
+          "frequency_tokens_by_timeframe": {
+            "1": 1,
+            "15": 5,
+            "3": 0,
+            "30": 6,
+            "5": 3,
+            "60": 7
+          },
+          "mask_tag": "native_observed_mask_no_future_padding",
+          "scaler_tag": "ttm_native_observed_mask",
+          "selector_id": "512-48-ft-r2.1",
+          "three_minute_prefix_id": 0
+        }
+      },
+      "target": {
+        "state": "resolved",
+        "value": {
+          "interval": [
+            512,
+            528
+          ],
+          "target_tag": "future_raw_channels"
+        }
+      },
+      "time": {
+        "state": "resolved",
+        "value": {
+          "horizon_unit": "bars",
+          "timestamp_tag": "utc_bar_close",
+          "timezone_tag": "utc"
+        }
+      }
+    },
+    "unsupported": {
+      "export": {
+        "state": "unresolved",
+        "value": null
+      },
+      "input": {
+        "state": "unresolved",
+        "value": null
+      },
+      "lineage": {
+        "state": "unresolved",
+        "value": null
+      },
+      "objective": {
+        "state": "unresolved",
+        "value": null
+      },
+      "optimization_hyperparameters": {
+        "state": "unresolved",
+        "value": null
+      },
+      "optimization_surface": {
+        "state": "unresolved",
+        "value": null
+      },
+      "preprocessing": {
+        "state": "unresolved",
+        "value": null
+      },
+      "target": {
+        "state": "unresolved",
+        "value": null
+      },
+      "time": {
+        "state": "unresolved",
+        "value": null
+      }
+    }
+  },
+  "inference_registry_schema": "ffm_native_contract_registry_v1",
+  "non_authorizing": true,
+  "policy": "blocked_non_authorizing_audit_inventory_v1",
+  "routes": {
+    "chronos_bolt:B:supervised_barrier_experimental_task": {
+      "arm_key": "chronos_bolt",
+      "blocker_tags": [
+        "project_objective_unresolved",
+        "optimization_hyperparameters_unresolved",
+        "raw_route_evidence_missing",
+        "family_catalog_review_pending",
+        "input_contract_unresolved",
+        "time_contract_unresolved",
+        "preprocessing_contract_unresolved",
+        "target_contract_unresolved",
+        "objective_contract_unresolved",
+        "optimization_surface_unresolved",
+        "lineage_contract_unresolved",
+        "export_contract_unresolved"
+      ],
+      "constraint_profile": "project_path_unresolved",
+      "evidence_id": null,
+      "method_provenance": "project_extension",
+      "pathway_kind": "optimizer_training",
+      "permitted_use_scopes": [
+        "production",
+        "research_noncommercial"
+      ],
+      "route_id": "supervised_barrier_experimental_task",
+      "status": "blocked",
+      "task_kind": "path_supervision",
+      "track": "B"
+    },
+    "chronos_bolt:F:direct_native_quantile_pinball": {
+      "arm_key": "chronos_bolt",
+      "blocker_tags": [
+        "raw_route_evidence_missing",
+        "optimization_hyperparameters_unresolved",
+        "exact_resume_unverified",
+        "export_unverified",
+        "family_catalog_review_pending"
+      ],
+      "constraint_profile": "chronos_bolt_forecast",
+      "evidence_id": null,
+      "method_provenance": "native_derived",
+      "pathway_kind": "optimizer_training",
+      "permitted_use_scopes": [
+        "production",
+        "research_noncommercial"
+      ],
+      "route_id": "direct_native_quantile_pinball",
+      "status": "blocked",
+      "task_kind": "quantile_forecast",
+      "track": "F"
+    },
+    "chronos_v1:B:supervised_barrier_experimental_task": {
+      "arm_key": "chronos_v1",
+      "blocker_tags": [
+        "project_objective_unresolved",
+        "optimization_hyperparameters_unresolved",
+        "raw_route_evidence_missing",
+        "family_catalog_review_pending",
+        "input_contract_unresolved",
+        "time_contract_unresolved",
+        "preprocessing_contract_unresolved",
+        "target_contract_unresolved",
+        "objective_contract_unresolved",
+        "optimization_surface_unresolved",
+        "lineage_contract_unresolved",
+        "export_contract_unresolved"
+      ],
+      "constraint_profile": "project_path_unresolved",
+      "evidence_id": null,
+      "method_provenance": "project_extension",
+      "pathway_kind": "optimizer_training",
+      "permitted_use_scopes": [
+        "production",
+        "research_noncommercial"
+      ],
+      "route_id": "supervised_barrier_experimental_task",
+      "status": "blocked",
+      "task_kind": "path_supervision",
+      "track": "B"
+    },
+    "chronos_v1:F:native_64_t5_token_forecast_cross_entropy": {
+      "arm_key": "chronos_v1",
+      "blocker_tags": [
+        "raw_route_evidence_missing",
+        "optimization_hyperparameters_unresolved",
+        "exact_resume_unverified",
+        "export_unverified",
+        "family_catalog_review_pending"
+      ],
+      "constraint_profile": "chronos_v1_forecast",
+      "evidence_id": null,
+      "method_provenance": "native_derived",
+      "pathway_kind": "optimizer_training",
+      "permitted_use_scopes": [
+        "production",
+        "research_noncommercial"
+      ],
+      "route_id": "native_64_t5_token_forecast_cross_entropy",
+      "status": "blocked",
+      "task_kind": "token_forecast",
+      "track": "F"
+    },
+    "chronos_v2:B:supervised_barrier_experimental_task": {
+      "arm_key": "chronos_v2",
+      "blocker_tags": [
+        "project_objective_unresolved",
+        "optimization_hyperparameters_unresolved",
+        "raw_route_evidence_missing",
+        "family_catalog_review_pending",
+        "input_contract_unresolved",
+        "time_contract_unresolved",
+        "preprocessing_contract_unresolved",
+        "target_contract_unresolved",
+        "objective_contract_unresolved",
+        "optimization_surface_unresolved",
+        "lineage_contract_unresolved",
+        "export_contract_unresolved"
+      ],
+      "constraint_profile": "project_path_unresolved",
+      "evidence_id": null,
+      "method_provenance": "project_extension",
+      "pathway_kind": "optimizer_training",
+      "permitted_use_scopes": [
+        "production",
+        "research_noncommercial"
+      ],
+      "route_id": "supervised_barrier_experimental_task",
+      "status": "blocked",
+      "task_kind": "path_supervision",
+      "track": "B"
+    },
+    "chronos_v2:F:official_fit_full": {
+      "arm_key": "chronos_v2",
+      "blocker_tags": [
+        "raw_route_evidence_missing",
+        "optimization_hyperparameters_unresolved",
+        "exact_resume_unverified",
+        "export_unverified",
+        "family_catalog_review_pending"
+      ],
+      "constraint_profile": "chronos2_full",
+      "evidence_id": null,
+      "method_provenance": "upstream_native",
+      "pathway_kind": "optimizer_training",
+      "permitted_use_scopes": [
+        "production",
+        "research_noncommercial"
+      ],
+      "route_id": "official_fit_full",
+      "status": "blocked",
+      "task_kind": "quantile_forecast",
+      "track": "F"
+    },
+    "chronos_v2:F:official_fit_lora": {
+      "arm_key": "chronos_v2",
+      "blocker_tags": [
+        "raw_route_evidence_missing",
+        "optimization_hyperparameters_unresolved",
+        "exact_resume_unverified",
+        "export_unverified",
+        "family_catalog_review_pending"
+      ],
+      "constraint_profile": "chronos2_lora",
+      "evidence_id": null,
+      "method_provenance": "upstream_native",
+      "pathway_kind": "optimizer_training",
+      "permitted_use_scopes": [
+        "production",
+        "research_noncommercial"
+      ],
+      "route_id": "official_fit_lora",
+      "status": "blocked",
+      "task_kind": "quantile_forecast",
+      "track": "F"
+    },
+    "kronos_mini:B:supervised_barrier_experimental_task": {
+      "arm_key": "kronos_mini",
+      "blocker_tags": [
+        "project_objective_unresolved",
+        "optimization_hyperparameters_unresolved",
+        "raw_route_evidence_missing",
+        "family_catalog_review_pending",
+        "input_contract_unresolved",
+        "time_contract_unresolved",
+        "preprocessing_contract_unresolved",
+        "target_contract_unresolved",
+        "objective_contract_unresolved",
+        "optimization_surface_unresolved",
+        "lineage_contract_unresolved",
+        "export_contract_unresolved"
+      ],
+      "constraint_profile": "project_path_unresolved",
+      "evidence_id": null,
+      "method_provenance": "project_extension",
+      "pathway_kind": "optimizer_training",
+      "permitted_use_scopes": [
+        "production",
+        "research_noncommercial"
+      ],
+      "route_id": "supervised_barrier_experimental_task",
+      "status": "blocked",
+      "task_kind": "path_supervision",
+      "track": "B"
+    },
+    "kronos_mini:F:hierarchical_autoregressive_tokens": {
+      "arm_key": "kronos_mini",
+      "blocker_tags": [
+        "raw_route_evidence_missing",
+        "optimization_hyperparameters_unresolved",
+        "exact_resume_unverified",
+        "export_unverified",
+        "family_catalog_review_pending",
+        "preprocessing_contract_unresolved"
+      ],
+      "constraint_profile": "kronos_mini_predictor",
+      "evidence_id": null,
+      "method_provenance": "native_derived",
+      "pathway_kind": "optimizer_training",
+      "permitted_use_scopes": [
+        "production",
+        "research_noncommercial"
+      ],
+      "route_id": "hierarchical_autoregressive_tokens",
+      "status": "blocked",
+      "task_kind": "token_forecast",
+      "track": "F"
+    },
+    "kronos_mini:F:tokenizer_reconstruction_bsq": {
+      "arm_key": "kronos_mini",
+      "blocker_tags": [
+        "raw_route_evidence_missing",
+        "optimization_hyperparameters_unresolved",
+        "exact_resume_unverified",
+        "export_unverified",
+        "family_catalog_review_pending",
+        "preprocessing_contract_unresolved"
+      ],
+      "constraint_profile": "kronos_mini_tokenizer",
+      "evidence_id": null,
+      "method_provenance": "native_derived",
+      "pathway_kind": "optimizer_training",
+      "permitted_use_scopes": [
+        "production",
+        "research_noncommercial"
+      ],
+      "route_id": "tokenizer_reconstruction_bsq",
+      "status": "blocked",
+      "task_kind": "tokenizer_reconstruction",
+      "track": "F"
+    },
+    "kronos_mini:R:adjacent_half_contrastive": {
+      "arm_key": "kronos_mini",
+      "blocker_tags": [
+        "project_objective_unresolved",
+        "optimization_hyperparameters_unresolved",
+        "raw_route_evidence_missing",
+        "family_catalog_review_pending",
+        "input_contract_unresolved",
+        "time_contract_unresolved",
+        "preprocessing_contract_unresolved",
+        "target_contract_unresolved",
+        "objective_contract_unresolved",
+        "optimization_surface_unresolved",
+        "lineage_contract_unresolved",
+        "export_contract_unresolved"
+      ],
+      "constraint_profile": "project_contrastive_unresolved",
+      "evidence_id": null,
+      "method_provenance": "project_extension",
+      "pathway_kind": "optimizer_training",
+      "permitted_use_scopes": [
+        "production",
+        "research_noncommercial"
+      ],
+      "route_id": "adjacent_half_contrastive",
+      "status": "blocked",
+      "task_kind": "contrastive_representation",
+      "track": "R"
+    },
+    "kronos_small:B:supervised_barrier_experimental_task": {
+      "arm_key": "kronos_small",
+      "blocker_tags": [
+        "project_objective_unresolved",
+        "optimization_hyperparameters_unresolved",
+        "raw_route_evidence_missing",
+        "family_catalog_review_pending",
+        "input_contract_unresolved",
+        "time_contract_unresolved",
+        "preprocessing_contract_unresolved",
+        "target_contract_unresolved",
+        "objective_contract_unresolved",
+        "optimization_surface_unresolved",
+        "lineage_contract_unresolved",
+        "export_contract_unresolved"
+      ],
+      "constraint_profile": "project_path_unresolved",
+      "evidence_id": null,
+      "method_provenance": "project_extension",
+      "pathway_kind": "optimizer_training",
+      "permitted_use_scopes": [
+        "production",
+        "research_noncommercial"
+      ],
+      "route_id": "supervised_barrier_experimental_task",
+      "status": "blocked",
+      "task_kind": "path_supervision",
+      "track": "B"
+    },
+    "kronos_small:F:hierarchical_autoregressive_tokens": {
+      "arm_key": "kronos_small",
+      "blocker_tags": [
+        "raw_route_evidence_missing",
+        "optimization_hyperparameters_unresolved",
+        "exact_resume_unverified",
+        "export_unverified",
+        "family_catalog_review_pending",
+        "preprocessing_contract_unresolved"
+      ],
+      "constraint_profile": "kronos_small_predictor",
+      "evidence_id": null,
+      "method_provenance": "native_derived",
+      "pathway_kind": "optimizer_training",
+      "permitted_use_scopes": [
+        "production",
+        "research_noncommercial"
+      ],
+      "route_id": "hierarchical_autoregressive_tokens",
+      "status": "blocked",
+      "task_kind": "token_forecast",
+      "track": "F"
+    },
+    "kronos_small:F:tokenizer_reconstruction_bsq": {
+      "arm_key": "kronos_small",
+      "blocker_tags": [
+        "raw_route_evidence_missing",
+        "optimization_hyperparameters_unresolved",
+        "exact_resume_unverified",
+        "export_unverified",
+        "family_catalog_review_pending",
+        "preprocessing_contract_unresolved"
+      ],
+      "constraint_profile": "kronos_small_tokenizer",
+      "evidence_id": null,
+      "method_provenance": "native_derived",
+      "pathway_kind": "optimizer_training",
+      "permitted_use_scopes": [
+        "production",
+        "research_noncommercial"
+      ],
+      "route_id": "tokenizer_reconstruction_bsq",
+      "status": "blocked",
+      "task_kind": "tokenizer_reconstruction",
+      "track": "F"
+    },
+    "kronos_small:R:adjacent_half_contrastive": {
+      "arm_key": "kronos_small",
+      "blocker_tags": [
+        "project_objective_unresolved",
+        "optimization_hyperparameters_unresolved",
+        "raw_route_evidence_missing",
+        "family_catalog_review_pending",
+        "input_contract_unresolved",
+        "time_contract_unresolved",
+        "preprocessing_contract_unresolved",
+        "target_contract_unresolved",
+        "objective_contract_unresolved",
+        "optimization_surface_unresolved",
+        "lineage_contract_unresolved",
+        "export_contract_unresolved"
+      ],
+      "constraint_profile": "project_contrastive_unresolved",
+      "evidence_id": null,
+      "method_provenance": "project_extension",
+      "pathway_kind": "optimizer_training",
+      "permitted_use_scopes": [
+        "production",
+        "research_noncommercial"
+      ],
+      "route_id": "adjacent_half_contrastive",
+      "status": "blocked",
+      "task_kind": "contrastive_representation",
+      "track": "R"
+    },
+    "mantis_v1:B:supervised_barrier_experimental_task": {
+      "arm_key": "mantis_v1",
+      "blocker_tags": [
+        "project_objective_unresolved",
+        "optimization_hyperparameters_unresolved",
+        "raw_route_evidence_missing",
+        "family_catalog_review_pending",
+        "input_contract_unresolved",
+        "time_contract_unresolved",
+        "preprocessing_contract_unresolved",
+        "target_contract_unresolved",
+        "objective_contract_unresolved",
+        "optimization_surface_unresolved",
+        "lineage_contract_unresolved",
+        "export_contract_unresolved"
+      ],
+      "constraint_profile": "project_path_unresolved",
+      "evidence_id": null,
+      "method_provenance": "project_extension",
+      "pathway_kind": "optimizer_training",
+      "permitted_use_scopes": [
+        "production",
+        "research_noncommercial"
+      ],
+      "route_id": "supervised_barrier_experimental_task",
+      "status": "blocked",
+      "task_kind": "path_supervision",
+      "track": "B"
+    },
+    "mantis_v1:C:supervised_classification_full": {
+      "arm_key": "mantis_v1",
+      "blocker_tags": [
+        "raw_route_evidence_missing",
+        "optimization_hyperparameters_unresolved",
+        "exact_resume_unverified",
+        "export_unverified",
+        "family_catalog_review_pending"
+      ],
+      "constraint_profile": "mantis_v1_classifier_full",
+      "evidence_id": null,
+      "method_provenance": "upstream_native",
+      "pathway_kind": "optimizer_training",
+      "permitted_use_scopes": [
+        "production",
+        "research_noncommercial"
+      ],
+      "route_id": "supervised_classification_full",
+      "status": "blocked",
+      "task_kind": "classification",
+      "track": "C"
+    },
+    "mantis_v1:C:supervised_classification_head": {
+      "arm_key": "mantis_v1",
+      "blocker_tags": [
+        "raw_route_evidence_missing",
+        "optimization_hyperparameters_unresolved",
+        "exact_resume_unverified",
+        "export_unverified",
+        "family_catalog_review_pending"
+      ],
+      "constraint_profile": "mantis_v1_classifier_head",
+      "evidence_id": null,
+      "method_provenance": "upstream_native",
+      "pathway_kind": "optimizer_training",
+      "permitted_use_scopes": [
+        "production",
+        "research_noncommercial"
+      ],
+      "route_id": "supervised_classification_head",
+      "status": "blocked",
+      "task_kind": "classification",
+      "track": "C"
+    },
+    "mantis_v1:R:official_crop_resize_contrastive": {
+      "arm_key": "mantis_v1",
+      "blocker_tags": [
+        "raw_route_evidence_missing",
+        "optimization_hyperparameters_unresolved",
+        "exact_resume_unverified",
+        "export_unverified",
+        "family_catalog_review_pending"
+      ],
+      "constraint_profile": "mantis_v1_contrastive",
+      "evidence_id": null,
+      "method_provenance": "upstream_native",
+      "pathway_kind": "optimizer_training",
+      "permitted_use_scopes": [
+        "production",
+        "research_noncommercial"
+      ],
+      "route_id": "official_crop_resize_contrastive",
+      "status": "blocked",
+      "task_kind": "contrastive_representation",
+      "track": "R"
+    },
+    "mantis_v2:B:supervised_barrier_experimental_task": {
+      "arm_key": "mantis_v2",
+      "blocker_tags": [
+        "project_objective_unresolved",
+        "optimization_hyperparameters_unresolved",
+        "raw_route_evidence_missing",
+        "family_catalog_review_pending",
+        "input_contract_unresolved",
+        "time_contract_unresolved",
+        "preprocessing_contract_unresolved",
+        "target_contract_unresolved",
+        "objective_contract_unresolved",
+        "optimization_surface_unresolved",
+        "lineage_contract_unresolved",
+        "export_contract_unresolved"
+      ],
+      "constraint_profile": "project_path_unresolved",
+      "evidence_id": null,
+      "method_provenance": "project_extension",
+      "pathway_kind": "optimizer_training",
+      "permitted_use_scopes": [
+        "production",
+        "research_noncommercial"
+      ],
+      "route_id": "supervised_barrier_experimental_task",
+      "status": "blocked",
+      "task_kind": "path_supervision",
+      "track": "B"
+    },
+    "mantis_v2:C:supervised_classification_full": {
+      "arm_key": "mantis_v2",
+      "blocker_tags": [
+        "raw_route_evidence_missing",
+        "optimization_hyperparameters_unresolved",
+        "exact_resume_unverified",
+        "export_unverified",
+        "family_catalog_review_pending"
+      ],
+      "constraint_profile": "mantis_v2_classifier_full",
+      "evidence_id": null,
+      "method_provenance": "upstream_native",
+      "pathway_kind": "optimizer_training",
+      "permitted_use_scopes": [
+        "production",
+        "research_noncommercial"
+      ],
+      "route_id": "supervised_classification_full",
+      "status": "blocked",
+      "task_kind": "classification",
+      "track": "C"
+    },
+    "mantis_v2:C:supervised_classification_head": {
+      "arm_key": "mantis_v2",
+      "blocker_tags": [
+        "raw_route_evidence_missing",
+        "optimization_hyperparameters_unresolved",
+        "exact_resume_unverified",
+        "export_unverified",
+        "family_catalog_review_pending"
+      ],
+      "constraint_profile": "mantis_v2_classifier_head",
+      "evidence_id": null,
+      "method_provenance": "upstream_native",
+      "pathway_kind": "optimizer_training",
+      "permitted_use_scopes": [
+        "production",
+        "research_noncommercial"
+      ],
+      "route_id": "supervised_classification_head",
+      "status": "blocked",
+      "task_kind": "classification",
+      "track": "C"
+    },
+    "mantis_v2:R:official_crop_resize_contrastive": {
+      "arm_key": "mantis_v2",
+      "blocker_tags": [
+        "raw_route_evidence_missing",
+        "optimization_hyperparameters_unresolved",
+        "exact_resume_unverified",
+        "export_unverified",
+        "family_catalog_review_pending"
+      ],
+      "constraint_profile": "mantis_v2_contrastive",
+      "evidence_id": null,
+      "method_provenance": "upstream_native",
+      "pathway_kind": "optimizer_training",
+      "permitted_use_scopes": [
+        "production",
+        "research_noncommercial"
+      ],
+      "route_id": "official_crop_resize_contrastive",
+      "status": "blocked",
+      "task_kind": "contrastive_representation",
+      "track": "R"
+    },
+    "moirai2_small:B:custom_supervised_barrier_research": {
+      "arm_key": "moirai2_small",
+      "blocker_tags": [
+        "project_objective_unresolved",
+        "optimization_hyperparameters_unresolved",
+        "raw_route_evidence_missing",
+        "family_catalog_review_pending",
+        "input_contract_unresolved",
+        "time_contract_unresolved",
+        "preprocessing_contract_unresolved",
+        "target_contract_unresolved",
+        "objective_contract_unresolved",
+        "optimization_surface_unresolved",
+        "lineage_contract_unresolved",
+        "export_contract_unresolved"
+      ],
+      "constraint_profile": "project_path_unresolved",
+      "evidence_id": null,
+      "method_provenance": "project_extension",
+      "pathway_kind": "optimizer_training",
+      "permitted_use_scopes": [
+        "research_noncommercial"
+      ],
+      "route_id": "custom_supervised_barrier_research",
+      "status": "blocked",
+      "task_kind": "path_supervision",
+      "track": "B"
+    },
+    "moirai2_small:F:custom_scaled_pinball_research": {
+      "arm_key": "moirai2_small",
+      "blocker_tags": [
+        "raw_route_evidence_missing",
+        "optimization_hyperparameters_unresolved",
+        "exact_resume_unverified",
+        "export_unverified",
+        "family_catalog_review_pending"
+      ],
+      "constraint_profile": "moirai_custom",
+      "evidence_id": null,
+      "method_provenance": "project_extension",
+      "pathway_kind": "optimizer_training",
+      "permitted_use_scopes": [
+        "research_noncommercial"
+      ],
+      "route_id": "custom_scaled_pinball_research",
+      "status": "blocked",
+      "task_kind": "quantile_forecast",
+      "track": "F"
+    },
+    "moment_small:B:supervised_barrier_experimental_task": {
+      "arm_key": "moment_small",
+      "blocker_tags": [
+        "project_objective_unresolved",
+        "optimization_hyperparameters_unresolved",
+        "raw_route_evidence_missing",
+        "family_catalog_review_pending",
+        "input_contract_unresolved",
+        "time_contract_unresolved",
+        "preprocessing_contract_unresolved",
+        "target_contract_unresolved",
+        "objective_contract_unresolved",
+        "optimization_surface_unresolved",
+        "lineage_contract_unresolved",
+        "export_contract_unresolved"
+      ],
+      "constraint_profile": "project_path_unresolved",
+      "evidence_id": null,
+      "method_provenance": "project_extension",
+      "pathway_kind": "optimizer_training",
+      "permitted_use_scopes": [
+        "production",
+        "research_noncommercial"
+      ],
+      "route_id": "supervised_barrier_experimental_task",
+      "status": "blocked",
+      "task_kind": "path_supervision",
+      "track": "B"
+    },
+    "moment_small:C:classification_full": {
+      "arm_key": "moment_small",
+      "blocker_tags": [
+        "raw_route_evidence_missing",
+        "optimization_hyperparameters_unresolved",
+        "exact_resume_unverified",
+        "export_unverified",
+        "family_catalog_review_pending"
+      ],
+      "constraint_profile": "moment_classification_full",
+      "evidence_id": null,
+      "method_provenance": "upstream_native",
+      "pathway_kind": "optimizer_training",
+      "permitted_use_scopes": [
+        "production",
+        "research_noncommercial"
+      ],
+      "route_id": "classification_full",
+      "status": "blocked",
+      "task_kind": "classification",
+      "track": "C"
+    },
+    "moment_small:C:classification_head_only": {
+      "arm_key": "moment_small",
+      "blocker_tags": [
+        "raw_route_evidence_missing",
+        "optimization_hyperparameters_unresolved",
+        "exact_resume_unverified",
+        "export_unverified",
+        "family_catalog_review_pending"
+      ],
+      "constraint_profile": "moment_classification_head",
+      "evidence_id": null,
+      "method_provenance": "upstream_native",
+      "pathway_kind": "optimizer_training",
+      "permitted_use_scopes": [
+        "production",
+        "research_noncommercial"
+      ],
+      "route_id": "classification_head_only",
+      "status": "blocked",
+      "task_kind": "classification",
+      "track": "C"
+    },
+    "moment_small:F:forecast_full_raw_mse": {
+      "arm_key": "moment_small",
+      "blocker_tags": [
+        "raw_route_evidence_missing",
+        "optimization_hyperparameters_unresolved",
+        "exact_resume_unverified",
+        "export_unverified",
+        "family_catalog_review_pending"
+      ],
+      "constraint_profile": "moment_forecast_full",
+      "evidence_id": null,
+      "method_provenance": "native_derived",
+      "pathway_kind": "optimizer_training",
+      "permitted_use_scopes": [
+        "production",
+        "research_noncommercial"
+      ],
+      "route_id": "forecast_full_raw_mse",
+      "status": "blocked",
+      "task_kind": "continuous_forecast",
+      "track": "F"
+    },
+    "moment_small:F:forecast_head_only_raw_mse": {
+      "arm_key": "moment_small",
+      "blocker_tags": [
+        "raw_route_evidence_missing",
+        "optimization_hyperparameters_unresolved",
+        "exact_resume_unverified",
+        "export_unverified",
+        "family_catalog_review_pending"
+      ],
+      "constraint_profile": "moment_forecast_head",
+      "evidence_id": null,
+      "method_provenance": "upstream_native",
+      "pathway_kind": "optimizer_training",
+      "permitted_use_scopes": [
+        "production",
+        "research_noncommercial"
+      ],
+      "route_id": "forecast_head_only_raw_mse",
+      "status": "blocked",
+      "task_kind": "continuous_forecast",
+      "track": "F"
+    },
+    "moment_small:R:adjacent_half_contrastive": {
+      "arm_key": "moment_small",
+      "blocker_tags": [
+        "project_objective_unresolved",
+        "optimization_hyperparameters_unresolved",
+        "raw_route_evidence_missing",
+        "family_catalog_review_pending",
+        "input_contract_unresolved",
+        "time_contract_unresolved",
+        "preprocessing_contract_unresolved",
+        "target_contract_unresolved",
+        "objective_contract_unresolved",
+        "optimization_surface_unresolved",
+        "lineage_contract_unresolved",
+        "export_contract_unresolved"
+      ],
+      "constraint_profile": "project_contrastive_unresolved",
+      "evidence_id": null,
+      "method_provenance": "project_extension",
+      "pathway_kind": "optimizer_training",
+      "permitted_use_scopes": [
+        "production",
+        "research_noncommercial"
+      ],
+      "route_id": "adjacent_half_contrastive",
+      "status": "blocked",
+      "task_kind": "contrastive_representation",
+      "track": "R"
+    },
+    "moment_small:R:masked_patch_reconstruction": {
+      "arm_key": "moment_small",
+      "blocker_tags": [
+        "raw_route_evidence_missing",
+        "optimization_hyperparameters_unresolved",
+        "exact_resume_unverified",
+        "export_unverified",
+        "family_catalog_review_pending"
+      ],
+      "constraint_profile": "moment_reconstruction",
+      "evidence_id": null,
+      "method_provenance": "upstream_native",
+      "pathway_kind": "optimizer_training",
+      "permitted_use_scopes": [
+        "production",
+        "research_noncommercial"
+      ],
+      "route_id": "masked_patch_reconstruction",
+      "status": "blocked",
+      "task_kind": "masked_reconstruction",
+      "track": "R"
+    },
+    "sundial_base:F:custom_timeflow_research": {
+      "arm_key": "sundial_base",
+      "blocker_tags": [
+        "raw_route_evidence_missing",
+        "optimization_hyperparameters_unresolved",
+        "exact_resume_unverified",
+        "export_unverified",
+        "family_catalog_review_pending",
+        "time_contract_unresolved",
+        "preprocessing_contract_unresolved",
+        "target_contract_unresolved",
+        "optimization_surface_unresolved",
+        "lineage_contract_unresolved",
+        "export_contract_unresolved"
+      ],
+      "constraint_profile": "sundial_timeflow",
+      "evidence_id": null,
+      "method_provenance": "project_extension",
+      "pathway_kind": "optimizer_training",
+      "permitted_use_scopes": [
+        "research_noncommercial"
+      ],
+      "route_id": "custom_timeflow_research",
+      "status": "blocked",
+      "task_kind": "generative_forecast",
+      "track": "F"
+    },
+    "sundial_base:F:no_released_sundial_finetuning": {
+      "arm_key": "sundial_base",
+      "blocker_tags": [
+        "no_upstream_training_api",
+        "input_contract_unresolved",
+        "time_contract_unresolved",
+        "preprocessing_contract_unresolved",
+        "target_contract_unresolved",
+        "objective_contract_unresolved",
+        "optimization_surface_unresolved",
+        "lineage_contract_unresolved",
+        "export_contract_unresolved"
+      ],
+      "constraint_profile": "unsupported",
+      "evidence_id": null,
+      "method_provenance": "unsupported",
+      "pathway_kind": "unsupported",
+      "permitted_use_scopes": [],
+      "route_id": "no_released_sundial_finetuning",
+      "status": "blocked",
+      "task_kind": "unsupported",
+      "track": "F"
+    },
+    "sundial_base:R:nonfinite_hidden_state_representation": {
+      "arm_key": "sundial_base",
+      "blocker_tags": [
+        "nonfinite_hidden_states",
+        "input_contract_unresolved",
+        "time_contract_unresolved",
+        "preprocessing_contract_unresolved",
+        "target_contract_unresolved",
+        "objective_contract_unresolved",
+        "optimization_surface_unresolved",
+        "lineage_contract_unresolved",
+        "export_contract_unresolved"
+      ],
+      "constraint_profile": "unsupported",
+      "evidence_id": null,
+      "method_provenance": "unsupported",
+      "pathway_kind": "unsupported",
+      "permitted_use_scopes": [],
+      "route_id": "nonfinite_hidden_state_representation",
+      "status": "blocked",
+      "task_kind": "unsupported",
+      "track": "R"
+    },
+    "tabpfn_ts3_forecast:F:official_ts3_support_query_forecast": {
+      "arm_key": "tabpfn_ts3_forecast",
+      "blocker_tags": [
+        "terms_unaccepted",
+        "checkpoint_unavailable",
+        "checkpoint_hash_unavailable",
+        "native_output_parity_missing",
+        "input_contract_unresolved",
+        "time_contract_unresolved"
+      ],
+      "constraint_profile": "tabpfn_ts3_support_query",
+      "evidence_id": null,
+      "method_provenance": "upstream_native",
+      "pathway_kind": "in_context_fit",
+      "permitted_use_scopes": [],
+      "route_id": "official_ts3_support_query_forecast",
+      "status": "blocked",
+      "task_kind": "support_query_forecast",
+      "track": "F"
+    },
+    "tabpfn_v3_downstream:D:nested_downstream_support_query": {
+      "arm_key": "tabpfn_v3_downstream",
+      "blocker_tags": [
+        "terms_unaccepted",
+        "checkpoint_unavailable",
+        "model_identity_unresolved",
+        "native_output_parity_missing",
+        "input_contract_unresolved"
+      ],
+      "constraint_profile": "tabpfn_v3_downstream",
+      "evidence_id": null,
+      "method_provenance": "upstream_native",
+      "pathway_kind": "in_context_fit",
+      "permitted_use_scopes": [],
+      "route_id": "nested_downstream_support_query",
+      "status": "blocked",
+      "task_kind": "support_query_downstream",
+      "track": "D"
+    },
+    "timesfm25:B:supervised_barrier_experimental_task": {
+      "arm_key": "timesfm25",
+      "blocker_tags": [
+        "project_objective_unresolved",
+        "optimization_hyperparameters_unresolved",
+        "raw_route_evidence_missing",
+        "family_catalog_review_pending",
+        "input_contract_unresolved",
+        "time_contract_unresolved",
+        "preprocessing_contract_unresolved",
+        "target_contract_unresolved",
+        "objective_contract_unresolved",
+        "optimization_surface_unresolved",
+        "lineage_contract_unresolved",
+        "export_contract_unresolved"
+      ],
+      "constraint_profile": "project_path_unresolved",
+      "evidence_id": null,
+      "method_provenance": "project_extension",
+      "pathway_kind": "optimizer_training",
+      "permitted_use_scopes": [
+        "production",
+        "research_noncommercial"
+      ],
+      "route_id": "supervised_barrier_experimental_task",
+      "status": "blocked",
+      "task_kind": "path_supervision",
+      "track": "B"
+    },
+    "timesfm25:F:official_lora_forecast": {
+      "arm_key": "timesfm25",
+      "blocker_tags": [
+        "raw_route_evidence_missing",
+        "optimization_hyperparameters_unresolved",
+        "exact_resume_unverified",
+        "export_unverified",
+        "family_catalog_review_pending"
+      ],
+      "constraint_profile": "timesfm_lora",
+      "evidence_id": null,
+      "method_provenance": "upstream_native",
+      "pathway_kind": "optimizer_training",
+      "permitted_use_scopes": [
+        "production",
+        "research_noncommercial"
+      ],
+      "route_id": "official_lora_forecast",
+      "status": "blocked",
+      "task_kind": "quantile_forecast",
+      "track": "F"
+    },
+    "toto2_22m:F:no_released_toto2_finetuning": {
+      "arm_key": "toto2_22m",
+      "blocker_tags": [
+        "no_upstream_training_api",
+        "input_contract_unresolved",
+        "time_contract_unresolved",
+        "preprocessing_contract_unresolved",
+        "target_contract_unresolved",
+        "objective_contract_unresolved",
+        "optimization_surface_unresolved",
+        "lineage_contract_unresolved",
+        "export_contract_unresolved"
+      ],
+      "constraint_profile": "unsupported",
+      "evidence_id": null,
+      "method_provenance": "unsupported",
+      "pathway_kind": "unsupported",
+      "permitted_use_scopes": [],
+      "route_id": "no_released_toto2_finetuning",
+      "status": "blocked",
+      "task_kind": "unsupported",
+      "track": "F"
+    },
+    "ttm_r2:F:full_model_raw_hf_trainer_forecast": {
+      "arm_key": "ttm_r2",
+      "blocker_tags": [
+        "raw_route_evidence_missing",
+        "optimization_hyperparameters_unresolved",
+        "exact_resume_unverified",
+        "export_unverified",
+        "family_catalog_review_pending"
+      ],
+      "constraint_profile": "ttm_forecast_full",
+      "evidence_id": null,
+      "method_provenance": "upstream_native",
+      "pathway_kind": "optimizer_training",
+      "permitted_use_scopes": [
+        "production",
+        "research_noncommercial"
+      ],
+      "route_id": "full_model_raw_hf_trainer_forecast",
+      "status": "blocked",
+      "task_kind": "continuous_forecast",
+      "track": "F"
+    },
+    "ttm_r2:F:head_prefix_raw_hf_trainer_forecast": {
+      "arm_key": "ttm_r2",
+      "blocker_tags": [
+        "raw_route_evidence_missing",
+        "optimization_hyperparameters_unresolved",
+        "exact_resume_unverified",
+        "export_unverified",
+        "family_catalog_review_pending"
+      ],
+      "constraint_profile": "ttm_forecast_head_prefix",
+      "evidence_id": null,
+      "method_provenance": "upstream_native",
+      "pathway_kind": "optimizer_training",
+      "permitted_use_scopes": [
+        "production",
+        "research_noncommercial"
+      ],
+      "route_id": "head_prefix_raw_hf_trainer_forecast",
+      "status": "blocked",
+      "task_kind": "continuous_forecast",
+      "track": "F"
+    }
+  },
+  "schema_version": "ffm_native_family_route_catalog_v2"
+}

@@ -206,6 +206,8 @@ def _native_loss(candidate, pipeline, model, parent, device, *, chronos2_mode,
 
 
 def train(args):
+    from futures_foundation.finetune.native_training_routes import block_unadmitted_optimizer
+    block_unadmitted_optimizer("scripts.train_chronos_tournament.train")
     import torch
     if args.family not in CANDIDATES:
         raise ValueError(f"unsupported Chronos family: {args.family}")
