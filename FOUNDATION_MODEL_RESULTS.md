@@ -1,9 +1,22 @@
 # Foundation Model Tournament
 Generated from the sealed tournament artifacts on 2026-07-16.
 
+> **Historical adapter-contract warning:** This report records the exact outputs of the original
+> project adapters. It is not a ranking of the best correctly configured version of every model.
+> Subsequent native-contract audit found invalid or noncanonical arms, including the wrong tokenizer
+> for Kronos Mini, artificial trailing-zero padding for TTM representations, unsupported Toto
+> training, failed Sundial hidden-state extraction, noncanonical Mantis preprocessing/extraction and
+> custom hidden-state pooling across several forecast families. Preserve the numbers as historical
+> diagnostics and use
+> [FOUNDATION_MODEL_NATIVE_CONTRACT_PLAN.md](FOUNDATION_MODEL_NATIVE_CONTRACT_PLAN.md) for all new
+> work.
+
 ## Executive verdict
 
-The cross-family representation evaluation is complete for 12 trainable encoder arms across vanilla, Stage 1, Stage 2, and Stage 3 checkpoints. That produced 48 evaluated representations: 12 vanilla baselines and 36 trained stage checkpoints. Sundial and TabPFN-TS have explicit coverage exceptions described below.
+Under the historical protocol, the cross-family representation evaluation produced 48 scored
+adapter outputs: 12 vanilla baselines and 36 project-trained stage checkpoints. “Trainable encoder
+arm” and stage completion below describe that historical protocol, not native-contract admission.
+Sundial and TabPFN-TS have explicit coverage exceptions described below.
 
 The result is not a model ready for strategy promotion:
 
@@ -147,7 +160,7 @@ Vanilla controls are essential because a trained checkpoint is only useful if ad
 | Moirai-2 Small | Complete | Complete | Complete | Fully evaluated. |
 | Mantis V1 | Complete | Diagnostic | Diagnostic | Stage 1 failed the locked canonical gate; later checkpoints were not promoted. |
 | Mantis V2 | Complete | Diagnostic | Diagnostic | Stage 1 failed the locked canonical gate; later checkpoints were not promoted. |
-| Toto-2 22M | Complete | Complete | Complete | Fully evaluated. |
+| Toto-2 22M | Complete | Complete | Complete | Historical custom training completed; later native-contract audit classifies it as unsupported native adaptation. |
 | Sundial Base | Blocked | Blocked | Blocked | Native hidden states became non-finite on real OHLCV at the first attention layer, including float32 and normalized smoke paths. Forecast samples were finite, but no valid frozen representation could be exported. |
 | TabPFN-TS | Not applicable | Not applicable | Not applicable | In-context downstream model; it has no persistent staged encoder checkpoint matching this Stage 1→2→3 representation protocol. It belongs in downstream probe comparisons, not this encoder table. |
 
@@ -212,7 +225,9 @@ Sundial and TabPFN-TS must not be represented as zero-scoring models. One is blo
 
 - Toto is unusually stable across stages. Its scores barely move, suggesting either robust pretrained features or weak adaptation leverage under the current trainable path.
 - Stage 3 has the best Toto forward-move score (-0.0945), a small +0.0053 improvement versus vanilla, while volatility and future-direction scores regress.
-- The Stage 1/2/3 checkpoints are genuine trained artifacts, not frozen placeholders. The recorded Toto details are:
+- The Stage 1/2/3 checkpoints are genuine project-trained artifacts rather than frozen placeholders,
+  but the later native-contract audit classifies that training path as unsupported custom
+  adaptation. The recorded historical details are:
 
 | Stage | Best validation loss | First gradient norm | Examples processed | Checkpoint SHA-256 |
 |---|---:|---:|---:|---|
@@ -310,4 +325,6 @@ This is a research shortlist, not a deployment ranking:
 
 ## Final decision
 
-Do not scale the present Stage 1→2→3 recipe unchanged. Preserve the current checkpoints as controls, redesign Stage 2 and Stage 3 on a small bounded subset, demand per-target forward improvement across folds and seeds, and only then spend compute on another full 54-stream tournament and strategy evaluation.
+Do not scale or redesign the universal Stage 1→2→3 recipe. Preserve the checkpoints as historical
+adapter controls and complete the native-contract admission, parity, frozen-baseline and identical
+downstream-ruler phases before authorizing any family-specific adaptation.

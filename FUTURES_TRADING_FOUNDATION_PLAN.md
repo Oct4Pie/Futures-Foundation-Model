@@ -1,6 +1,6 @@
 # Futures Trading Foundation-Model Execution Plan
 
-Status: **active source of truth**
+Status: **active for downstream trading, data and evaluation policy**
 Frozen on: 2026-07-16
 Scope: ES, NQ, RTY, YM, GC, SI, CL, ZB and ZN at 1/3/5/15/30/60-minute bars
 
@@ -8,6 +8,12 @@ This plan supersedes conflicting execution-order and OOS-language in older TODO 
 not erase completed tournament evidence or authorize new full-model training. Training is funded
 only after the downstream decision gate below shows that representation quality is the binding
 constraint.
+
+Foundation-model input, extraction, native task, adaptation, parity and cross-family methodology
+are now governed by
+[FOUNDATION_MODEL_NATIVE_CONTRACT_PLAN.md](FOUNDATION_MODEL_NATIVE_CONTRACT_PLAN.md). Where this
+document names universal stages or a historical Mantis contract, the native-contract plan
+overrides it. Passing a model dossier alone does not authorize training.
 
 ## 1. Trading objective
 
@@ -274,8 +280,9 @@ The Gate 3 causal ruler and the original 48-arm frozen representation screen are
 [DOWNSTREAM_GATE_BASELINE_RESULTS.md](DOWNSTREAM_GATE_BASELINE_RESULTS.md). It uses a sealed,
 stream-balanced 64,800-row sample, six timeframe-specific purged fold contracts, linear and
 constrained-XGBoost heads, three negative-control types, 6,550,592 saved row predictions and paired
-weekly-block uncertainty. The sealed cross-family screen contains 48 representations from 12
-trainable encoder arms; see [FOUNDATION_MODEL_RESULTS.md](FOUNDATION_MODEL_RESULTS.md).
+weekly-block uncertainty. Under the historical adapter protocol, the sealed cross-family screen
+contains 48 representations from 12 project-trainable configurations; native-contract admission
+was incomplete. See [FOUNDATION_MODEL_RESULTS.md](FOUNDATION_MODEL_RESULTS.md).
 
 The first 54-policy cost-aware screen remains diagnostic because it fit heads on only part of the
 development year and used a raw zero threshold. The corrected full-history ruler is now complete;

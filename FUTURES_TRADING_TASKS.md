@@ -231,6 +231,9 @@ verification item is also checked.
   The current evidence is 45.0M one-minute rows in the nine-root FFM corpus and 15.59B admitted
   tick rows across 43 roots before 2026. General depth and Databento use remains blocked. See
   [DATA_SCALE_AUDIT.md](DATA_SCALE_AUDIT.md).
+- [ ] **BLOCKED BY NATIVE-CONTRACT GATE:** complete the model-by-model admission and parity work in
+  [FOUNDATION_MODEL_NATIVE_CONTRACT_TASKS.md](FOUNDATION_MODEL_NATIVE_CONTRACT_TASKS.md). Corpus v3
+  materialization and all new training remain prohibited until the relevant families pass.
 - [ ] Pin a Corpus v3 development contract to the admitted Sierra tick source, registry,
   admission artifact, loader, instrument economics and lake hash-of-hashes.
 - [ ] Produce a root-by-year liquidity, continuity, roll and gap matrix; select roots without
