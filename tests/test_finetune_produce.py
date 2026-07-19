@@ -36,9 +36,40 @@ class SyntheticLabeler:
     def mv_feature_names(self):
         return [f'ch{i}' for i in range(self.C)]
 
+    def sample_time_bounds_ns(self, keys):
+        rows = np.asarray([int(key[0]) for key in keys], dtype=np.int64)
+        starts = np.maximum(rows - self.seq + 1, 0)
+        return np.column_stack((self.ts.asi8[starts], self.ts.asi8[rows], self.ts.asi8[rows]))
+
     def evaluate(self, keys, preds):
         return np.array([(2.0 if self.y[k[0]] == 1 else -1.0)
                          for k, p in zip(keys, preds) if p == 1])
+
+
+def test_validation_split_is_temporal_strictly_purged_and_fail_closed():
+    class Labeler:
+        def sample_time_bounds_ns(self, keys):
+            rows = np.asarray([key[0] for key in keys], dtype=np.int64)
+            return np.column_stack((np.maximum(rows - 9, 0), rows, rows + 3))
+
+    keys = [(index,) for index in range(20)]
+    validation, train = produce._val_split(keys, 0.2, Labeler())
+    np.testing.assert_array_equal(validation, np.arange(16, 20))
+    first_validation_context = 16 - 9
+    assert np.all(np.asarray([keys[index][0] for index in train]) + 3 < first_validation_context)
+
+    with pytest.raises(ValueError, match="must implement sample_time_bounds_ns"):
+        produce._val_split(keys, 0.2, object())
+    with pytest.raises(ValueError, match="not time ordered"):
+        produce._val_split([(index,) for index in [0, 1, 3, 2, *range(4, 20)]], 0.2, Labeler())
+
+    class LongOutcome:
+        def sample_time_bounds_ns(self, keys):
+            rows = np.asarray([key[0] for key in keys], dtype=np.int64)
+            return np.column_stack((rows, rows, rows + 100))
+
+    with pytest.raises(ValueError, match="removed every training row"):
+        produce._val_split([(index,) for index in range(20)], 0.2, LongOutcome())
 
 
 def test_train_final_oos_beats_shuffle():

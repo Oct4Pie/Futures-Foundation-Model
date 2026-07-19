@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 
+from futures_foundation.execution_economics import load_execution_economics
 from futures_foundation.finetune.downstream_sample import load_balanced_sample, load_row_selection
 from futures_foundation.finetune.downstream_trading import (
     build_policy_events,
-    load_execution_costs,
     save_policy_events,
 )
 
@@ -34,25 +34,25 @@ def main() -> None:
     selection, selection_manifest = load_row_selection(
         args.row_selection, sample_manifest=sample_manifest,
     )
-    instruments, cost_manifest = load_execution_costs(
-        args.execution_costs, required_tickers=np.unique(sample["ticker"]),
+    selected_times = np.asarray(sample["decision_time_ns"])[selection["row_index"]]
+    economics = load_execution_economics(
+        args.execution_costs,
+        evaluation_start=pd.Timestamp(int(selected_times.min()), unit="ns", tz="UTC").isoformat(),
+        evaluation_end=pd.Timestamp(
+            int(selected_times.max()) + 1, unit="ns", tz="UTC",
+        ).isoformat(),
+        required_roots=np.unique(sample["ticker"]),
     )
     slippage_ticks = (
         float(args.slippage_ticks) if args.slippage_ticks is not None
-        else float(cost_manifest["document"]["primary_slippage_ticks_round_trip"])
+        else economics.primary_added_slippage_ticks_round_trip
     )
-    collection_path = Path(sample_manifest["metadata"]["source_collection"]["path"])
-    collection = json.loads(collection_path.read_text())
-    source_cost_ticks = float(collection["config"]["round_trip_cost_ticks"])
     arrays, metadata = build_policy_events(
         sample, selection["row_index"], sample_manifest["metadata"]["source_shards"],
-        instruments, source_cost_ticks=source_cost_ticks, slippage_ticks=slippage_ticks,
+        economics, slippage_ticks=slippage_ticks,
     )
     metadata["sample_sha256"] = sample_manifest["artifact"]["sha256"]
     metadata["row_selection_sha256"] = selection_manifest["artifact"]["sha256"]
-    metadata["execution_costs"] = {
-        key: value for key, value in cost_manifest.items() if key != "document"
-    }
     manifest = save_policy_events(Path(args.output), arrays, metadata)
     print(
         f"[complete] rows={manifest['rows']:,} contexts={manifest['contexts']:,} "

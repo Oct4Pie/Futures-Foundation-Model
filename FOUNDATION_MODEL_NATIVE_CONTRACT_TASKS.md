@@ -224,7 +224,8 @@ technical evidence, but its registry-bound reports do not authorize the refrozen
 - [x] Install a minimal blocked training-data authority bound to the Corpus v3 contract. Remove
   arbitrary digest bags from route instances; unresolved materialized data dependencies remain
   explicit blockers rather than placeholder hashes.
-- [ ] Bind strict route templates to exact resolved catalog routes and authoritative data contracts.
+- [x] Bind strict route templates to exact resolved catalog routes and authoritative data contracts.
+  The current data authority remains blocked, so no concrete route instance can be built.
 - [ ] Admit route-specific synthetic smoke, exact-resume and export evidence.
 
 ## Phase 3 — data and label contract
@@ -241,8 +242,59 @@ technical evidence, but its registry-bound reports do not authorize the refrozen
   governed rows; real label artifacts remain blocked on the admitted streaming export.
 - [ ] Store exact/ambiguous coverage and deterministic conservative fallback.
 - [ ] Validate wall-clock cadence, session gaps, rolls and complete label-end timestamps.
-- [ ] Purge/embargo by label end, not fixed bar count.
+- [x] Purge/embargo by inclusive label end and, for legacy produce paths, against the first
+  validation context start rather than its decision timestamp.
 - [ ] Version tick size/value, fees and zero/one-tick scoring contracts.
+
+### Phase 3 integrity checkpoint — 2026-07-18
+
+- [x] Require nonempty contract IDs in SSL, event-context, path-label and standalone Kronos window
+  ingestion. Exact cadence and contract segments are mandatory.
+- [x] Remove the four-day gap escape hatch and handwritten CME maintenance/weekend continuity
+  rules. SSL and event contexts now share one conservative exact-cadence policy while session
+  authority is unresolved.
+- [x] Reset path ATR and all event-control state at contract changes; make the classical control's
+  EMA/range scale genuinely bounded to the declared 256-bar context.
+- [x] Seal policy arrays and economics/lineage metadata together. Event shards own gross R only;
+  the typed economics capability applies fees and the declared slippage scenario exactly once.
+- [x] Increment active event, collection, sample, fold, row-selection, dense-label and policy
+  schemas. Legacy v1/v2 artifacts require explicit archival opt-in.
+- [x] Require and revalidate tournament source-manifest and array identities; stale cache prose no
+  longer describes a removed gap policy.
+- [x] Independently consume and semantically verify AlphaForge session-bundle v2 with bounded,
+  root-dirfd/no-follow transport and adversarial FIFO, symlink, hardlink, mutation, orphan and
+  bool-as-int rejection. This is synthetic producer/consumer parity only and is hard-coded
+  `production_admitted=false`.
+- [ ] Build independent FFM consumers for producer governance, frozen split-use, provider
+  candidates, contract lifecycle and official lifecycle evidence before accepting expected-request
+  bundle v1. Hash-only acceptance is prohibited.
+- [ ] Connect one authenticated session/request capability to both SSL and event materialization;
+  coarse/session-spanning training remains intentionally unavailable until then.
+- [x] Define and version nonpositive-price-safe path/probe/structural targets using raw price
+  changes normalized by decision/context-only causal scale. Log-price preprocessing now rejects
+  nonpositive inputs instead of clipping them. Family forecast-score parity for negative prices
+  remains a route-level Phase 4 blocker.
+- [x] Replace duplicated ticker tick-size tables with one hash/source/date-scoped typed
+  instrument-economics capability. Zero added slippage is the primary research ruler and one tick
+  is the frozen sensitivity. The fee schedule is explicitly a static research estimate, not a
+  historical broker ledger; wider/effective-dated production evidence remains pending.
+- [x] Centralize tournament-cache schema, source-manifest and array verification in one loader used
+  by adaptation, event materialization and downstream context reconstruction.
+- [x] Verify the pre-red-team integrated source with `1249 passed, 98 skipped`, build the wheel, and import the
+  new authority/economics/target modules from the extracted wheel outside the checkout.
+- [x] Red-team the integrated seam and repair the P0 canonical-gap contradiction, trend-efficiency
+  units, Stage-3 future-gap segmentation, economics capability forgery, and probe-result semantic
+  versioning. These repairs require a new full-suite count before checkpointing.
+- [x] Reverify the P0 repairs with `1250 passed, 98 skipped, 8 warnings`.
+- [ ] Replace the self-hashed tournament cache with a typed source manifest/receipt that enumerates
+  exact transformed inputs and externally binds the cache manifest. Current v2 is integrity
+  bookkeeping only and is not training authority.
+- [ ] Add a strict current-schema event-shard validator at save and load boundaries; generic
+  self-consistent arrays must not be upgradable into a canonical v4 shard.
+- [ ] Bind and validate gross-shard instrument geometry and the full decision-through-exit
+  economics interval. The first implementation is present; adversarial coverage remains required.
+- [ ] Replace unbounded/path-following YAML reads with the shared bounded no-follow authority
+  transport. The canonical economics source is now vendored, but transport parity is not complete.
 
 ## Phase 4 — frozen baselines
 

@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from .probe_targets import causal_probe_targets
+
 
 def left_pad_contexts(context, native_length=512):
     """Convert ``[N,T,C]`` causal contexts to MOMENT's ``[N,C,512]`` contract.
@@ -52,29 +54,4 @@ def pool_channel_patches(embeddings, input_mask, patch_len=8):
 
 def targets_from_context_future(context, future):
     """Compute the same six causal probe targets used by the Mantis SSL validator."""
-    context = np.asarray(context, np.float64)
-    future = np.asarray(future, np.float64)
-    if context.ndim != 3 or future.ndim != 3 or context.shape[2] < 4 or future.shape[2] < 4:
-        raise ValueError("context/future must have shape [N,T,C>=4]")
-    if len(context) != len(future) or context.shape[1] < 4 or future.shape[1] < 1:
-        raise ValueError("context/future rows must align and contain sufficient history")
-    high, low, close = context[:, :, 1], context[:, :, 2], context[:, :, 3]
-    logret = np.diff(np.log(np.clip(close, 1e-9, None)), axis=1)
-    net = logret.sum(axis=1)
-    half = context.shape[1] // 2
-    first_range = high[:, :half].max(1) - low[:, :half].min(1)
-    second_range = high[:, half:].max(1) - low[:, half:].min(1)
-    fwd_ret = (
-        np.log(np.clip(future[:, -1, 3], 1e-9, None))
-        - np.log(np.clip(context[:, -1, 3], 1e-9, None))
-    )
-    return {
-        "vol": logret.std(1).astype(np.float32),
-        "trend_eff": (np.abs(net) / (np.abs(logret).sum(1) + 1e-9)).astype(np.float32),
-        "range_expand": np.log(
-            (second_range + 1e-9) / (first_range + 1e-9)
-        ).astype(np.float32),
-        "fwd_absmove": np.abs(fwd_ret).astype(np.float32),
-        "direction": (net > 0).astype(np.int32),
-        "fwd_dir": (fwd_ret > 0).astype(np.int32),
-    }
+    return causal_probe_targets(context, future)

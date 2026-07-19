@@ -10,11 +10,14 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from futures_foundation.execution_economics import (
+    ExecutionEconomics, require_execution_economics,
+)
 from futures_foundation.finetune.path_labels import (
     BARRIER_ADVERSE_FIRST, BARRIER_AMBIGUOUS, BARRIER_FAVORABLE_FIRST,
     BARRIER_NEITHER, PathLabelConfig, build_dense_path_labels,
 )
-from futures_foundation.finetune.trend_strategy_eval import TICK_SIZES, executable_risk
+from futures_foundation.finetune.trend_strategy_eval import executable_risk
 from futures_foundation.pipeline._primitives import compute_atr, compute_supertrend
 from futures_foundation.pivots import causal_htf_dir
 from futures_foundation.primitives.detection import (
@@ -24,8 +27,12 @@ from futures_foundation.primitives.detection import (
 )
 
 
-SCHEMA_VERSION = "ffm_event_context_shard_v2"
-SUPPORTED_SCHEMA_VERSIONS = {"ffm_event_context_shard_v1", SCHEMA_VERSION}
+SCHEMA_VERSION = "ffm_event_context_shard_v4"
+COLLECTION_SCHEMA_VERSION = "ffm_event_context_collection_v3"
+LEGACY_SCHEMA_VERSIONS = {
+    "ffm_event_context_shard_v1", "ffm_event_context_shard_v2",
+    "ffm_event_context_shard_v3",
+}
 TAG_NAMES = (
     "atr_zigzag_v2", "fractal_k2", "supertrend_flip", "fractal_zigzag",
     "pullback_continuation", "compression_breakout",
@@ -36,7 +43,7 @@ POLICY_TAG_NAMES = (
 )
 BASELINE_LOOKBACKS = (4, 16, 64, 256)
 PATH_ROW_KEYS = (
-    "terminal_log_return", "terminal_move_r", "forward_abs_move_r",
+    "terminal_move_r", "forward_abs_move_r",
     "forward_realized_vol", "upside_mfe_r", "downside_mae_r", "forward_trend_eff",
     "label_end_time_ns", "trend_path_class", "barrier_state",
     "time_to_favorable_minutes", "time_to_adverse_minutes", "policy_r_gross",
@@ -51,7 +58,6 @@ class EventContextConfig:
     atr_period: int = 20
     atr_stop: float = 0.5
     structural_buffer_atr: float = 0.05
-    round_trip_cost_ticks: float = 1.0
     pullback_fast: int = 20
     pullback_slow: int = 50
     pullback_trend_lookback: int = 64
@@ -76,8 +82,6 @@ class EventContextConfig:
             )
         if self.atr_stop <= 0 or self.structural_buffer_atr < 0:
             raise ValueError("risk parameters are invalid")
-        if self.round_trip_cost_ticks < 0:
-            raise ValueError("round_trip_cost_ticks must be nonnegative")
         if not (1 <= self.pullback_fast < self.pullback_slow):
             raise ValueError("pullback EMA periods must satisfy 1 <= fast < slow")
         if min(self.pullback_trend_lookback, self.pullback_leg_bars,
@@ -121,7 +125,9 @@ def _frame_arrays(frame: pd.DataFrame):
     o, h, l, c, v = values.T
     if np.any((h < np.maximum(o, c)) | (l > np.minimum(o, c)) | (h < l) | (v < 0)):
         raise ValueError("invalid OHLCV geometry")
-    contract = frame["contract_id"].astype(str).to_numpy(dtype=str)
+    if frame["contract_id"].isna().any():
+        raise ValueError("contract_id must be non-empty")
+    contract = frame["contract_id"].astype(str).str.strip().to_numpy(dtype=str)
     if np.any(np.char.str_len(contract) == 0):
         raise ValueError("contract_id must be non-empty")
     segment = np.r_[0, np.cumsum(contract[1:] != contract[:-1])].astype(np.int64)
@@ -144,6 +150,48 @@ def _causal_ema(values: np.ndarray, period: int) -> np.ndarray:
     output[0] = values[0]
     for row in range(1, len(values)):
         output[row] = alpha * values[row] + (1.0 - alpha) * output[row - 1]
+    return output
+
+
+def _fixed_context_ema(values: np.ndarray, period: int, context: int) -> np.ndarray:
+    """EMA reset at the start of each fixed trailing context, without an O(N*context) loop."""
+    values = np.asarray(values, np.float64)
+    context = int(context)
+    if context < 1:
+        raise ValueError("EMA context must be positive")
+    output = np.full(len(values), np.nan, dtype=np.float64)
+    if len(values) < context:
+        return output
+    global_ema = _causal_ema(values, int(period))
+    rows = np.arange(context - 1, len(values), dtype=np.int64)
+    starts = rows - context + 1
+    output[rows] = global_ema[rows]
+    later = starts > 0
+    beta_power = (1.0 - 2.0 / (int(period) + 1.0)) ** context
+    output[rows[later]] += beta_power * (
+        values[starts[later]] - global_ema[starts[later] - 1]
+    )
+    return output
+
+
+def _context_range_scale(
+    high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int,
+) -> np.ndarray:
+    """Finite-window mean true range; unlike Wilder ATR it has no pre-context state."""
+    period = int(period)
+    true_range = np.empty(len(close), dtype=np.float64)
+    true_range[0] = high[0] - low[0]
+    if len(close) > 1:
+        true_range[1:] = np.maximum.reduce((
+            high[1:] - low[1:],
+            np.abs(high[1:] - close[:-1]),
+            np.abs(low[1:] - close[:-1]),
+        ))
+    output = np.full(len(close), np.nan, dtype=np.float64)
+    if len(close) >= period:
+        prefix = np.r_[0.0, np.cumsum(true_range, dtype=np.float64)]
+        rows = np.arange(period - 1, len(close), dtype=np.int64)
+        output[rows] = (prefix[rows + 1] - prefix[rows + 1 - period]) / float(period)
     return output
 
 
@@ -236,23 +284,40 @@ def _detect_compression_breakout(
 def causal_baseline_features(
     frame: pd.DataFrame,
     *,
-    causal_scale: np.ndarray,
     event_config: EventContextConfig | None = None,
 ) -> tuple[np.ndarray, tuple[str, ...]]:
     """Small context-only control using no bars before the declared 256-bar context."""
     event_config = event_config or EventContextConfig()
     event_config.validate()
-    _, o, h, l, c, v, _, _, _ = _frame_arrays(frame)
+    _, o, h, l, c, v, _, segment, _ = _frame_arrays(frame)
     n = len(c)
-    scale = np.asarray(causal_scale, np.float64)
-    if scale.shape != (n,):
-        raise ValueError("causal_scale must align with frame")
+    # Stateful transforms must never inherit EMA/prefix/volume state from an expiring contract.
+    # Segment recursively before computing any statistic; each recursive frame contains exactly
+    # one contiguous contract and therefore reaches the scalar implementation below.
+    if int(segment[-1]) > 0:
+        output: np.ndarray | None = None
+        feature_names: tuple[str, ...] | None = None
+        for segment_value in np.unique(segment):
+            rows = np.flatnonzero(segment == segment_value)
+            local, local_names = causal_baseline_features(
+                frame.iloc[rows].reset_index(drop=True),
+                event_config=event_config,
+            )
+            if output is None:
+                output = np.full((n, local.shape[1]), np.nan, dtype=np.float32)
+                feature_names = local_names
+            elif local_names != feature_names:
+                raise RuntimeError("contract-segment feature schemas differ")
+            output[rows] = local
+        if output is None or feature_names is None:  # pragma: no cover - nonempty frame is enforced
+            raise RuntimeError("contract segmentation produced no feature rows")
+        return output, feature_names
+    scale = _context_range_scale(h, l, c, event_config.atr_period)
     safe_scale = np.where(np.isfinite(scale) & (scale > 0), scale, np.nan)
-    log_c = np.log(c)
-    log_return = np.diff(log_c)
-    ret_prefix = np.r_[0.0, np.cumsum(log_return)]
-    ret_sq_prefix = np.r_[0.0, np.cumsum(log_return * log_return)]
-    abs_ret_prefix = np.r_[0.0, np.cumsum(np.abs(log_return))]
+    raw_change = np.diff(c)
+    change_prefix = np.r_[0.0, np.cumsum(raw_change)]
+    change_sq_prefix = np.r_[0.0, np.cumsum(raw_change * raw_change)]
+    abs_change_prefix = np.r_[0.0, np.cumsum(np.abs(raw_change))]
     vol_prefix = np.r_[0.0, np.cumsum(v)]
 
     bar_range = h - l
@@ -266,21 +331,35 @@ def causal_baseline_features(
         upper / safe_scale,
         lower / safe_scale,
         np.divide(c - l, safe_range, out=np.full(n, 0.5), where=np.isfinite(safe_range)),
-        safe_scale / c,
+        safe_scale / np.maximum(np.abs(c), safe_scale),
         np.log1p(v),
     ]
     names = [
-        "bar_range_atr", "bar_body_atr", "upper_wick_atr", "lower_wick_atr",
-        "close_position", "atr_fraction", "log1p_volume",
+        "bar_range_context_scale", "bar_body_context_scale",
+        "upper_wick_context_scale", "lower_wick_context_scale",
+        "close_position", "context_scale_to_abs_close", "log1p_volume",
     ]
 
     # Event-geometry controls. These are available at the decision close and give the classical
     # ruler the same causal setup geometry that an embedding could infer from its input window.
     fast_n, slow_n = event_config.pullback_fast, event_config.pullback_slow
     range_n = event_config.compression_lookback
-    ema_fast, ema_slow = _causal_ema(c, fast_n), _causal_ema(c, slow_n)
+    feature_context = max(BASELINE_LOOKBACKS)
+    ema_fast = _fixed_context_ema(c, fast_n, feature_context)
+    ema_slow = _fixed_context_ema(c, slow_n, feature_context)
     slow_slope = np.full(n, np.nan)
-    slow_slope[10:] = (ema_slow[10:] - ema_slow[:-10]) / safe_scale[10:]
+    if n >= feature_context:
+        rows = np.arange(feature_context - 1, n, dtype=np.int64)
+        starts = rows - feature_context + 1
+        lag_rows = rows - 10
+        global_slow = _causal_ema(c, slow_n)
+        lagged = global_slow[lag_rows].copy()
+        later = starts > 0
+        beta_power = (1.0 - 2.0 / (slow_n + 1.0)) ** (feature_context - 10)
+        lagged[later] += beta_power * (
+            c[starts[later]] - global_slow[starts[later] - 1]
+        )
+        slow_slope[rows] = (ema_slow[rows] - lagged) / safe_scale[rows]
     prior_range = np.full(n, np.nan)
     break_above = np.full(n, np.nan)
     break_below = np.full(n, np.nan)
@@ -300,39 +379,51 @@ def causal_baseline_features(
         break_below,
     ))
     names.extend((
-        f"close_minus_ema{fast_n}_atr", f"ema{fast_n}_minus_ema{slow_n}_atr",
-        f"ema{slow_n}_slope_10bar_atr", f"prior_range_{range_n}bar_atr",
-        f"break_above_{range_n}bar_atr", f"break_below_{range_n}bar_atr",
+        f"close_minus_ema{fast_n}_context_scale",
+        f"ema{fast_n}_minus_ema{slow_n}_context_scale",
+        f"ema{slow_n}_slope_10bar_context_scale",
+        f"prior_range_{range_n}bar_context_scale",
+        f"break_above_{range_n}bar_context_scale",
+        f"break_below_{range_n}bar_context_scale",
     ))
 
     for steps in BASELINE_LOOKBACKS:
+        # ``steps`` denotes bars, not return intervals. A 256-bar deployment context spans 255
+        # close-to-close returns and begins at i-255; it must never read i-256.
+        intervals = steps - 1
         net = np.full(n, np.nan)
         realized = np.full(n, np.nan)
         efficiency = np.full(n, np.nan)
         range_atr = np.full(n, np.nan)
         volume_ratio = np.full(n, np.nan)
-        rows = np.arange(steps, n)
-        net[rows] = log_c[rows] - log_c[rows - steps]
-        total = ret_prefix[rows] - ret_prefix[rows - steps]
-        total_sq = ret_sq_prefix[rows] - ret_sq_prefix[rows - steps]
-        mean = total / float(steps)
-        realized[rows] = np.sqrt(np.maximum(total_sq / float(steps) - mean * mean, 0.0))
-        path = abs_ret_prefix[rows] - abs_ret_prefix[rows - steps]
+        rows = np.arange(intervals, n)
+        starts = rows - intervals
+        net[rows] = (c[rows] - c[starts]) / safe_scale[rows]
+        total = change_prefix[rows] - change_prefix[starts]
+        total_sq = change_sq_prefix[rows] - change_sq_prefix[starts]
+        mean = total / float(intervals)
+        realized[rows] = np.sqrt(
+            np.maximum(total_sq / float(intervals) - mean * mean, 0.0)
+        ) / safe_scale[rows]
+        path = abs_change_prefix[rows] - abs_change_prefix[starts]
         efficiency[rows] = np.divide(
-            np.abs(net[rows]), path, out=np.zeros(len(rows)), where=path > 0,
+            np.abs(c[rows] - c[starts]), path,
+            out=np.zeros(len(rows)), where=path > 0,
         )
-        high_window = np.lib.stride_tricks.sliding_window_view(h, steps + 1)
-        low_window = np.lib.stride_tricks.sliding_window_view(l, steps + 1)
+        high_window = np.lib.stride_tricks.sliding_window_view(h, steps)
+        low_window = np.lib.stride_tricks.sliding_window_view(l, steps)
         range_atr[rows] = (high_window.max(axis=1) - low_window.min(axis=1)) / safe_scale[rows]
-        trailing_volume = vol_prefix[rows + 1] - vol_prefix[rows - steps + 1]
+        trailing_volume = vol_prefix[rows + 1] - vol_prefix[starts]
         volume_ratio[rows] = np.divide(
             v[rows] * float(steps), trailing_volume,
             out=np.zeros(len(rows)), where=trailing_volume > 0,
         )
         columns.extend((net, realized, efficiency, range_atr, volume_ratio))
         names.extend((
-            f"log_return_{steps}bar", f"realized_vol_{steps}bar",
-            f"trend_eff_{steps}bar", f"range_atr_{steps}bar", f"volume_ratio_{steps}bar",
+            f"net_change_context_scale_{steps}bar",
+            f"realized_change_vol_context_scale_{steps}bar",
+            f"trend_eff_{steps}bar", f"range_context_scale_{steps}bar",
+            f"volume_ratio_{steps}bar",
         ))
 
     ts = pd.DatetimeIndex(pd.to_datetime(frame["datetime"], utc=True))
@@ -422,32 +513,8 @@ def _block_weights(block_id: np.ndarray) -> np.ndarray:
 
 
 def _context_edge_is_valid(ts: pd.DatetimeIndex, expected_ns: int) -> np.ndarray:
-    """Allow regular bars plus scheduled CME maintenance/weekend context edges.
-
-    The exception applies to past context only. Future path labels retain exact cadence. Weekend
-    gaps, arbitrary missing bars and gaps longer than two hours remain invalid.
-    """
-    delta = np.diff(ts.asi8)
-    valid = delta == int(expected_ns)
-    if len(delta) == 0:
-        return valid
-    local = ts.tz_convert("America/Chicago")
-    left, right = local[:-1], local[1:]
-    daily_maintenance = (
-        (delta > int(expected_ns))
-        & (delta <= 2 * 60 * 60 * 1_000_000_000)
-        & (right.hour.to_numpy() == 17)
-        & np.isin(left.hour.to_numpy(), (15, 16))
-        & (right.minute.to_numpy() == 0)
-    )
-    weekend = (
-        (delta >= 47 * 60 * 60 * 1_000_000_000)
-        & (delta <= 52 * 60 * 60 * 1_000_000_000)
-        & (left.dayofweek.to_numpy() == 4)
-        & (right.dayofweek.to_numpy() == 6)
-        & (right.hour.to_numpy() == 17)
-    )
-    return valid | daily_maintenance | weekend
+    """Accept exact bar cadence only until a verified session-edge capability is wired."""
+    return np.diff(ts.asi8) == int(expected_ns)
 
 
 def _single_policy_path(
@@ -461,9 +528,8 @@ def _single_policy_path(
     risk: float,
     steps: int,
     targets: np.ndarray,
-    cost_r: float,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Conservative next-open execution labels with explicit OHLC ambiguity."""
+    """Conservative next-open gross-R labels with explicit OHLC ambiguity."""
     states = np.full(len(targets), BARRIER_NEITHER, dtype=np.int8)
     realized = np.empty(len(targets), dtype=np.float32)
     reached = np.zeros(len(targets), dtype=bool)
@@ -491,19 +557,19 @@ def _single_policy_path(
         fav_at = int(favorable_at[target_i])
         if fav_at and adverse_at and fav_at == adverse_at:
             states[target_i] = BARRIER_AMBIGUOUS
-            realized[target_i] = -1.0 - float(cost_r)
+            realized[target_i] = -1.0
             exit_idx[target_i] = adverse_at
         elif fav_at and (not adverse_at or fav_at < adverse_at):
             states[target_i] = BARRIER_FAVORABLE_FIRST
-            realized[target_i] = float(target) - float(cost_r)
+            realized[target_i] = float(target)
             reached[target_i] = True
             exit_idx[target_i] = fav_at
         elif adverse_at:
             states[target_i] = BARRIER_ADVERSE_FIRST
-            realized[target_i] = -1.0 - float(cost_r)
+            realized[target_i] = -1.0
             exit_idx[target_i] = adverse_at
         else:
-            realized[target_i] = terminal - float(cost_r)
+            realized[target_i] = terminal
     return states, realized, reached, exit_idx
 
 
@@ -521,10 +587,10 @@ def event_policy_labels(
     targets_r: np.ndarray,
     timeframe_minutes: int,
     config: EventContextConfig,
+    execution_economics: ExecutionEconomics,
 ) -> dict[str, np.ndarray]:
     """Attach ATR/structural policies to primary trigger tags without copying contexts."""
-    if ticker not in TICK_SIZES:
-        raise ValueError(f"missing explicit tick size for {ticker}")
+    execution_economics = require_execution_economics(execution_economics)
     _, o, h, l, c, _, _, _, source_row = _frame_arrays(frame)
     source_to_local = {int(value): i for i, value in enumerate(source_row)}
     tag_names = tuple(str(value) for value in selected_tag_names)
@@ -545,12 +611,11 @@ def event_policy_labels(
     valid = np.zeros((event_count, len(modes)), dtype=bool)
     risk_price = np.full((event_count, len(modes)), np.nan, dtype=np.float32)
     risk_ticks = np.full_like(risk_price, np.nan)
-    cost_r = np.full_like(risk_price, np.nan)
     state = np.full(shape, -1, dtype=np.int8)
     realized = np.full(shape, np.nan, dtype=np.float32)
     reached = np.zeros(shape, dtype=bool)
     exit_time_ns = np.full(shape, -1, dtype=np.int64)
-    tick = float(TICK_SIZES[ticker])
+    tick = execution_economics.instrument(ticker).tick_size
     ts_ns = pd.DatetimeIndex(pd.to_datetime(frame["datetime"], utc=True)).asi8
     event_decision = selected[event_context].astype(np.int64)
     event_entry = o[event_decision + 1].astype(np.float64)
@@ -581,8 +646,6 @@ def event_policy_labels(
             valid[event_i, mode_i] = True
             risk_price[event_i, mode_i] = risk
             risk_ticks[event_i, mode_i] = risk / tick
-            event_cost = float(config.round_trip_cost_ticks) * tick / risk
-            cost_r[event_i, mode_i] = event_cost
 
     def first_touch(mask: np.ndarray) -> np.ndarray:
         touched = mask.any(axis=1)
@@ -610,8 +673,6 @@ def event_policy_labels(
                 adverse_move = np.where(long[:, None], entry - lw, hw - entry) / risk
                 adverse_at = first_touch(adverse_move >= 1.0)
                 terminal = direction * (c[decisions + steps] - event_entry[event_rows]) / risk[:, 0]
-                event_cost = cost_r[event_rows, mode_i]
-
                 for target_i, target in enumerate(targets_r):
                     favorable_at = first_touch(favorable_move >= float(target))
                     neither = (favorable_at == 0) & (adverse_at == 0)
@@ -631,9 +692,9 @@ def event_policy_labels(
                     output_state[ambiguous] = BARRIER_AMBIGUOUS
                     state[event_rows, mode_i, horizon_i, target_i] = output_state
                     output_realized = realized[event_rows, mode_i, horizon_i, target_i]
-                    output_realized[neither] = terminal[neither] - event_cost[neither]
-                    output_realized[favorable] = float(target) - event_cost[favorable]
-                    output_realized[adverse | ambiguous] = -1.0 - event_cost[adverse | ambiguous]
+                    output_realized[neither] = terminal[neither]
+                    output_realized[favorable] = float(target)
+                    output_realized[adverse | ambiguous] = -1.0
                     realized[event_rows, mode_i, horizon_i, target_i] = output_realized
                     reached[event_rows[favorable], mode_i, horizon_i, target_i] = True
                     exit_offset = np.full(len(event_rows), steps, dtype=np.int64)
@@ -651,9 +712,8 @@ def event_policy_labels(
         "policy_valid": valid,
         "policy_risk_price": risk_price,
         "policy_risk_ticks": risk_ticks,
-        "policy_cost_r": cost_r,
         "policy_barrier_state": state,
-        "policy_realized_r": realized,
+        "policy_gross_r": realized,
         "policy_reached": reached,
         "policy_exit_time_ns": exit_time_ns,
     }
@@ -664,20 +724,23 @@ def materialize_context_stream(
     *,
     ticker: str,
     timeframe: str,
+    execution_economics: ExecutionEconomics,
     config: EventContextConfig | None = None,
 ) -> tuple[dict[str, np.ndarray], dict[str, object]]:
     """Build one row per eligible decision context for one stream."""
     config = config or EventContextConfig()
     config.validate()
+    execution_economics = require_execution_economics(execution_economics)
+    execution_economics.assert_covers(
+        _utc(config.eval_start).isoformat(), _utc(config.eval_end).isoformat(),
+    )
     minutes = _timeframe_minutes(timeframe)
     config.path.validate(minutes)
     ts, o, h, l, c, _, contract, segment, source_row = _frame_arrays(frame)
-    atr = compute_atr(h, l, c, config.atr_period)
-    labels = build_dense_path_labels(
-        frame, timeframe_minutes=minutes, config=config.path, causal_scale=atr,
-    )
+    labels = build_dense_path_labels(frame, timeframe_minutes=minutes, config=config.path)
+    atr = np.asarray(labels["causal_scale"], dtype=np.float64)
     features, feature_names = causal_baseline_features(
-        frame, causal_scale=atr, event_config=config,
+        frame, event_config=config,
     )
     tag_data = detect_context_tags(
         frame, timeframe=timeframe, atr_period=config.atr_period, config=config,
@@ -732,9 +795,6 @@ def materialize_context_stream(
         "causal_scale": np.asarray(labels["causal_scale"])[selected],
         "context_direction": np.asarray(labels["context_direction"])[selected],
     }
-    local_time = ts.tz_convert("America/Chicago")
-    local_minute = local_time.hour.to_numpy() * 60 + local_time.minute.to_numpy()
-    arrays["cme_session_minute"] = ((local_minute[selected] - 17 * 60) % 1440).astype(np.int16)
     arrays["contract_segment_id"] = segment[selected]
     arrays["bars_since_contract_start"] = local_in_segment[selected]
     for key in PATH_ROW_KEYS:
@@ -748,6 +808,7 @@ def materialize_context_stream(
         selected_tag_names=arrays["tag_names"],
         causal_scale=atr, horizons_minutes=arrays["horizons_minutes"],
         targets_r=arrays["targets_r"], timeframe_minutes=minutes, config=config,
+        execution_economics=execution_economics,
     ))
 
     metadata = {
@@ -772,8 +833,10 @@ def materialize_context_stream(
             "pullback_continuation": "ema20_50_reclaim_v1",
             "compression_breakout": "prior20_atr_bounded_close_break_v1",
         },
-        "context_gap_policy": "exact_cadence_or_scheduled_cme_maintenance_or_weekend",
+        "context_gap_policy": "exact_timestamp_cadence_and_contract_segments_v1",
+        "session_gap_capability": None,
         "future_gap_policy": "exact_cadence_only_mask_never_truncate",
+        "execution_economics": execution_economics.manifest(),
     }
     return arrays, metadata
 
@@ -827,11 +890,13 @@ def save_context_shard(
     return manifest
 
 
-def load_context_shard(path: str | Path) -> tuple[dict[str, np.ndarray], dict[str, object]]:
+def load_context_shard(
+    path: str | Path, *, allow_legacy: bool = False,
+) -> tuple[dict[str, np.ndarray], dict[str, object]]:
     path = Path(path)
     manifest = json.loads(Path(str(path) + ".manifest.json").read_text())
-    if (manifest.get("schema_version") not in SUPPORTED_SCHEMA_VERSIONS
-            or manifest.get("status") != "complete"):
+    admitted = {SCHEMA_VERSION} | (LEGACY_SCHEMA_VERSIONS if allow_legacy else set())
+    if (manifest.get("schema_version") not in admitted or manifest.get("status") != "complete"):
         raise ValueError("unsupported or incomplete event-context shard")
     if _sha256(path) != manifest.get("artifact", {}).get("sha256"):
         raise ValueError("event-context artifact hash mismatch")
@@ -843,7 +908,8 @@ def load_context_shard(path: str | Path) -> tuple[dict[str, np.ndarray], dict[st
 
 
 __all__ = [
-    "SCHEMA_VERSION", "TAG_NAMES", "POLICY_TAG_NAMES", "BASELINE_LOOKBACKS",
+    "SCHEMA_VERSION", "COLLECTION_SCHEMA_VERSION", "TAG_NAMES", "POLICY_TAG_NAMES",
+    "BASELINE_LOOKBACKS",
     "EventContextConfig",
     "causal_baseline_features", "detect_context_tags", "materialize_context_stream",
     "event_policy_labels", "context_shard_fingerprint", "save_context_shard",

@@ -9,11 +9,36 @@ from futures_foundation.finetune.downstream_contexts import (
     load_downstream_contexts,
     save_downstream_contexts,
 )
+from futures_foundation.finetune.tournament import OOS_START, TRAIN_START
+from futures_foundation.finetune.tournament_data import CACHE_MANIFEST, CACHE_SCHEMA_VERSION
 
 
 def _sha(path: Path) -> str:
     import hashlib
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _write_cache_manifest(cache_dir: Path, files: dict, rows: int) -> Path:
+    source_dir = cache_dir / "source"
+    source_dir.mkdir()
+    source_manifest = source_dir / "MANIFEST.json"
+    source_manifest.write_text("{}\n")
+    path = cache_dir / CACHE_MANIFEST
+    path.write_text(json.dumps({
+        "schema_version": CACHE_SCHEMA_VERSION,
+        "interval": {
+            "start": TRAIN_START, "end_exclusive": OOS_START, "contains_oos": False,
+        },
+        "source_dir": str(source_dir.resolve()),
+        "source_manifest": {
+            "path": str(source_manifest.resolve()), "sha256": _sha(source_manifest),
+            "bytes": source_manifest.stat().st_size,
+        },
+        "entries": {"ES@1min": {
+            "ticker": "ES", "timeframe": "1min", "rows": rows, "files": files,
+        }},
+    }))
+    return path
 
 
 def test_context_artifact_reconstructs_exact_rows_and_binds_sample(tmp_path):
@@ -29,12 +54,7 @@ def test_context_artifact_reconstructs_exact_rows_and_binds_sample(tmp_path):
         path = cache_dir / f"ES_1min.{key}.npy"
         np.save(path, value)
         files[key] = {"path": path.name, "sha256": _sha(path), "bytes": path.stat().st_size}
-    cache = cache_dir / "TOURNAMENT_CACHE.json"
-    cache.write_text(json.dumps({
-        "schema_version": "ffm_foundation_tournament_cache_v1",
-        "interval": {"contains_oos": False},
-        "entries": {"ES@1min": {"files": files}},
-    }))
+    cache = _write_cache_manifest(cache_dir, files, n)
     sample = {
         "stream_id": np.array(["ES@1min", "ES@1min"]),
         "context_start_source_idx": np.array([2, 10]),
@@ -75,13 +95,8 @@ def test_context_builder_rejects_roll_crossing(tmp_path):
     for key, value in (("ohlcv", ohlcv), ("timestamps", timestamp), ("contract_id", contract)):
         path = cache_dir / f"x.{key}.npy"
         np.save(path, value)
-        files[key] = {"path": path.name, "sha256": _sha(path)}
-    cache = cache_dir / "manifest.json"
-    cache.write_text(json.dumps({
-        "schema_version": "ffm_foundation_tournament_cache_v1",
-        "interval": {"contains_oos": False},
-        "entries": {"ES@1min": {"files": files}},
-    }))
+        files[key] = {"path": path.name, "sha256": _sha(path), "bytes": path.stat().st_size}
+    cache = _write_cache_manifest(cache_dir, files, len(ohlcv))
     sample = {
         "stream_id": np.array(["ES@1min"]),
         "context_start_source_idx": np.array([0]), "decision_source_idx": np.array([3]),

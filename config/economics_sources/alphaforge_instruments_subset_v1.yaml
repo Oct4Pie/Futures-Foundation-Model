@@ -1,0 +1,18 @@
+# Vendored research-economics receipt derived from AlphaForge commit b84925763459c2f1a7f4300d11e9760867083629.
+# Fees are static category estimates, not historical broker statements.
+schema_version: ffm_vendored_instrument_economics_source_v1
+upstream:
+  repository: https://github.com/Oct4Pie/alphaforge
+  commit: b84925763459c2f1a7f4300d11e9760867083629
+  path: config/instruments.yaml
+  upstream_sha256: f51c619e8a128839148e7dbc861db46320683f43e5447098fb789ffb68ad8f3c
+instruments:
+  ES: {tick_size: 0.25, tick_value_usd: 12.5, fee_rt_usd: 4.36}
+  NQ: {tick_size: 0.25, tick_value_usd: 5.0, fee_rt_usd: 4.36}
+  RTY: {tick_size: 0.10, tick_value_usd: 5.0, fee_rt_usd: 4.36}
+  YM: {tick_size: 1.0, tick_value_usd: 5.0, fee_rt_usd: 4.36}
+  GC: {tick_size: 0.10, tick_value_usd: 10.0, fee_rt_usd: 5.00}
+  SI: {tick_size: 0.005, tick_value_usd: 25.0, fee_rt_usd: 5.00}
+  CL: {tick_size: 0.01, tick_value_usd: 10.0, fee_rt_usd: 4.90}
+  ZB: {tick_size: 0.03125, tick_value_usd: 31.25, fee_rt_usd: 3.00}
+  ZN: {tick_size: 0.015625, tick_value_usd: 15.625, fee_rt_usd: 3.00}

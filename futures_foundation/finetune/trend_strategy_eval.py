@@ -13,6 +13,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from futures_foundation.execution_economics import (
+    ExecutionEconomics, require_execution_economics,
+)
 from futures_foundation.pipeline._primitives import compute_atr, compute_supertrend
 from futures_foundation.primitives.detection import (
     detect_atr_zigzag_pivots_v2,
@@ -20,22 +23,6 @@ from futures_foundation.primitives.detection import (
     detect_fractal_zigzag_pivots,
 )
 from futures_foundation.pivots import HTF_MAP, causal_htf_dir
-
-
-# Outright minimum price increments for the exact root contracts in this corpus.  A matched ruler
-# must not create stops or targets between executable prices.  Keep this explicit (rather than
-# silently guessing from observed price differences) because sparse bars can omit valid ticks.
-TICK_SIZES = {
-    "ES": 0.25,
-    "NQ": 0.25,
-    "RTY": 0.10,
-    "YM": 1.0,
-    "GC": 0.10,
-    "SI": 0.005,
-    "CL": 0.01,
-    "ZB": 1.0 / 32.0,
-    "ZN": 1.0 / 64.0,
-}
 
 
 @dataclass(frozen=True)
@@ -50,7 +37,7 @@ class RulerConfig:
     structural_buffer_atr: float = 0.05
     targets: tuple[float, ...] = (2.0, 3.0, 4.0, 6.0)
     primary_target: float = 3.0
-    round_trip_cost_ticks: float = 1.0
+    added_slippage_ticks_round_trip: float = 0.0
     same_bar_policy: str = "stop_first"
 
     def __post_init__(self):
@@ -59,7 +46,7 @@ class RulerConfig:
         if self.warmup_days < 1 or self.context < 2 or self.horizon_hours <= 0:
             raise ValueError("warmup, context, and horizon must be positive")
         if (self.atr_stop <= 0 or self.structural_buffer_atr < 0
-                or self.round_trip_cost_ticks < 0):
+                or self.added_slippage_ticks_round_trip < 0):
             raise ValueError("risk and cost parameters must be nonnegative")
         if self.same_bar_policy != "stop_first":
             raise ValueError("matched ruler requires conservative stop_first handling")
@@ -213,11 +200,24 @@ def _strategy_specs(has_htf: bool):
     return specs
 
 
-def evaluate_stream(df: pd.DataFrame, ticker: str, timeframe: str, cfg: RulerConfig):
+def evaluate_stream(
+    df: pd.DataFrame,
+    ticker: str,
+    timeframe: str,
+    cfg: RulerConfig,
+    execution_economics: ExecutionEconomics,
+):
     """Evaluate every registered strategy on one stream, resetting at every contract roll."""
-    if ticker not in TICK_SIZES:
-        raise ValueError(f"missing explicit tick size for {ticker}")
-    tick_size = float(TICK_SIZES[ticker])
+    execution_economics = require_execution_economics(execution_economics)
+    execution_economics.assert_covers(
+        pd.Timestamp(cfg.eval_start, tz="UTC").isoformat(),
+        pd.Timestamp(cfg.eval_end, tz="UTC").isoformat(),
+    )
+    instrument = execution_economics.instrument(ticker)
+    tick_size = instrument.tick_size
+    slippage_ticks = execution_economics.validate_added_slippage(
+        cfg.added_slippage_ticks_round_trip,
+    )
     ts_all = pd.DatetimeIndex(df["datetime"])
     eval_lo = pd.Timestamp(cfg.eval_start, tz="UTC")
     eval_hi = pd.Timestamp(cfg.eval_end, tz="UTC")
@@ -276,7 +276,10 @@ def evaluate_stream(df: pd.DataFrame, ticker: str, timeframe: str, cfg: RulerCon
                 risk = executable_risk(raw_risk, tick_size)
                 if not np.isfinite(risk):
                     continue
-                cost_r = cfg.round_trip_cost_ticks * tick_size / risk
+                risk_ticks = risk / tick_size
+                one_tick_r = 1.0 / risk_ticks
+                fee_r = instrument.fee_rt_usd / (risk_ticks * instrument.tick_value_usd)
+                cost_r = fee_r + slippage_ticks * one_tick_r
                 outcome = _trade_outcomes(
                     o, h, l, c, signal_idx=signal, direction=direction, risk=risk,
                     horizon=horizon, targets=cfg.targets, cost_r=cost_r,
@@ -295,8 +298,9 @@ def evaluate_stream(df: pd.DataFrame, ticker: str, timeframe: str, cfg: RulerCon
                     "source_signal_idx": global_signal, "direction": direction,
                     "contract_id": str(contract[rows[signal]]), "stop_mode": stop_mode,
                     "raw_risk_price": float(raw_risk), "risk_price": float(outcome["risk"]),
-                    "risk_ticks": float(outcome["risk"] / tick_size),
-                    "cost_r": float(cost_r), "risk_atr": float(outcome["risk"] / a),
+                    "risk_ticks": float(risk_ticks), "one_tick_r": float(one_tick_r),
+                    "fee_r": float(fee_r), "cost_r": float(cost_r),
+                    "risk_atr": float(outcome["risk"] / a),
                     "peak_r": outcome["peak_r"],
                     "realized": outcome["realized"], "reached": outcome["reached"],
                 })
@@ -311,7 +315,7 @@ def events_to_arrays(events, targets):
                 "source_signal_idx", "direction")
     out = {key: np.asarray([event[key] for event in events]) for key in text_keys + int_keys}
     out["risk_atr"] = np.asarray([event["risk_atr"] for event in events], np.float32)
-    for key in ("raw_risk_price", "risk_price", "risk_ticks", "cost_r"):
+    for key in ("raw_risk_price", "risk_price", "risk_ticks", "one_tick_r", "fee_r", "cost_r"):
         out[key] = np.asarray([event[key] for event in events], np.float32)
     out["peak_r"] = np.asarray([event["peak_r"] for event in events], np.float32)
     out["realized"] = np.stack([event["realized"] for event in events]).astype(np.float32)
@@ -404,11 +408,11 @@ def summarize_events(arrays, cfg: RulerConfig, *, folds: int = 6):
                 arrays["realized"][rows, target_i], arrays["reached"][rows, target_i],
             )
         item["cost_tick_sensitivity"] = {}
-        base_cost = arrays["cost_r"][rows]
+        gross = realized + arrays["cost_r"][rows]
+        fee_r = arrays["fee_r"][rows]
+        one_tick_r = arrays["one_tick_r"][rows]
         for cost_ticks in (0.0, 1.0, 2.0, 3.0):
-            adjusted = realized + base_cost - base_cost * (
-                float(cost_ticks) / max(cfg.round_trip_cost_ticks, 1e-12)
-            )
+            adjusted = gross - fee_r - one_tick_r * float(cost_ticks)
             item["cost_tick_sensitivity"][f"{cost_ticks:.1f}"] = metric_summary(
                 adjusted, reached,
             )

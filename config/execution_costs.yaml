@@ -1,14 +1,20 @@
-schema_version: ffm_execution_costs_v1
+schema_version: ffm_execution_economics_v2
 description: >-
   Outright futures tick values and approximate all-in round-trip commission, exchange,
-  clearing, and regulatory fees for the development trading ruler.
+  clearing, and regulatory fees for research rulers. This is a constant research assumption,
+  not a historical broker-account fee ledger.
 source:
-  project: ../alphaforge
-  path: config/instruments.yaml
-  sha256: f51c619e8a128839148e7dbc861db46320683f43e5447098fb789ffb68ad8f3c
-  note: fee_rt_usd values are AlphaForge category estimates, not broker-account statements.
-primary_slippage_ticks_round_trip: 0.0
-sensitivity_slippage_ticks_round_trip: [0.0, 1.0, 2.0, 3.0]
+  project_path: .
+  document_path: config/economics_sources/alphaforge_instruments_subset_v1.yaml
+  schema_version: ffm_vendored_instrument_economics_source_v1
+  sha256: 44c1d51f7f14b090ddc46b7e28a519a396bf30ffff49a854625ac1a70fbba0d7
+  note: vendored from pinned AlphaForge; fees remain category estimates, not broker statements.
+effective:
+  start_utc: '2010-01-01T00:00:00Z'
+  end_exclusive_utc: '2026-07-19T00:00:00Z'
+  basis: research_constant_nominal_usd_assumption_not_historical_broker_schedule
+primary_added_slippage_ticks_round_trip: 0.0
+sensitivity_added_slippage_ticks_round_trip: [0.0, 1.0, 2.0, 3.0]
 instruments:
   ES: {tick_size: 0.25, tick_value_usd: 12.5, fee_rt_usd: 4.36}
   NQ: {tick_size: 0.25, tick_value_usd: 5.0, fee_rt_usd: 4.36}

@@ -75,6 +75,11 @@ class _StreamLabeler:
     def mv_feature_names(self):
         return [f'ch{i}' for i in range(self.C)]
 
+    def sample_time_bounds_ns(self, keys):
+        rows = np.asarray([int(key[0]) for key in keys], dtype=np.int64)
+        starts = np.maximum(rows - self.seq + 1, 0)
+        return np.column_stack((self.ts.asi8[starts], self.ts.asi8[rows], self.ts.asi8[rows]))
+
     def evaluate(self, keys, preds):
         return np.array([(2.0 if self.y[k[0]] == 1 else -1.0)
                          for k, p in zip(keys, preds) if p == 1])
@@ -107,6 +112,11 @@ class _RKeyLabeler:
 
     def mv_feature_names(self):
         return [f'ch{i}' for i in range(self.C)]
+
+    def sample_time_bounds_ns(self, keys):
+        rows = np.asarray([int(key[0]) for key in keys], dtype=np.int64)
+        starts = np.maximum(rows - self.seq + 1, 0)
+        return np.column_stack((self.ts.asi8[starts], self.ts.asi8[rows], self.ts.asi8[rows]))
 
     def evaluate(self, keys, preds):
         return np.array([k[1] for k, p in zip(keys, preds) if p == 1])

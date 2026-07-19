@@ -13,11 +13,17 @@ import time
 import numpy as np
 import pandas as pd
 
+from futures_foundation.execution_economics import load_execution_economics
 from futures_foundation.finetune.event_contexts import (
+    COLLECTION_SCHEMA_VERSION,
     EventContextConfig, load_context_shard, materialize_context_stream, save_context_shard,
 )
 from futures_foundation.finetune.path_labels import PathLabelConfig
-from futures_foundation.finetune.tournament_data import CACHE_MANIFEST
+from futures_foundation.finetune.tournament_data import (
+    CACHE_MANIFEST,
+    load_cache_entry,
+    load_cache_manifest,
+)
 
 
 def _sha256(path: Path) -> str:
@@ -28,54 +34,37 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _utc_arg(value: str) -> str:
+    timestamp = pd.Timestamp(value)
+    timestamp = timestamp.tz_localize("UTC") if timestamp.tzinfo is None else timestamp.tz_convert("UTC")
+    return timestamp.isoformat()
+
+
 def _atomic_json(path: Path, value: dict) -> None:
     temporary = Path(str(path) + ".tmp")
     temporary.write_text(json.dumps(value, indent=2, allow_nan=False) + "\n")
     os.replace(temporary, path)
 
 
-def _load_stream(cache_dir: Path, entry: dict, *, start: pd.Timestamp, end: pd.Timestamp):
-    files = entry["files"]
-    loaded = {}
-    for key in ("ohlcv", "timestamps", "contract_id"):
-        if key not in files:
-            raise ValueError(f"{entry['ticker']}@{entry['timeframe']} lacks {key}")
-        path = cache_dir / files[key]["path"]
-        actual = _sha256(path)
-        if actual != files[key]["sha256"]:
-            raise ValueError(f"source cache hash mismatch: {path}")
-        loaded[key] = np.load(path, mmap_mode="r", allow_pickle=False)
-    ts_ns = np.asarray(loaded["timestamps"], np.int64)
+def _load_stream(
+    cache_dir: Path, cache_manifest: dict, entry: dict, *, start: pd.Timestamp, end: pd.Timestamp,
+):
+    stream, verified = load_cache_entry(
+        cache_dir, cache_manifest, entry["ticker"], entry["timeframe"],
+    )
+    ts_ns = np.asarray(stream["ts"]).astype("datetime64[ns]").astype(np.int64)
     keep = (ts_ns >= start.value) & (ts_ns < end.value)
     source_rows = np.flatnonzero(keep)
     if not len(source_rows):
         raise ValueError("stream has no rows in requested materialization interval")
-    values = np.asarray(loaded["ohlcv"])[source_rows]
+    values = np.asarray(stream["ohlcv"])[source_rows]
     return pd.DataFrame({
         "datetime": pd.to_datetime(ts_ns[source_rows], utc=True),
         "open": values[:, 0], "high": values[:, 1], "low": values[:, 2],
         "close": values[:, 3], "volume": values[:, 4],
-        "contract_id": np.asarray(loaded["contract_id"])[source_rows].astype(str),
+        "contract_id": np.asarray(stream["contract_id"])[source_rows].astype(str),
         "source_row_idx": source_rows,
-    }), {
-        key: {"path": str((cache_dir / files[key]["path"]).resolve()),
-              "sha256": files[key]["sha256"]}
-        for key in ("ohlcv", "timestamps", "contract_id")
-    }
-
-
-def _verified_source_files(cache_dir: Path, entry: dict) -> dict:
-    files = entry["files"]
-    verified = {}
-    for key in ("ohlcv", "timestamps", "contract_id"):
-        if key not in files:
-            raise ValueError(f"{entry['ticker']}@{entry['timeframe']} lacks {key}")
-        path = cache_dir / files[key]["path"]
-        actual = _sha256(path)
-        if actual != files[key]["sha256"]:
-            raise ValueError(f"source cache hash mismatch: {path}")
-        verified[key] = {"path": str(path.resolve()), "sha256": actual}
-    return verified
+    }), verified
 
 
 def run(args) -> dict:
@@ -83,11 +72,7 @@ def run(args) -> dict:
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     cache_manifest_path = cache_dir / CACHE_MANIFEST
-    cache_manifest = json.loads(cache_manifest_path.read_text())
-    if cache_manifest.get("schema_version") != "ffm_foundation_tournament_cache_v1":
-        raise ValueError("unsupported tournament cache")
-    if cache_manifest.get("interval", {}).get("contains_oos") is not False:
-        raise ValueError("event contexts require a development-only source cache")
+    cache_manifest = load_cache_manifest(cache_dir)
 
     tickers = tuple(value.strip().upper() for value in args.tickers.split(",") if value.strip())
     timeframes = tuple(value.strip() for value in args.timeframes.split(",") if value.strip())
@@ -103,10 +88,15 @@ def run(args) -> dict:
     config = EventContextConfig(
         eval_start=args.eval_start, eval_end=args.eval_end, context_bars=args.context_bars,
         atr_period=args.atr_period, atr_stop=args.atr_stop,
-        structural_buffer_atr=args.structural_buffer_atr,
-        round_trip_cost_ticks=args.round_trip_cost_ticks, path=path_config,
+        structural_buffer_atr=args.structural_buffer_atr, path=path_config,
     )
     config.validate()
+    economics = load_execution_economics(
+        args.execution_costs,
+        evaluation_start=_utc_arg(args.eval_start),
+        evaluation_end=_utc_arg(args.eval_end),
+        required_roots=tickers,
+    )
     config_json = json.loads(json.dumps(asdict(config)))
     eval_start, eval_end = pd.Timestamp(args.eval_start, tz="UTC"), pd.Timestamp(args.eval_end, tz="UTC")
     load_start = eval_start - pd.Timedelta(days=int(args.warmup_days))
@@ -123,7 +113,9 @@ def run(args) -> dict:
                 _, existing = load_context_shard(output)
                 if existing["metadata"].get("config") != config_json:
                     raise ValueError(f"existing shard config differs for {sid}; use --overwrite")
-                current_source = _verified_source_files(cache_dir, entry)
+                _, current_source = load_cache_entry(
+                    cache_dir, cache_manifest, ticker, timeframe,
+                )
                 if existing.get("source", {}).get("files") != current_source:
                     raise ValueError(f"existing shard source differs for {sid}; use --overwrite")
                 print(f"[resume] {sid}: verified {existing['metadata']['rows']:,} rows", flush=True)
@@ -131,10 +123,11 @@ def run(args) -> dict:
                 continue
             started = time.perf_counter()
             frame, source_files = _load_stream(
-                cache_dir, entry, start=load_start, end=eval_end,
+                cache_dir, cache_manifest, entry, start=load_start, end=eval_end,
             )
             arrays, metadata = materialize_context_stream(
                 frame, ticker=ticker, timeframe=timeframe, config=config,
+                execution_economics=economics,
             )
             source = {
                 "cache_manifest": str(cache_manifest_path),
@@ -152,7 +145,7 @@ def run(args) -> dict:
             )
 
     summary = {
-        "schema_version": "ffm_event_context_collection_v1",
+        "schema_version": COLLECTION_SCHEMA_VERSION,
         "status": "complete", "oos_read": False,
         "config": config_json,
         "cache_manifest": str(cache_manifest_path),
@@ -198,7 +191,7 @@ def main() -> None:
     parser.add_argument("--atr-period", type=int, default=20)
     parser.add_argument("--atr-stop", type=float, default=0.5)
     parser.add_argument("--structural-buffer-atr", type=float, default=0.05)
-    parser.add_argument("--round-trip-cost-ticks", type=float, default=1.0)
+    parser.add_argument("--execution-costs", default="config/execution_costs.yaml")
     parser.add_argument("--context-minutes", type=int, default=60)
     parser.add_argument("--context-deadband-r", type=float, default=0.25)
     parser.add_argument("--barrier-chunk-rows", type=int, default=8192)

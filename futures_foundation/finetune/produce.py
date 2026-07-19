@@ -52,43 +52,58 @@ DEPLOY_RATES = (15, 10, 8, 5, 4, 3, 2, 1)
 # and a VERT-bar outcome window, so a shuffled val row sits inside its train neighbours' windows.
 # TEMPORAL (default) = val is the LAST val_frac of the stream, PURGED: a train row whose outcome
 # window reaches the val start is dropped — the same barrier rule build() applies at test_start.
-# VAL_SPLIT=random restores the legacy behaviour (needed only to reproduce pre-fix bundles). ──
-VAL_SPLIT = os.environ.get('VAL_SPLIT', 'temporal')      # temporal (default/honest) | random (legacy)
+# Random validation and unpurged fallbacks are intentionally unavailable in active code. Historical
+# bundles that used them are reproducible from their pinned source revision, not by weakening the
+# current ruler through an environment variable.
 
 
-def _key_bar_index(k):
-    """Bar index out of a key tuple, WITHOUT assuming one strategy's layout: the mantis
-    strategies key on (sid, i, ...) while simple/test labelers key on (i, ...). -> int or None."""
-    try:
-        v = k[1] if (len(k) >= 2 and isinstance(k[0], str)) else k[0]
-        return int(v) if float(v) == int(v) else None    # reject R-floats etc.
-    except (TypeError, ValueError, IndexError):
-        return None
+def _sample_time_bounds_ns(labeler, keys):
+    """Return exact inclusive input/outcome bounds owned by the labeler.
+
+    Tuple layouts and ``VERT``/``SEQ`` attributes are not temporal authority: they cannot express
+    session truncation, multirate inputs, or strategy-specific lookbacks. Active production must
+    therefore provide one explicit method returning ``[context_start, decision, label_end]`` in
+    UTC nanoseconds for every key.
+    """
+    hook = getattr(labeler, "sample_time_bounds_ns", None)
+    if not callable(hook):
+        raise ValueError(
+            "labeler must implement sample_time_bounds_ns(keys) for leak-safe validation"
+        )
+    bounds = np.asarray(hook(keys))
+    if bounds.shape != (len(keys), 3) or bounds.dtype.kind not in "iu":
+        raise ValueError(
+            "sample_time_bounds_ns must return an integer [N,3] array"
+        )
+    bounds = bounds.astype(np.int64, copy=False)
+    context_start, decision, label_end = bounds.T
+    if (
+        np.any(context_start > decision)
+        or np.any(decision > label_end)
+        or np.any(np.diff(decision) < 0)
+    ):
+        raise ValueError("sample time bounds are invalid or not time ordered")
+    return bounds
 
 
-def _val_split(Ktr, val_frac, lab, rng, min_val=1):
+def _val_split(Ktr, val_frac, lab, min_val=1):
     """-> (va_i, tr_i) index arrays into Ktr.
 
-    The SPLIT needs no key introspection: build() walks signals forward, so the last val_frac of
-    the list IS the last val_frac of the calendar. Only the PURGE needs bar indices — if the key
-    layout doesn't expose one, split temporally anyway and skip the purge (still strictly better
-    than a random split, which interleaves val INSIDE the train windows)."""
+    The split is temporal and the purge is mandatory. Train outcomes must end strictly before
+    the first validation *input context*, not merely before its decision. Missing bounds, unsorted
+    rows, or an empty post-purge train set fail closed."""
     n = len(Ktr)
     nv = max(int(min_val), int(n * val_frac))
-    if VAL_SPLIT == 'random':                            # legacy: leaks train->val (see above)
-        idx = rng.permutation(n)
-        return idx[:nv], idx[nv:]
+    if nv >= n:
+        raise ValueError("validation split leaves no training rows")
     cut = n - nv
     va_i, tr_i = np.arange(cut, n), np.arange(cut)
-    bars = [_key_bar_index(k) for k in Ktr]
-    if any(b is None for b in bars):                     # unknown key layout -> temporal, unpurged
-        return va_i, tr_i
-    bars = np.asarray(bars)
-    if not np.all(np.diff(bars) >= 0):                   # not time-ordered -> can't purge safely
-        return va_i, tr_i
-    vert = int(getattr(lab, 'VERT', 150))
-    keep = np.arange(cut)[bars[:cut] + 1 + vert < bars[cut]]   # PURGE the barrier overlap
-    return va_i, (keep if len(keep) else tr_i)           # degenerate stream -> unpurged
+    bounds = _sample_time_bounds_ns(lab, Ktr)
+    first_validation_context = int(bounds[cut, 0])
+    keep = np.arange(cut)[bounds[:cut, 2] < first_validation_context]
+    if not len(keep):
+        raise ValueError("validation purge removed every training row")
+    return va_i, keep
 
 
 def operating_points(eval_lab, keys, proba, ts, rates=(5, 3, 2, 1)):
@@ -630,7 +645,7 @@ def train_final_streamed(make_labeler, streams, classifier, clf_kwargs=None,
         if channel_names is None and hasattr(lab, 'mv_feature_names'):
             channel_names = lab.mv_feature_names()
         if len(Ktr) >= 2:
-            va_i, tr_i = _val_split(Ktr, val_frac, lab, rng)
+            va_i, tr_i = _val_split(Ktr, val_frac, lab)
             p = str(rundir / f'_tr{i}.npy')
             _, sh = featurize_to_memmap(clf, lab, [Ktr[j] for j in tr_i], p, chunk)
             tr_parts.append((p, len(tr_i))); Ytr_tr += list(Ytr[tr_i]); C, seq = sh[1], sh[2]
@@ -715,7 +730,7 @@ def train_final(labeler, classifier, clf_kwargs=None, holdout_start='2026-01-01'
         sub = np.sort(np.random.default_rng(seed).choice(len(Ktr), max_train, replace=False))
         Ktr = [Ktr[j] for j in sub]; Ytr = Ytr[sub]
     rng = np.random.default_rng(seed)
-    va_i, tr_i = _val_split(Ktr, val_frac, labeler, rng, min_val=10)
+    va_i, tr_i = _val_split(Ktr, val_frac, labeler, min_val=10)
     Ktr_tr = [Ktr[j] for j in tr_i]; Ytr_tr = Ytr[tr_i]
     Ktr_va = [Ktr[j] for j in va_i]; Ytr_va = Ytr[va_i]
 

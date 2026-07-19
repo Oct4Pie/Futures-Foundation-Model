@@ -9,6 +9,11 @@ from pathlib import Path
 import numpy as np
 
 from futures_foundation.finetune.downstream_sample import load_balanced_sample
+from futures_foundation.finetune.tournament_data import (
+    CACHE_MANIFEST,
+    load_cache_entry,
+    load_cache_manifest,
+)
 
 
 SCHEMA_VERSION = "ffm_downstream_contexts_v1"
@@ -43,12 +48,9 @@ def build_downstream_contexts(
 ) -> tuple[dict[str, np.ndarray], dict[str, object]]:
     """Reconstruct exact source contexts for every row in a verified balanced sample."""
     cache_path = Path(cache_manifest_path).resolve()
-    cache = json.loads(cache_path.read_text())
-    if (
-        cache.get("schema_version") != "ffm_foundation_tournament_cache_v1"
-        or cache.get("interval", {}).get("contains_oos") is not False
-    ):
-        raise ValueError("downstream contexts require the development-only tournament cache")
+    if cache_path.name != CACHE_MANIFEST:
+        raise ValueError(f"cache manifest must be named {CACHE_MANIFEST}")
+    cache = load_cache_manifest(cache_path.parent)
     if sample_manifest.get("status") != "complete" or sample_manifest.get("oos_read") is not False:
         raise ValueError("downstream contexts require a completed development-only sample")
     context_bars = int(context_bars)
@@ -64,22 +66,13 @@ def build_downstream_contexts(
 
     for stream_id in sorted(str(value) for value in np.unique(sample["stream_id"])):
         selected = np.flatnonzero(sample["stream_id"] == stream_id)
-        entry = cache.get("entries", {}).get(stream_id)
-        if entry is None:
-            raise KeyError(f"tournament cache lacks {stream_id}")
-        loaded = {}
-        verified = {}
-        for key in ("ohlcv", "timestamps", "contract_id"):
-            declared = entry["files"][key]
-            path = cache_dir / declared["path"]
-            actual = _sha256(path)
-            if actual != declared["sha256"]:
-                raise ValueError(f"source hash mismatch for {stream_id}/{key}")
-            loaded[key] = np.load(path, mmap_mode="r", allow_pickle=False)
-            verified[key] = {
-                "path": str(path.resolve()), "sha256": actual,
-                "bytes": int(path.stat().st_size),
-            }
+        ticker, timeframe = stream_id.split("@", 1)
+        stream, verified = load_cache_entry(cache_dir, cache, ticker, timeframe)
+        loaded = {
+            "ohlcv": stream["ohlcv"],
+            "timestamps": np.asarray(stream["ts"]).astype("datetime64[ns]").astype(np.int64),
+            "contract_id": stream["contract_id"],
+        }
         starts = np.asarray(sample["context_start_source_idx"][selected], np.int64)
         decisions = np.asarray(sample["decision_source_idx"][selected], np.int64)
         if np.any(decisions - starts + 1 != context_bars):

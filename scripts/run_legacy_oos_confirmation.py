@@ -29,10 +29,10 @@ from futures_foundation.finetune.calibration import (
     fit_isotonic_expected_value,
 )
 from futures_foundation.finetune.downstream_probe import causal_feature_matrix
+from futures_foundation.execution_economics import load_execution_economics
 from futures_foundation.finetune.downstream_sample import load_balanced_sample, load_row_selection
 from futures_foundation.finetune.downstream_trading import (
     build_policy_events,
-    load_execution_costs,
     load_policy_events,
 )
 from futures_foundation.finetune.event_contexts import (
@@ -134,6 +134,12 @@ def _build_oos_artifacts(args, config: EventContextConfig, output_dir: Path):
         pd.Timestamp(args.oos_start, tz="UTC") - pd.Timedelta(days=args.warmup_days)
     ).isoformat()
     eval_end = pd.Timestamp(args.oos_end, tz="UTC")
+    economics = load_execution_economics(
+        args.execution_costs,
+        evaluation_start=pd.Timestamp(args.oos_start, tz="UTC").isoformat(),
+        evaluation_end=eval_end.isoformat(),
+        required_roots=TICKERS_9,
+    )
 
     for ticker in TICKERS_9:
         for timeframe in TFS_ALL:
@@ -162,6 +168,7 @@ def _build_oos_artifacts(args, config: EventContextConfig, output_dir: Path):
             })
             arrays, metadata = materialize_context_stream(
                 frame, ticker=ticker, timeframe=timeframe, config=config,
+                execution_economics=economics,
             )
             metadata["split"]["oos_read"] = True
             metadata["split"]["role"] = "legacy_confirmation_only"
@@ -239,19 +246,13 @@ def _build_oos_artifacts(args, config: EventContextConfig, output_dir: Path):
     if len(sample["stream_id"]) != len(context):
         raise RuntimeError("OOS sample/context alignment failed")
 
-    instruments, costs = load_execution_costs(
-        args.execution_costs, required_tickers=np.unique(sample["ticker"]),
-    )
     events, event_metadata = build_policy_events(
-        sample, np.arange(len(context), dtype=np.int64), source_shards, instruments,
-        source_cost_ticks=float(config.round_trip_cost_ticks), slippage_ticks=0.0,
+        sample, np.arange(len(context), dtype=np.int64), source_shards, economics,
+        slippage_ticks=0.0,
     )
     event_metadata["oos_read"] = True
     event_metadata["split"] = {
         "role": "legacy_confirmation_only", "start": args.oos_start, "end": args.oos_end,
-    }
-    event_metadata["execution_costs"] = {
-        key: value for key, value in costs.items() if key != "document"
     }
     sample_path = output_dir / "oos_pullback_sample.npz"
     context_path = output_dir / "oos_pullback_contexts.npz"

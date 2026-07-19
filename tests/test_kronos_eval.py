@@ -50,6 +50,19 @@ def test_windows_are_causal_roll_safe_and_content_bound(tmp_path):
     assert window_fingerprint(changed) != window_fingerprint(windows)
 
 
+def test_windows_reject_stream_without_contract_identity(tmp_path):
+    path = tmp_path / "ES_1min.csv"
+    _write_stream(path)
+    frame = pd.read_csv(path).drop(columns=["contract_id"])
+    frame.to_csv(path, index=False)
+    with pytest.raises(ValueError, match="contract_id"):
+        build_forecast_windows(
+            tmp_path, ("ES",), ("1min",), context=16, horizon=4,
+            eval_start="2024-07-01", eval_end="2024-07-02", max_per_stream=8,
+            separation_bars=4, seed=7, chunksize=31, verbose=False,
+        )
+
+
 def test_perfect_forecast_beats_persistence_and_has_valid_structure():
     n, context, horizon = 12, 16, 4
     rng = np.random.default_rng(4)

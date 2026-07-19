@@ -18,24 +18,66 @@ import re
 from typing import Any, Iterable, Mapping
 from zoneinfo import TZPATH, ZoneInfo
 
+from ._authority_bundle_io import (
+    AuthorityBundleFileSizeError,
+    AuthorityBundleIOError,
+    read_canonical_json_file,
+    sha256_regular_file,
+)
 from .corpus_v3 import verify_contract
 
 
 RULES_SCHEMA = "alphaforge_market_calendar_rules_v2"
 SCOPE_SCHEMA = "alphaforge_session_denominator_scope_v1"
 DENOMINATOR_SCHEMA = "alphaforge_session_denominator_v1"
+CONSUMER_SCOPE_SCHEMA = "alphaforge_denominator_consumer_scope_v1"
+SCOPE_SCHEMA_V2 = "alphaforge_session_denominator_scope_v2"
+DENOMINATOR_SCHEMA_V2 = "alphaforge_session_denominator_v2"
 CONSUMER_SCHEMA = "ffm_corpus_v3_contract_v1"
 SCOPE_PURPOSE = "session_denominator_no_outcomes"
+CONSUMER_SCOPE_PURPOSE = "denominator_consumer_scope_no_market_inputs"
+SCOPE_V2_PURPOSE = "session_denominator_scope_from_narrow_consumer_contract"
+CONSUMER_SCOPE_BLOCKERS = (
+    "detached_split_declarations_unproven",
+    "production_admission_unavailable",
+)
+SCOPE_V2_BLOCKERS = (
+    "calendar_rules_native_source_bundle_single_dirfd_unavailable",
+    "narrow_consumer_scope_detached_unproven",
+    "production_admission_unavailable",
+)
 
 _RULES_TOKEN = object()
 _CONSUMER_TOKEN = object()
 _SCOPE_TOKEN = object()
 _DENOMINATOR_TOKEN = object()
+_CONSUMER_SCOPE_V2_TOKEN = object()
+_SCOPE_V2_TOKEN = object()
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+_V2_MAX_BYTES = 64 * 1024 * 1024
+_V2_MAX_NODES = 5_000_000
+_V2_MAX_DEPTH = 20
 
 
 class SessionDenominatorVerificationError(ValueError):
     """Raised when a denominator trust-chain or session invariant fails."""
+
+
+def _hash_source_artifact(path: Path, artifact: Mapping[str, Any]) -> str:
+    """Hash one declared calendar source with stable public integrity semantics."""
+    try:
+        _, physical = sha256_regular_file(
+            path,
+            label=f"calendar source artifact {artifact['path']}",
+            expected_size=artifact["size"],
+        )
+    except AuthorityBundleFileSizeError as exc:
+        raise SessionDenominatorVerificationError(
+            f"source artifact bytes differ: {artifact['path']}"
+        ) from exc
+    except AuthorityBundleIOError as exc:
+        raise SessionDenominatorVerificationError(str(exc)) from exc
+    return physical
 
 
 @dataclass(frozen=True)
@@ -68,6 +110,29 @@ class VerifiedSessionDenominator:
     path: Path
     physical_sha256: str
     semantic_sha256: str
+    _token: object
+
+
+@dataclass(frozen=True)
+class VerifiedDenominatorConsumerScope:
+    document: Mapping[str, Any]
+    path: Path
+    physical_sha256: str
+    semantic_sha256: str
+    _token: object
+
+
+@dataclass(frozen=True)
+class VerifiedDenominatorScopeV2:
+    document: Mapping[str, Any]
+    raw_document: Mapping[str, Any]
+    path: Path
+    physical_sha256: str
+    semantic_sha256: str
+    rules_path: Path
+    consumer_scope_path: Path
+    consumer_scope_physical_sha256: str
+    consumer_scope_semantic_sha256: str
     _token: object
 
 
@@ -133,6 +198,22 @@ def _strict_json(
 
 def _strict_canonical_json(path: Path, name: str) -> tuple[dict[str, Any], bytes]:
     return _strict_json(path, name, canonical=True)
+
+
+def _strict_canonical_json_v2(
+    path: str | Path, name: str
+) -> tuple[Path, dict[str, Any], str]:
+    """Use the authority transport SSOT for new v2 parent capabilities."""
+    try:
+        return read_canonical_json_file(
+            path,
+            label=name,
+            max_bytes=_V2_MAX_BYTES,
+            max_nodes=_V2_MAX_NODES,
+            max_depth=_V2_MAX_DEPTH,
+        )
+    except AuthorityBundleIOError as exc:
+        raise SessionDenominatorVerificationError(str(exc)) from exc
 
 
 def _safe_lexical_path(path: str | Path, name: str) -> Path:
@@ -339,8 +420,11 @@ def _validate_rules(document: Mapping[str, Any], base: Path) -> None:
             raise SessionDenominatorVerificationError("source artifact size is invalid")
         artifact_hash = _require_sha(artifact["sha256"], "source artifact SHA-256")
         path = _source_path(base, artifact["path"], "source artifact path")
-        if path.stat().st_size != artifact["size"] or sha256_file(path) != artifact["sha256"]:
-            raise SessionDenominatorVerificationError(f"source artifact bytes differ: {artifact['path']}")
+        artifact_physical = _hash_source_artifact(path, artifact)
+        if artifact_physical != artifact["sha256"]:
+            raise SessionDenominatorVerificationError(
+                f"source artifact bytes differ: {artifact['path']}"
+            )
         if (
             source_id in source_ids
             or artifact["path"] in source_paths
@@ -483,14 +567,15 @@ def _validate_rules(document: Mapping[str, Any], base: Path) -> None:
 def _verify_source_artifacts(rules: VerifiedCalendarRules) -> None:
     for artifact in rules.document["source_artifacts"]:
         path = _source_path(rules.path.parent, artifact["path"], "source artifact path")
-        if path.stat().st_size != artifact["size"] or sha256_file(path) != artifact["sha256"]:
-            raise SessionDenominatorVerificationError(f"source artifact bytes differ: {artifact['path']}")
+        physical = _hash_source_artifact(path, artifact)
+        if physical != artifact["sha256"]:
+            raise SessionDenominatorVerificationError(
+                f"source artifact bytes differ: {artifact['path']}"
+            )
 
 
 def load_calendar_rules(path: str | Path, *, expected_sha256: str) -> VerifiedCalendarRules:
-    source = _safe_lexical_path(path, "calendar rules")
-    document, raw = _strict_canonical_json(source, "calendar rules")
-    physical = hashlib.sha256(raw).hexdigest()
+    source, document, physical = _strict_canonical_json_v2(path, "calendar rules")
     _require_expected_sha(physical, expected_sha256, "calendar rules")
     _validate_rules(document, source.parent)
     return VerifiedCalendarRules(document, source, physical, _RULES_TOKEN)
@@ -515,6 +600,262 @@ def load_consumer_contract(
     return VerifiedConsumerContract(
         document, source, physical, content_sha256(document), _CONSUMER_TOKEN
     )
+
+
+def load_denominator_consumer_scope_v1(
+    path: str | Path, *, expected_sha256: str
+) -> VerifiedDenominatorConsumerScope:
+    """Verify AlphaForge's narrow, outcome-blind denominator consumer contract.
+
+    This capability is deliberately production-blocked.  It exists only to let FFM
+    independently consume the exact synthetic mechanism emitted by AlphaForge.
+    """
+    source, document, physical = _strict_canonical_json_v2(
+        path, "denominator consumer scope"
+    )
+    _require_expected_sha(physical, expected_sha256, "denominator consumer scope")
+    _exact_keys(
+        document,
+        {
+            "schema_version", "purpose", "production_admission",
+            "admission_blockers", "admitted_roots", "splits",
+            "reserved_oos_excluded", "consumer_scope_semantic_sha256",
+        },
+        "denominator consumer scope",
+    )
+    if (
+        document["schema_version"] != CONSUMER_SCOPE_SCHEMA
+        or document["purpose"] != CONSUMER_SCOPE_PURPOSE
+        or document["production_admission"] is not False
+        or document["admission_blockers"] != list(CONSUMER_SCOPE_BLOCKERS)
+        or document["reserved_oos_excluded"] is not True
+    ):
+        raise SessionDenominatorVerificationError(
+            "denominator consumer scope must remain narrow and production-blocked"
+        )
+    roots = document["admitted_roots"]
+    if (
+        not isinstance(roots, list)
+        or not roots
+        or any(not isinstance(root, str) or _IDENTIFIER_RE.fullmatch(root) is None for root in roots)
+        or roots != sorted(set(roots))
+    ):
+        raise SessionDenominatorVerificationError(
+            "denominator consumer roots must be sorted unique identifiers"
+        )
+    splits = document["splits"]
+    if not isinstance(splits, list) or len(splits) < 2:
+        raise SessionDenominatorVerificationError(
+            "denominator consumer scope requires usable and holdout splits"
+        )
+    normalized: list[tuple[str, date, date, tuple[str, ...]]] = []
+    for index, value in enumerate(splits):
+        split = _exact_keys(
+            value,
+            {"partition_id", "start", "end_exclusive", "permitted_uses"},
+            f"denominator consumer split {index}",
+        )
+        partition = _identifier(
+            split["partition_id"], f"denominator consumer split {index}.partition_id"
+        )
+        start = _day(split["start"], f"denominator consumer split {index}.start")
+        end = _day(
+            split["end_exclusive"],
+            f"denominator consumer split {index}.end_exclusive",
+        )
+        uses = split["permitted_uses"]
+        if not isinstance(uses, list) or any(
+            not isinstance(use, str) or _IDENTIFIER_RE.fullmatch(use) is None
+            for use in uses
+        ):
+            raise SessionDenominatorVerificationError(
+                f"denominator consumer split {index} is invalid"
+            )
+        if start >= end or len(uses) != len(set(uses)):
+            raise SessionDenominatorVerificationError(
+                f"denominator consumer split {index} is invalid"
+            )
+        normalized.append((partition, start, end, tuple(uses)))
+    if len({row[0] for row in normalized}) != len(normalized):
+        raise SessionDenominatorVerificationError(
+            "denominator consumer partition IDs must be unique"
+        )
+    if normalized != sorted(normalized, key=lambda row: (row[1], row[2], row[0])):
+        raise SessionDenominatorVerificationError(
+            "denominator consumer splits must be chronologically sorted"
+        )
+    for previous, current in zip(normalized, normalized[1:]):
+        if previous[2] != current[1]:
+            raise SessionDenominatorVerificationError(
+                "denominator consumer splits must be contiguous and nonoverlapping"
+            )
+    holdout = [row for row in normalized if row[0] == "legacy_holdout"]
+    if (
+        len(holdout) != 1
+        or holdout[0] != normalized[-1]
+        or holdout[0][3]
+        or any(not row[3] for row in normalized[:-1])
+    ):
+        raise SessionDenominatorVerificationError(
+            "denominator consumer scope requires one final zero-use legacy_holdout"
+        )
+    semantic = _require_sha(
+        document["consumer_scope_semantic_sha256"],
+        "denominator consumer scope semantic SHA-256",
+    )
+    payload = dict(document)
+    payload.pop("consumer_scope_semantic_sha256")
+    if semantic != content_sha256(payload):
+        raise SessionDenominatorVerificationError(
+            "denominator consumer scope semantic SHA-256 mismatch"
+        )
+    return VerifiedDenominatorConsumerScope(
+        document, source, physical, semantic, _CONSUMER_SCOPE_V2_TOKEN
+    )
+
+
+def denominator_consumer_scope_document(
+    capability: VerifiedDenominatorConsumerScope,
+) -> Mapping[str, Any]:
+    if (
+        type(capability) is not VerifiedDenominatorConsumerScope
+        or capability._token is not _CONSUMER_SCOPE_V2_TOKEN
+    ):
+        raise SessionDenominatorVerificationError(
+            "a verified denominator-consumer-scope capability is required"
+        )
+    reopened = load_denominator_consumer_scope_v1(
+        capability.path, expected_sha256=capability.physical_sha256
+    )
+    if reopened != capability:
+        raise SessionDenominatorVerificationError(
+            "denominator consumer scope changed on reopen"
+        )
+    return reopened.document
+
+
+def load_denominator_scope_v2(
+    path: str | Path,
+    *,
+    expected_sha256: str,
+    rules: VerifiedCalendarRules,
+    consumer_scope: VerifiedDenominatorConsumerScope,
+) -> VerifiedDenominatorScopeV2:
+    source, document, physical = _strict_canonical_json_v2(
+        path, "denominator scope v2"
+    )
+    _require_expected_sha(physical, expected_sha256, "denominator scope v2")
+    consumer_document = denominator_consumer_scope_document(consumer_scope)
+    rules_document = _rules_document(rules)
+    _exact_keys(
+        document,
+        {
+            "schema_version", "purpose", "production_admission",
+            "admission_blockers", "parent_calendar_rules",
+            "parent_consumer_scope", "scope_semantic_sha256",
+        },
+        "denominator scope v2",
+    )
+    if (
+        document["schema_version"] != SCOPE_SCHEMA_V2
+        or document["purpose"] != SCOPE_V2_PURPOSE
+        or document["production_admission"] is not False
+        or document["admission_blockers"] != list(SCOPE_V2_BLOCKERS)
+    ):
+        raise SessionDenominatorVerificationError(
+            "denominator scope v2 must remain production-blocked"
+        )
+    expected_rules_ref = {
+        "path": str(rules.path),
+        "physical_sha256": rules.physical_sha256,
+        "semantic_sha256": rules.physical_sha256,
+    }
+    expected_consumer_ref = {
+        "path": str(consumer_scope.path),
+        "physical_sha256": consumer_scope.physical_sha256,
+        "semantic_sha256": consumer_scope.semantic_sha256,
+    }
+    if document["parent_calendar_rules"] != expected_rules_ref:
+        raise SessionDenominatorVerificationError(
+            "denominator scope v2 calendar-rules binding mismatch"
+        )
+    if document["parent_consumer_scope"] != expected_consumer_ref:
+        raise SessionDenominatorVerificationError(
+            "denominator scope v2 consumer-scope binding mismatch"
+        )
+    semantic = _require_sha(
+        document["scope_semantic_sha256"], "denominator scope v2 semantic SHA-256"
+    )
+    payload = dict(document)
+    payload.pop("scope_semantic_sha256")
+    if semantic != content_sha256(payload):
+        raise SessionDenominatorVerificationError(
+            "denominator scope v2 semantic SHA-256 mismatch"
+        )
+    usable = [split for split in consumer_document["splits"] if split["permitted_uses"]]
+    holdout = consumer_document["splits"][-1]
+    normalized = {
+        "schema_version": SCOPE_SCHEMA_V2,
+        "purpose": SCOPE_PURPOSE,
+        "calendar_rules_sha256": rules.physical_sha256,
+        "split_uses": [split["partition_id"] for split in usable],
+        "roots": list(consumer_document["admitted_roots"]),
+        "start": usable[0]["start"],
+        "end_exclusive": holdout["start"],
+        "reserved_oos_excluded": True,
+    }
+    coverage = rules_document["coverage"]
+    if not (
+        _day(coverage["start"], "rules coverage start")
+        <= _day(normalized["start"], "scope v2 start")
+        < _day(normalized["end_exclusive"], "scope v2 end")
+        <= _day(coverage["end_exclusive"], "rules coverage end")
+    ):
+        raise SessionDenominatorVerificationError(
+            "denominator scope v2 is outside calendar coverage"
+        )
+    if sorted(normalized["roots"]) != sorted(rules_document["roots"]):
+        raise SessionDenominatorVerificationError(
+            "denominator scope v2 does not conserve full root authority"
+        )
+    return VerifiedDenominatorScopeV2(
+        normalized,
+        document,
+        source,
+        physical,
+        semantic,
+        rules.path,
+        consumer_scope.path,
+        consumer_scope.physical_sha256,
+        consumer_scope.semantic_sha256,
+        _SCOPE_V2_TOKEN,
+    )
+
+
+def denominator_scope_v2_document(
+    capability: VerifiedDenominatorScopeV2,
+    *,
+    rules: VerifiedCalendarRules,
+    consumer_scope: VerifiedDenominatorConsumerScope,
+) -> Mapping[str, Any]:
+    if (
+        type(capability) is not VerifiedDenominatorScopeV2
+        or capability._token is not _SCOPE_V2_TOKEN
+    ):
+        raise SessionDenominatorVerificationError(
+            "a verified denominator-scope-v2 capability is required"
+        )
+    reopened = load_denominator_scope_v2(
+        capability.path,
+        expected_sha256=capability.physical_sha256,
+        rules=rules,
+        consumer_scope=consumer_scope,
+    )
+    if reopened != capability:
+        raise SessionDenominatorVerificationError(
+            "denominator scope v2 changed on reopen"
+        )
+    return reopened.document
 
 
 def _rules_document(rules: VerifiedCalendarRules) -> Mapping[str, Any]:
@@ -955,21 +1296,34 @@ def session_denominator_document(
 
 
 __all__ = [
+    "CONSUMER_SCOPE_BLOCKERS",
+    "CONSUMER_SCOPE_PURPOSE",
+    "CONSUMER_SCOPE_SCHEMA",
     "CONSUMER_SCHEMA",
     "DENOMINATOR_SCHEMA",
+    "DENOMINATOR_SCHEMA_V2",
     "RULES_SCHEMA",
     "SCOPE_PURPOSE",
     "SCOPE_SCHEMA",
+    "SCOPE_SCHEMA_V2",
+    "SCOPE_V2_BLOCKERS",
+    "SCOPE_V2_PURPOSE",
     "SessionDenominatorVerificationError",
     "VerifiedCalendarRules",
     "VerifiedConsumerContract",
+    "VerifiedDenominatorConsumerScope",
     "VerifiedDenominatorScope",
+    "VerifiedDenominatorScopeV2",
     "VerifiedSessionDenominator",
     "content_sha256",
+    "denominator_consumer_scope_document",
+    "denominator_scope_v2_document",
     "load_and_verify_session_denominator",
     "load_calendar_rules",
     "load_consumer_contract",
+    "load_denominator_consumer_scope_v1",
     "load_denominator_scope",
+    "load_denominator_scope_v2",
     "session_denominator_document",
     "sha256_file",
     "verify_session_denominator",

@@ -86,8 +86,10 @@ def build_frozen_inventory(
     results_path = Path(results_path).resolve()
     results = json.loads(results_path.read_text())
     errors: list[str] = []
-    if results.get("schema_version") != "ffm_cross_family_representation_probe_v1":
+    if results.get("schema_version") != "ffm_cross_family_representation_probe_v2":
         errors.append("unsupported representation-results schema")
+    if results.get("probe", {}).get("target_semantics_version") != "ffm_causal_probe_targets_v2":
+        errors.append("representation results lack the current target-semantics binding")
     if results.get("oos_read") is not False:
         errors.append("representation results do not attest oos_read=false")
 

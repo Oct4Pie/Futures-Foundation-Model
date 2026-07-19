@@ -592,5 +592,5 @@ def test_parent_directory_symlink_is_rejected(tmp_path):
     rules_path = _canonical(real / "rules.json", _rules_document(real))
     alias = tmp_path / "alias"
     alias.symlink_to(real, target_is_directory=True)
-    with pytest.raises(SessionDenominatorVerificationError, match="parent directory is a symlink"):
+    with pytest.raises(SessionDenominatorVerificationError, match="symlink"):
         load_calendar_rules(alias / "rules.json", expected_sha256=sha256_file(rules_path))

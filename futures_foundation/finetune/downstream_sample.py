@@ -14,18 +14,25 @@ from pathlib import Path
 
 import numpy as np
 
-from futures_foundation.finetune.event_contexts import load_context_shard
+from futures_foundation.finetune.event_contexts import (
+    COLLECTION_SCHEMA_VERSION, load_context_shard,
+)
 
 
-SCHEMA_VERSION = "ffm_downstream_sample_v1"
-FOLD_SCHEMA_VERSION = "ffm_purged_calendar_folds_v1"
-SELECTION_SCHEMA_VERSION = "ffm_downstream_row_selection_v1"
+SCHEMA_VERSION = "ffm_downstream_sample_v3"
+FOLD_SCHEMA_VERSION = "ffm_purged_calendar_folds_v3"
+INTERVAL_FOLD_SCHEMA_VERSION = "ffm_purged_interval_folds_v3"
+SELECTION_SCHEMA_VERSION = "ffm_downstream_row_selection_v3"
+LEGACY_SAMPLE_SCHEMA_VERSIONS = {"ffm_downstream_sample_v1", "ffm_downstream_sample_v2"}
+LEGACY_SELECTION_SCHEMA_VERSIONS = {
+    "ffm_downstream_row_selection_v1", "ffm_downstream_row_selection_v2",
+}
 
 _ROW_KEYS = (
     "ticker", "timeframe", "contract_id", "context_start_source_idx",
     "decision_source_idx", "decision_time_ns", "block_id", "features", "causal_scale",
-    "context_direction", "cme_session_minute", "contract_segment_id",
-    "bars_since_contract_start", "terminal_log_return", "terminal_move_r",
+    "context_direction", "contract_segment_id",
+    "bars_since_contract_start", "terminal_move_r",
     "forward_abs_move_r", "forward_realized_vol", "upside_mfe_r", "downside_mae_r",
     "forward_trend_eff", "label_end_time_ns", "trend_path_class", "barrier_state",
     "time_to_favorable_minutes", "time_to_adverse_minutes", "policy_r_gross", "tags",
@@ -94,6 +101,7 @@ def build_balanced_sample(
     *,
     rows_per_stream: int = 1200,
     event_tags: tuple[str, ...] = (),
+    allow_legacy: bool = False,
 ) -> tuple[dict[str, np.ndarray], dict[str, object]]:
     """Load verified shards and build a deterministic dense or event-stratified sample.
 
@@ -103,8 +111,11 @@ def build_balanced_sample(
     """
     collection_path = Path(collection_manifest).resolve()
     collection = json.loads(collection_path.read_text())
+    admitted_collection_schemas = {COLLECTION_SCHEMA_VERSION} | (
+        {"ffm_event_context_collection_v1"} if allow_legacy else set()
+    )
     if (
-        collection.get("schema_version") != "ffm_event_context_collection_v1"
+        collection.get("schema_version") not in admitted_collection_schemas
         or collection.get("status") != "complete"
         or collection.get("oos_read") is not False
     ):
@@ -123,7 +134,7 @@ def build_balanced_sample(
 
     for stream_i, (stream_id, declared) in enumerate(sorted(collection["shards"].items())):
         path = Path(declared["path"])
-        arrays, manifest = load_context_shard(path)
+        arrays, manifest = load_context_shard(path, allow_legacy=allow_legacy)
         if (
             manifest["artifact"]["sha256"] != declared["sha256"]
             or manifest["content_fingerprint"] != declared["content_fingerprint"]
@@ -175,6 +186,8 @@ def build_balanced_sample(
         source_shards[stream_id] = {
             "path": str(path.resolve()),
             "sha256": declared["sha256"],
+            "manifest_path": str(Path(str(path.resolve()) + ".manifest.json")),
+            "manifest_sha256": _sha256(Path(str(path.resolve()) + ".manifest.json")),
             "content_fingerprint": declared["content_fingerprint"],
             "source_rows": n,
             "selected_rows": selected_count,
@@ -245,11 +258,14 @@ def save_balanced_sample(
     return manifest
 
 
-def load_balanced_sample(path: str | Path) -> tuple[dict[str, np.ndarray], dict[str, object]]:
+def load_balanced_sample(
+    path: str | Path, *, allow_legacy: bool = False,
+) -> tuple[dict[str, np.ndarray], dict[str, object]]:
     path = Path(path)
     manifest = json.loads(Path(str(path) + ".manifest.json").read_text())
+    admitted = {SCHEMA_VERSION} | (LEGACY_SAMPLE_SCHEMA_VERSIONS if allow_legacy else set())
     if (
-        manifest.get("schema_version") != SCHEMA_VERSION
+        manifest.get("schema_version") not in admitted
         or manifest.get("status") != "complete"
         or manifest.get("oos_read") is not False
     ):
@@ -334,11 +350,15 @@ def load_row_selection(
     path: str | Path,
     *,
     sample_manifest: dict[str, object] | None = None,
+    allow_legacy: bool = False,
 ) -> tuple[dict[str, np.ndarray], dict[str, object]]:
     path = Path(path)
     manifest = json.loads(Path(str(path) + ".manifest.json").read_text())
+    admitted = {SELECTION_SCHEMA_VERSION} | (
+        LEGACY_SELECTION_SCHEMA_VERSIONS if allow_legacy else set()
+    )
     if (
-        manifest.get("schema_version") != SELECTION_SCHEMA_VERSION
+        manifest.get("schema_version") not in admitted
         or manifest.get("status") != "complete"
         or manifest.get("oos_read") is not False
     ):
@@ -399,12 +419,16 @@ def purged_calendar_splits(
     fold_records = []
     for fold in range(1, folds + 1):
         test_lo, test_hi = int(edges[fold]), int(edges[fold + 1])
-        train = np.flatnonzero(label_end + embargo_ns <= test_lo)
+        # Tick-path labels include the observation exactly at label_end.  Equality would let a
+        # training label consume the first test-boundary tick when embargo_ns == 0.  Compare
+        # against a Python-int cutoff to avoid int64 overflow in label_end + embargo_ns.
+        purge_cutoff = test_lo - embargo_ns
+        train = np.flatnonzero(label_end < purge_cutoff)
         test = np.flatnonzero((decision >= test_lo) & (decision < test_hi))
         for group in unique_groups:
             if not np.any(groups[train] == group) or not np.any(groups[test] == group):
                 raise ValueError(f"group {group} fold {fold} is empty after purge")
-        if np.intersect1d(train, test).size or np.any(label_end[train] + embargo_ns > test_lo):
+        if np.intersect1d(train, test).size or np.any(label_end[train] >= purge_cutoff):
             raise RuntimeError("purged calendar split contract was violated")
         splits.append((train, test))
         fold_records.append({
@@ -461,12 +485,13 @@ def purged_interval_splits(
     splits, records = [], []
     for fold in range(folds):
         test_lo, test_hi = int(edges[fold]), int(edges[fold + 1])
-        train = np.flatnonzero(label_end + embargo_ns <= test_lo)
+        purge_cutoff = test_lo - embargo_ns
+        train = np.flatnonzero(label_end < purge_cutoff)
         test = np.flatnonzero((decision >= test_lo) & (decision < test_hi))
         for group in unique_groups:
             if not np.any(groups[train] == group) or not np.any(groups[test] == group):
                 raise ValueError(f"group {group} interval fold {fold + 1} is empty after purge")
-        if np.intersect1d(train, test).size or np.any(label_end[train] + embargo_ns > test_lo):
+        if np.intersect1d(train, test).size or np.any(label_end[train] >= purge_cutoff):
             raise RuntimeError("purged interval split contract was violated")
         splits.append((train, test))
         records.append({
@@ -475,7 +500,7 @@ def purged_interval_splits(
             "train_last_label_end_ns": int(label_end[train].max()),
         })
     contract = {
-        "schema_version": "ffm_purged_interval_folds_v1", "folds": folds,
+        "schema_version": INTERVAL_FOLD_SCHEMA_VERSION, "folds": folds,
         "embargo_ns": embargo_ns, "eval_start_ns": eval_start_ns,
         "eval_end_ns": eval_end_ns, "groups": int(len(unique_groups)),
         "rows": int(len(decision)), "records": records,
@@ -486,7 +511,8 @@ def purged_interval_splits(
 
 
 __all__ = [
-    "SCHEMA_VERSION", "FOLD_SCHEMA_VERSION", "temporally_distributed_rows",
+    "SCHEMA_VERSION", "FOLD_SCHEMA_VERSION", "INTERVAL_FOLD_SCHEMA_VERSION",
+    "temporally_distributed_rows",
     "build_balanced_sample", "save_balanced_sample", "load_balanced_sample",
     "build_balanced_row_selection", "save_row_selection", "load_row_selection",
     "purged_calendar_splits", "purged_interval_splits",

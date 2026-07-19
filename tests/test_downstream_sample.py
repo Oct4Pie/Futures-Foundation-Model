@@ -15,7 +15,9 @@ from futures_foundation.finetune.downstream_sample import (
     save_row_selection,
     temporally_distributed_rows,
 )
-from futures_foundation.finetune.event_contexts import SCHEMA_VERSION as CONTEXT_SCHEMA
+from futures_foundation.finetune.event_contexts import (
+    COLLECTION_SCHEMA_VERSION, SCHEMA_VERSION as CONTEXT_SCHEMA,
+)
 from futures_foundation.finetune.event_contexts import save_context_shard
 
 
@@ -34,10 +36,9 @@ def _shard(path: Path, ticker: str, timeframe: str, n: int = 20, event_rows=()):
         "feature_names": np.array(["a", "b"]), "tag_names": np.array(["tag"]),
         "horizons_minutes": horizons, "targets_r": np.array([1, 2], np.float32),
         "directions": np.array([1, -1], np.int8), "causal_scale": np.ones(n, np.float32),
-        "context_direction": np.ones(n, np.int8), "cme_session_minute": np.arange(n),
+        "context_direction": np.ones(n, np.int8),
         "contract_segment_id": np.zeros(n, np.int64),
         "bars_since_contract_start": np.arange(n),
-        "terminal_log_return": np.ones((n, 3), np.float32),
         "terminal_move_r": np.ones((n, 3), np.float32),
         "forward_abs_move_r": np.ones((n, 3), np.float32),
         "forward_realized_vol": np.ones((n, 3), np.float32),
@@ -83,7 +84,7 @@ def test_balanced_sample_is_hash_bound_and_equal_per_stream(tmp_path):
         }
     collection = tmp_path / "MANIFEST.json"
     collection.write_text(json.dumps({
-        "schema_version": "ffm_event_context_collection_v1", "status": "complete",
+        "schema_version": COLLECTION_SCHEMA_VERSION, "status": "complete",
         "oos_read": False, "shards": shards,
     }))
     arrays, metadata = build_balanced_sample(collection, rows_per_stream=8)
@@ -102,6 +103,21 @@ def test_balanced_sample_is_hash_bound_and_equal_per_stream(tmp_path):
         load_balanced_sample(output)
 
 
+def test_legacy_sample_schema_requires_explicit_opt_in(tmp_path):
+    arrays = {"stream_id": np.asarray(["ES@1min"])}
+    metadata = {"schema_version": "ffm_downstream_sample_v3", "source_shards": {}}
+    output = tmp_path / "sample.npz"
+    save_balanced_sample(output, arrays, metadata)
+    manifest_path = tmp_path / "sample.npz.manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["schema_version"] = "ffm_downstream_sample_v1"
+    manifest_path.write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="unsupported"):
+        load_balanced_sample(output)
+    loaded, _ = load_balanced_sample(output, allow_legacy=True)
+    assert loaded["stream_id"].item() == "ES@1min"
+
+
 def test_event_sample_retains_rare_events_and_caps_common_events_per_stream(tmp_path):
     shards = {}
     rows_by_ticker = {"ES": [1, 7], "NQ": list(range(12))}
@@ -114,7 +130,7 @@ def test_event_sample_retains_rare_events_and_caps_common_events_per_stream(tmp_
         }
     collection = tmp_path / "MANIFEST.json"
     collection.write_text(json.dumps({
-        "schema_version": "ffm_event_context_collection_v1", "status": "complete",
+        "schema_version": COLLECTION_SCHEMA_VERSION, "status": "complete",
         "oos_read": False, "shards": shards,
     }))
 
@@ -149,7 +165,7 @@ def test_purged_calendar_splits_use_actual_label_end_and_embargo():
     assert len(splits) == 3 and contract["groups"] == 2
     for (train, test), record in zip(splits, contract["records"]):
         assert not np.intersect1d(train, test).size
-        assert np.all(label_end[train].max(axis=1) + 200 <= record["test_start_ns"])
+        assert np.all(label_end[train].max(axis=1) + 200 < record["test_start_ns"])
         assert set(groups[train]) == {0, 1} and set(groups[test]) == {0, 1}
 
 
@@ -184,7 +200,7 @@ def test_purged_interval_splits_train_on_history_and_test_only_declared_interval
         assert decision[test].min() >= 50_000
         assert decision[test].max() < 90_000
         assert np.any(decision[train] < 50_000)
-        assert np.all(label_end[train].max(axis=1) + 200 <= record["test_start_ns"])
+        assert np.all(label_end[train].max(axis=1) + 200 < record["test_start_ns"])
         assert set(groups[train]) == {"ES", "NQ"}
         assert set(groups[test]) == {"ES", "NQ"}
 
@@ -212,6 +228,22 @@ def test_purged_interval_splits_ignore_post_evaluation_perturbations():
     for (original_train, original_test), (changed_train, changed_test) in zip(original, changed):
         np.testing.assert_array_equal(original_train, changed_train)
         np.testing.assert_array_equal(original_test, changed_test)
+
+
+def test_purged_interval_split_excludes_label_ending_exactly_at_test_boundary():
+    decision = np.r_[np.arange(8), np.arange(8)].astype(np.int64)
+    groups = np.repeat(["ES", "NQ"], 8)
+    label_end = decision.copy()
+    splits, contract = purged_interval_splits(
+        decision, label_end, groups,
+        eval_start_ns=4, eval_end_ns=8, folds=1, embargo_ns=0,
+    )
+    train, test = splits[0]
+    test_start = contract["records"][0]["test_start_ns"]
+    assert test_start == 4
+    assert np.all(label_end[train] < test_start)
+    assert not np.any(label_end[train] == test_start)
+    assert np.all(decision[test] >= test_start)
 
 
 def test_nested_row_selection_is_balanced_and_hash_bound(tmp_path):

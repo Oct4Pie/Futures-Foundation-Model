@@ -10,6 +10,7 @@ from .common import (_apply_control, _gather_batch, BaseTrainer, encode_independ
 
 PATH_QUANTILES = (0.25, 0.5, 0.75)
 PATH_CLASSES = ('termination', 'continuation', 'reversal')
+PATH_TARGET_SEMANTICS_VERSION = 'ffm_mantis_path_objective_atr20_mean_v2'
 
 
 def wall_clock_steps(bar_ns, horizons_minutes):
@@ -54,14 +55,17 @@ def path_targets(raw_context, raw_future, steps, *, context_minutes=60,
     future_close = raw_future[:, 3, :]
     future_high, future_low = raw_future[:, 1, :], raw_future[:, 2, :]
     prev_future_close = torch.cat((base[:, None], future_close[:, :-1]), 1)
-    future_returns = torch.log(future_close.clamp_min(1e-9) /
-                               prev_future_close.clamp_min(1e-9))
+    future_changes = future_close - prev_future_close
     positions = torch.arange(future_length, device=raw_context.device)[None, :]
     vols, favorable, adverse, classes = [], [], [], []
     for horizon in range(steps.shape[1]):
         count = steps[:, horizon]
         valid = positions < count[:, None]
-        realized_vol = torch.sqrt((future_returns.square() * valid).sum(1)).mul(100.0)
+        count_float = count.to(future_changes.dtype)
+        summed = (future_changes * valid).sum(1)
+        summed_sq = (future_changes.square() * valid).sum(1)
+        variance = (summed_sq / count_float - (summed / count_float).square()).clamp_min(0.0)
+        realized_vol = torch.sqrt(variance) / scale
         if direction.ndim != 1:
             raise AssertionError('invalid direction shape')
         favorable_path = torch.where(direction[:, None] > 0,

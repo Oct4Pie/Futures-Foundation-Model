@@ -28,10 +28,10 @@ import json
 import numpy as np
 import pandas as pd
 
-from futures_foundation.primitives.indicators import compute_atr
+from futures_foundation.pipeline._primitives import compute_atr
 
 
-SCHEMA_VERSION = "ffm_dense_path_labels_v1"
+SCHEMA_VERSION = "ffm_dense_path_labels_v3"
 
 BARRIER_NEITHER = np.int8(0)
 BARRIER_FAVORABLE_FIRST = np.int8(1)
@@ -103,9 +103,24 @@ def _required_frame(frame: pd.DataFrame) -> tuple[np.ndarray, ...]:
     finite = np.isfinite(o) & np.isfinite(h) & np.isfinite(l) & np.isfinite(c)
     if np.any(finite & ((h < np.maximum(o, c)) | (l > np.minimum(o, c)) | (h < l))):
         raise ValueError("invalid OHLC geometry")
-    contract = frame["contract_id"].astype(str).to_numpy()
+    if frame["contract_id"].isna().any():
+        raise ValueError("contract_id must be non-empty")
+    contract = frame["contract_id"].astype(str).str.strip().to_numpy(dtype=str)
+    if np.any(np.char.str_len(contract) == 0):
+        raise ValueError("contract_id must be non-empty")
     segment = np.r_[0, np.cumsum(contract[1:] != contract[:-1])].astype(np.int64)
     return ts, o, h, l, c, segment
+
+
+def _segmented_atr(
+    high: np.ndarray, low: np.ndarray, close: np.ndarray, segment: np.ndarray, period: int,
+) -> np.ndarray:
+    """Compute causal ATR independently inside every contiguous contract segment."""
+    output = np.full(len(close), np.nan, dtype=np.float64)
+    for segment_value in np.unique(segment):
+        rows = np.flatnonzero(segment == segment_value)
+        output[rows] = compute_atr(high[rows], low[rows], close[rows], int(period))
+    return output
 
 
 def _prefix_sums(values: np.ndarray) -> np.ndarray:
@@ -215,18 +230,22 @@ def build_dense_path_labels(
     h_count, target_count = len(horizons), len(targets)
     expected_ns = int(timeframe_minutes) * 60 * 1_000_000_000
 
-    if causal_scale is None:
-        scale = compute_atr(h, l, c, int(config.atr_period)).astype(np.float64, copy=False)
-    else:
-        scale = np.asarray(causal_scale, dtype=np.float64)
-        if scale.shape != (n,):
-            raise ValueError(f"causal_scale must have shape {(n,)}, got {scale.shape}")
+    admitted_scale = _segmented_atr(h, l, c, segment, int(config.atr_period))
+    if causal_scale is not None:
+        supplied_scale = np.asarray(causal_scale, dtype=np.float64)
+        if supplied_scale.shape != (n,):
+            raise ValueError(f"causal_scale must have shape {(n,)}, got {supplied_scale.shape}")
+        if not np.array_equal(supplied_scale, admitted_scale, equal_nan=True):
+            raise ValueError(
+                "external causal_scale is not identical to contract-segmented causal ATR"
+            )
+    scale = admitted_scale
 
     valid = np.zeros((n, h_count), dtype=bool)
     invalid_reason = np.full((n, h_count), INVALID_INSUFFICIENT_FUTURE, dtype=np.uint8)
     label_end_time_ns = np.full((n, h_count), -1, dtype=np.int64)
     float_names = (
-        "terminal_log_return", "terminal_move_r", "forward_abs_move_r",
+        "terminal_move_r", "forward_abs_move_r",
         "forward_realized_vol", "upside_mfe_r", "downside_mae_r", "forward_trend_eff",
     )
     result: dict[str, object] = {
@@ -240,18 +259,16 @@ def build_dense_path_labels(
 
     bad_cadence = np.diff(ts) != expected_ns
     bad_cadence_prefix = np.r_[0, np.cumsum(bad_cadence, dtype=np.int64)]
-    bar_ok = (
-        np.isfinite(o) & np.isfinite(h) & np.isfinite(l) & np.isfinite(c)
-        & (c > 0)
-    )
+    bar_ok = np.isfinite(o) & np.isfinite(h) & np.isfinite(l) & np.isfinite(c)
     bad_bar_prefix = np.r_[0, np.cumsum(~bar_ok, dtype=np.int64)]
     price_ok = bar_ok & np.isfinite(scale) & (scale > 0)
-    log_c = np.full(n, np.nan, dtype=np.float64)
-    log_c[price_ok] = np.log(c[price_ok])
-    log_return = np.diff(log_c)
-    return_prefix = _prefix_sums(np.nan_to_num(log_return, nan=0.0))
-    return_sq_prefix = _prefix_sums(np.nan_to_num(log_return * log_return, nan=0.0))
-    abs_return_prefix = _prefix_sums(np.nan_to_num(np.abs(log_return), nan=0.0))
+    # Log returns are undefined for legitimate futures prices at or below zero.  Normalize raw
+    # increments by the decision-time causal ATR below so targets remain translation-safe and
+    # never use a future-derived denominator.
+    price_change = np.diff(c)
+    change_prefix = _prefix_sums(np.nan_to_num(price_change, nan=0.0))
+    change_sq_prefix = _prefix_sums(np.nan_to_num(price_change * price_change, nan=0.0))
+    abs_change_prefix = _prefix_sums(np.nan_to_num(np.abs(price_change), nan=0.0))
 
     context_steps = int(config.context_minutes) // int(timeframe_minutes)
     if context_direction is None:
@@ -300,16 +317,17 @@ def build_dense_path_labels(
         if not len(good_rows):
             continue
 
-        terminal_log = log_c[ends] - log_c[rows]
         terminal_r = (c[ends] - c[rows]) / scale[rows]
-        sum_return = return_prefix[ends] - return_prefix[rows]
-        sum_return_sq = return_sq_prefix[ends] - return_sq_prefix[rows]
-        mean_return = sum_return / float(steps)
-        variance = np.maximum(sum_return_sq / float(steps) - mean_return * mean_return, 0.0)
-        path_length = abs_return_prefix[ends] - abs_return_prefix[rows]
+        sum_change = change_prefix[ends] - change_prefix[rows]
+        sum_change_sq = change_sq_prefix[ends] - change_sq_prefix[rows]
+        mean_change = sum_change / float(steps)
+        variance = np.maximum(
+            sum_change_sq / float(steps) - mean_change * mean_change, 0.0,
+        )
+        path_length = abs_change_prefix[ends] - abs_change_prefix[rows]
         trend_eff = np.divide(
-            np.abs(terminal_log), path_length,
-            out=np.zeros_like(terminal_log), where=path_length > 0,
+            np.abs(c[ends] - c[rows]), path_length,
+            out=np.zeros_like(terminal_r), where=path_length > 0,
         )
 
         high_windows = np.lib.stride_tricks.sliding_window_view(h[1:], steps)
@@ -320,10 +338,9 @@ def build_dense_path_labels(
         down_mae = (c[rows] - min_low) / scale[rows]
 
         values = {
-            "terminal_log_return": terminal_log,
             "terminal_move_r": terminal_r,
             "forward_abs_move_r": np.abs(terminal_r),
-            "forward_realized_vol": np.sqrt(variance),
+            "forward_realized_vol": np.sqrt(variance) / scale[rows],
             "upside_mfe_r": up_mfe,
             "downside_mae_r": down_mae,
             "forward_trend_eff": trend_eff,
@@ -351,6 +368,12 @@ def build_dense_path_labels(
 
     result.update({
         "schema_version": SCHEMA_VERSION,
+        "target_semantics": {
+            "price_change_basis": "raw_price_increment_over_decision_time_causal_atr_v1",
+            "forward_realized_vol": "std_future_raw_price_increments_over_decision_time_causal_atr_v1",
+            "forward_trend_eff": "absolute_terminal_price_change_over_path_absolute_price_change_v1",
+            "negative_prices_supported": True,
+        },
         "config": asdict(config),
         "timeframe_minutes": int(timeframe_minutes),
         "horizons_minutes": horizons,
@@ -378,6 +401,7 @@ def path_label_fingerprint(labels: dict[str, object]) -> str:
         "schema_version": labels["schema_version"],
         "config": labels["config"],
         "timeframe_minutes": labels["timeframe_minutes"],
+        "target_semantics": labels["target_semantics"],
     }
     digest.update(json.dumps(scalar, sort_keys=True, separators=(",", ":")).encode())
     for key in sorted(labels):

@@ -11,7 +11,7 @@ from .common import (_apply_control, _gather_batch, BaseTrainer, encode_independ
 
 
 STRUCTURAL_TARGET_NAMES = (
-    'close_log_return_x100', 'log_true_range_atr', 'body_atr',
+    'close_change_atr', 'log_true_range_atr', 'body_atr',
     'upper_wick_atr', 'lower_wick_atr', 'log_volume_change',
 )
 
@@ -26,14 +26,14 @@ def structural_targets(raw):
     # One scale per complete context preserves relative volatility inside the window. This target
     # is self-supervised/bidirectional; it never inspects a deployment-future row.
     scale = true_range.median(dim=1, keepdim=True).values.clamp_min(1e-6)
-    ret = torch.log(c.clamp_min(1e-9) / prev_c.clamp_min(1e-9)) * 100.0
-    ret[:, 0] = 0.0
+    change = (c - prev_c) / scale
+    change[:, 0] = 0.0
     body = (c - o) / scale
     upper = (h - torch.maximum(o, c)).clamp_min(0.0) / scale
     lower = (torch.minimum(o, c) - l).clamp_min(0.0) / scale
     logv = torch.log1p(v.clamp_min(0.0))
     volume_change = torch.cat((torch.zeros_like(logv[:, :1]), logv[:, 1:] - logv[:, :-1]), 1)
-    return torch.stack((ret.clamp(-10, 10), torch.log1p(true_range / scale).clamp(0, 5),
+    return torch.stack((change.clamp(-10, 10), torch.log1p(true_range / scale).clamp(0, 5),
                         body.clamp(-10, 10), upper.clamp(0, 10), lower.clamp(0, 10),
                         volume_change.clamp(-5, 5)), dim=1)
 

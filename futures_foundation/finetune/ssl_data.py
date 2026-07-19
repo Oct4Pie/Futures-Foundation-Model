@@ -22,15 +22,20 @@ import pandas as pd
 TICKERS_9 = ['ES', 'NQ', 'RTY', 'YM', 'GC', 'SI', 'CL', 'ZB', 'ZN']
 TFS_ALL = ['1min', '3min', '5min', '15min', '30min', '60min']
 OHLCV_COLS = ['open', 'high', 'low', 'close', 'volume']
+WINDOW_GAP_POLICY = 'exact_timestamp_cadence_and_contract_segments_v1'
 
 _DATA = os.path.join(os.path.dirname(__file__), '..', '..', 'data')
 
 
 def load_ohlcv(data_dir=None, tickers=None, tfs=None, verbose=True, *, start=None, end=None,
                chunksize=250_000):
-    """Return a list of stream dicts {sid, ticker, tf, ohlcv[N,5], ts[N]} for every
+    """Return stream dicts with required contract-segment identity for every
     (ticker, tf) CSV found under `data_dir` (default repo data/). Missing files are
-    skipped with a note (not all tickers have every TF historically)."""
+    skipped with a note (not all tickers have every TF historically).
+
+    ``contract_id`` is mandatory: an unsegmented continuous series cannot prove that an SSL
+    window does not cross a futures-contract roll.
+    """
     ddir = data_dir or _DATA
     tickers = tickers or TICKERS_9
     tfs = tfs or TFS_ALL
@@ -43,12 +48,11 @@ def load_ohlcv(data_dir=None, tickers=None, tfs=None, verbose=True, *, start=Non
                     print(f"  [ssl-data] skip (missing) {tk}_{tf}", flush=True)
                 continue
             available = set(pd.read_csv(path, nrows=0).columns)
-            required = {'datetime', *OHLCV_COLS}
+            required = {'datetime', *OHLCV_COLS, 'contract_id'}
             missing = required - available
             if missing:
                 raise ValueError(f"{path}: missing required columns {sorted(missing)}")
-            optional = ['contract_id'] if 'contract_id' in available else []
-            usecols = ['datetime'] + OHLCV_COLS + optional
+            usecols = ['datetime'] + OHLCV_COLS + ['contract_id']
             if start is None and end is None:
                 df = pd.read_csv(path, usecols=usecols)
                 df['ts'] = pd.to_datetime(df['datetime'], utc=True)
@@ -93,10 +97,13 @@ def load_ohlcv(data_dir=None, tickers=None, tfs=None, verbose=True, *, start=Non
             if invalid.any():
                 raise ValueError(f"{path}: {int(invalid.sum())} invalid OHLCV rows")
             ts = df['ts'].to_numpy()
+            if df['contract_id'].isna().any():
+                raise ValueError(f"{path}: missing contract_id values")
+            contract_id = df['contract_id'].astype(str).str.strip().to_numpy(dtype=str)
+            if np.any(np.char.str_len(contract_id) == 0):
+                raise ValueError(f"{path}: missing contract_id values")
             streams.append({'sid': f'{tk}@{tf}', 'ticker': tk, 'tf': tf,
-                            'ohlcv': ohlcv, 'ts': ts,
-                            'contract_id': (df['contract_id'].to_numpy()
-                                            if 'contract_id' in df else None)})
+                            'ohlcv': ohlcv, 'ts': ts, 'contract_id': contract_id})
             if verbose:
                 interval = ("" if start is None and end is None else
                             f" interval=[{start or '-inf'},{end or '+inf'})")
@@ -170,12 +177,43 @@ def time_split(ts, val_frac=0.1, holdout_start='2026-01-01', embargo=0, val_star
 
 
 def window_starts(idx, seq_total, contiguous=True, *, timestamps=None,
-                  expected_delta=None, max_gap=None, segment_ids=None):
+                  expected_delta=None, max_gap=None, segment_ids=None,
+                  session_gap_capability=None):
     """Valid window-start positions within an index range such that
     [start, start+seq_total) stays inside `idx`. With contiguous=True (default) the
     full window must be a run of consecutive bar indices (no split/holdout gap inside
-    the window). Returns an int array of start positions (absolute bar indices)."""
+    the window). Timestamp-aware windows currently require exact cadence. Session gaps
+    fail closed until an explicit session-denominator capability is admitted. Returns an
+    int array of start positions (absolute bar indices)."""
+    if max_gap is not None or session_gap_capability is not None:
+        raise ValueError(
+            "session-crossing windows require an explicit verified session-gap capability; "
+            "no such capability is currently admitted"
+        )
+    seq_total = int(seq_total)
+    if seq_total < 1:
+        raise ValueError("seq_total must be positive")
     idx = np.asarray(idx, int)
+    if idx.ndim != 1:
+        raise ValueError("idx must be one-dimensional")
+    if timestamps is not None and expected_delta is None:
+        raise ValueError("expected_delta is required when timestamps are supplied")
+    if timestamps is None and expected_delta is not None:
+        raise ValueError("timestamps are required when expected_delta is supplied")
+    lengths = [len(value) for value in (timestamps, segment_ids) if value is not None]
+    if lengths and any(length != lengths[0] for length in lengths):
+        raise ValueError("timestamps and segment_ids must have equal lengths")
+    if lengths and (np.any(idx < 0) or np.any(idx >= lengths[0])):
+        raise ValueError("idx is outside timestamp/segment bounds")
+    if not contiguous and lengths:
+        raise ValueError("metadata-aware windows cannot disable contiguity")
+    if timestamps is not None:
+        parsed_timestamps = np.asarray(
+            pd.to_datetime(timestamps, utc=True), dtype='datetime64[ns]'
+        )
+        expected_delta_ns = int(pd.Timedelta(expected_delta).value)
+        if expected_delta_ns <= 0 or np.isnat(parsed_timestamps).any():
+            raise ValueError("timestamps and expected_delta must be valid and positive")
     if len(idx) < seq_total:
         return np.array([], int)
     if not contiguous:
@@ -192,20 +230,8 @@ def window_starts(idx, seq_total, contiguous=True, *, timestamps=None,
         n = len(timestamps) if timestamps is not None else len(segment_ids)
         bad_edge = np.zeros(max(0, n - 1), dtype=bool)
         if timestamps is not None and expected_delta is not None and n > 1:
-            t = np.asarray(pd.to_datetime(timestamps, utc=True), dtype='datetime64[ns]')
-            delta_ns = int(pd.Timedelta(expected_delta).value)
-            observed = np.diff(t).astype('timedelta64[ns]').astype(np.int64)
-            if max_gap is None:
-                bad_edge |= observed != delta_ns
-            else:
-                max_gap_ns = int(pd.Timedelta(max_gap).value)
-                if max_gap_ns < delta_ns:
-                    raise ValueError("max_gap must be >= expected_delta")
-                # Coarser futures contexts need to cross the known one-hour daily maintenance
-                # closure. Keep only aligned intervals under that explicit ceiling; weekends,
-                # holidays, off-grid timestamps, and larger missing-data holes remain boundaries.
-                bad_edge |= ((observed < delta_ns) | (observed > max_gap_ns)
-                             | ((observed % delta_ns) != 0))
+            observed = np.diff(parsed_timestamps).astype('timedelta64[ns]').astype(np.int64)
+            bad_edge |= observed != expected_delta_ns
         if segment_ids is not None and n > 1:
             seg = np.asarray(segment_ids)
             bad_edge |= seg[1:] != seg[:-1]

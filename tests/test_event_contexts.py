@@ -1,7 +1,10 @@
+import json
+from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
 
+from futures_foundation.execution_economics import load_execution_economics
 from futures_foundation.finetune.event_contexts import (
     EventContextConfig,
     TAG_NAMES,
@@ -19,6 +22,15 @@ from futures_foundation.finetune.event_contexts import _single_policy_path
 from futures_foundation.finetune.path_labels import BARRIER_AMBIGUOUS
 from futures_foundation.finetune.path_labels import PathLabelConfig
 from futures_foundation.pipeline._primitives import compute_atr
+
+
+def _economics():
+    return load_execution_economics(
+        Path(__file__).resolve().parents[1] / "config/execution_costs.yaml",
+        evaluation_start="2024-01-01T00:00:00Z",
+        evaluation_end="2025-01-01T00:00:00Z",
+        required_roots=("ES",),
+    )
 
 
 def _frame(n=1100, seed=4):
@@ -53,13 +65,70 @@ def _config(frame):
 
 def test_baseline_features_are_prefix_invariant_and_context_bounded():
     frame = _frame()
-    scale = np.ones(len(frame))
-    full, names = causal_baseline_features(frame, causal_scale=scale)
-    prefix, prefix_names = causal_baseline_features(frame.iloc[:800], causal_scale=scale[:800])
+    full, names = causal_baseline_features(frame)
+    prefix, prefix_names = causal_baseline_features(frame.iloc[:800])
     assert names == prefix_names and len(names) == full.shape[1]
     np.testing.assert_allclose(full[:800], prefix, equal_nan=True)
-    assert np.isnan(full[255]).any()
-    assert np.isfinite(full[256:]).all()
+    assert np.isnan(full[254]).any()
+    assert np.isfinite(full[255:]).all()
+
+
+def test_baseline_features_reset_all_state_at_contract_boundaries():
+    frame = _frame(n=900)
+    frame.loc[450:, "contract_id"] = "ESM4"
+    original, names = causal_baseline_features(frame)
+    changed = frame.copy()
+    changed.loc[:449, ["open", "high", "low", "close"]] += 10_000.0
+    perturbed, changed_names = causal_baseline_features(changed)
+    assert names == changed_names
+    np.testing.assert_allclose(original[450:], perturbed[450:], equal_nan=True)
+    long_feature = names.index("net_change_context_scale_256bar")
+    assert np.isnan(original[450:705, long_feature]).all()
+    assert np.isfinite(original[705, long_feature])
+
+
+def test_baseline_features_do_not_read_before_the_declared_256_bar_context():
+    frame = _frame(n=900)
+    original, names = causal_baseline_features(frame)
+    decision = 600
+    context_start = decision - 255
+    changed = frame.copy()
+    changed.loc[:context_start - 1, ["open", "high", "low", "close", "volume"]] *= 7.0
+    perturbed, changed_names = causal_baseline_features(changed)
+    assert names == changed_names
+    np.testing.assert_allclose(original[decision], perturbed[decision], rtol=0.0, atol=1e-6)
+
+
+def test_baseline_features_are_finite_for_negative_prices_without_log_semantics():
+    frame = _frame(n=900)
+    frame[["open", "high", "low", "close"]] -= 250.0
+    features, names = causal_baseline_features(frame)
+    assert np.isfinite(features[255:]).all()
+    assert not any("log_return" in name for name in names)
+    assert "net_change_context_scale_256bar" in names
+
+
+def test_monotone_context_has_unit_trend_efficiency():
+    frame = _frame(n=400)
+    close = np.arange(400, dtype=float) - 200.0
+    frame["open"] = np.r_[close[0], close[:-1]]
+    frame["close"] = close
+    frame["high"] = np.maximum(frame["open"], frame["close"]) + 0.25
+    frame["low"] = np.minimum(frame["open"], frame["close"]) - 0.25
+    features, names = causal_baseline_features(frame)
+    column = names.index("trend_eff_256bar")
+    assert features[255, column] == pytest.approx(1.0)
+
+
+@pytest.mark.parametrize("value", [np.nan, "", "   "])
+def test_event_context_rejects_missing_or_blank_contract_ids(value):
+    frame = _frame(n=800)
+    frame.loc[400, "contract_id"] = value
+    with pytest.raises(ValueError, match="contract_id"):
+        materialize_context_stream(
+            frame, ticker="ES", timeframe="1min", config=_config(frame),
+            execution_economics=_economics(),
+        )
 
 
 def test_all_trigger_tags_are_prefix_invariant_without_trade_suppression():
@@ -125,6 +194,7 @@ def test_materializer_deduplicates_contexts_and_rejects_rolls_and_gaps():
     frame.loc[1000:, "datetime"] += pd.Timedelta(minutes=1)
     arrays, metadata = materialize_context_stream(
         frame, ticker="ES", timeframe="1min", config=_config(frame),
+        execution_economics=_economics(),
     )
     decisions = arrays["decision_source_idx"]
     assert len(decisions) == len(np.unique(decisions)) == metadata["rows"]
@@ -138,7 +208,7 @@ def test_materializer_deduplicates_contexts_and_rejects_rolls_and_gaps():
     ))
     assert len(policy_key) == len(np.unique(policy_key, axis=0)) == metadata["policy_events"]
     assert arrays["policy_valid"].shape == (len(policy_key), 2)
-    assert arrays["policy_realized_r"].shape[:2] == (len(policy_key), 2)
+    assert arrays["policy_gross_r"].shape[:2] == (len(policy_key), 2)
 
     source_to_local = {int(value): i for i, value in enumerate(frame["source_row_idx"])}
     for start_source, decision_source, label_end in zip(
@@ -154,12 +224,12 @@ def test_materializer_deduplicates_contexts_and_rejects_rolls_and_gaps():
         assert (np.diff(context_delta) == 60 * 1_000_000_000).all()
 
 
-def test_only_scheduled_cme_maintenance_gap_is_allowed_in_context():
+def test_context_edges_fail_closed_without_verified_session_capability():
     scheduled = pd.DatetimeIndex([
         pd.Timestamp("2024-01-02 15:59", tz="America/Chicago"),
         pd.Timestamp("2024-01-02 17:00", tz="America/Chicago"),
     ])
-    assert _context_edge_is_valid(scheduled, 60 * 1_000_000_000).tolist() == [True]
+    assert _context_edge_is_valid(scheduled, 60 * 1_000_000_000).tolist() == [False]
     arbitrary = pd.DatetimeIndex([
         pd.Timestamp("2024-01-02 10:00", tz="America/Chicago"),
         pd.Timestamp("2024-01-02 10:02", tz="America/Chicago"),
@@ -169,7 +239,7 @@ def test_only_scheduled_cme_maintenance_gap_is_allowed_in_context():
         pd.Timestamp("2024-01-05 16:00", tz="America/Chicago"),
         pd.Timestamp("2024-01-07 17:00", tz="America/Chicago"),
     ])
-    assert _context_edge_is_valid(weekend, 60 * 1_000_000_000).tolist() == [True]
+    assert _context_edge_is_valid(weekend, 60 * 1_000_000_000).tolist() == [False]
     holiday_sized_arbitrary_gap = pd.DatetimeIndex([
         pd.Timestamp("2024-01-02 10:00", tz="America/Chicago"),
         pd.Timestamp("2024-01-04 10:00", tz="America/Chicago"),
@@ -185,10 +255,10 @@ def test_executable_policy_preserves_ambiguity_and_scores_adverse_first():
     c = np.array([100.0, 101.0, 100.0])
     state, realized, reached, exits = _single_policy_path(
         h, l, c, decision=0, direction=1, entry=100.0, risk=1.0, steps=1,
-        targets=np.array([2.0, 3.0]), cost_r=0.05,
+        targets=np.array([2.0, 3.0]),
     )
     np.testing.assert_array_equal(state, [BARRIER_AMBIGUOUS, BARRIER_AMBIGUOUS])
-    np.testing.assert_allclose(realized, [-1.05, -1.05])
+    np.testing.assert_allclose(realized, [-1.0, -1.0])
     assert not reached.any()
     np.testing.assert_array_equal(exits, [1, 1])
 
@@ -217,6 +287,7 @@ def test_vectorized_event_policies_match_scalar_reference():
         selected_tag_direction=directions, selected_tag_origin_source_idx=origins,
         causal_scale=np.ones(len(frame)), horizons_minutes=np.array([2, 4]),
         targets_r=np.array([1.0, 2.0]), timeframe_minutes=1, config=cfg,
+        execution_economics=_economics(),
     )
     h, l, c = (frame[name].to_numpy(float) for name in ("high", "low", "close"))
     for event_i, decision in enumerate(selected):
@@ -225,18 +296,17 @@ def test_vectorized_event_policies_match_scalar_reference():
             if not output["policy_valid"][event_i, mode_i]:
                 continue
             risk = float(output["policy_risk_price"][event_i, mode_i])
-            cost = float(output["policy_cost_r"][event_i, mode_i])
             for horizon_i, steps in enumerate((2, 4)):
                 expected = _single_policy_path(
                     h, l, c, decision=int(decision), direction=direction,
                     entry=float(frame["open"].iloc[decision + 1]), risk=risk, steps=steps,
-                    targets=np.array([1.0, 2.0]), cost_r=cost,
+                    targets=np.array([1.0, 2.0]),
                 )
                 np.testing.assert_array_equal(
                     output["policy_barrier_state"][event_i, mode_i, horizon_i], expected[0]
                 )
                 np.testing.assert_allclose(
-                    output["policy_realized_r"][event_i, mode_i, horizon_i], expected[1],
+                    output["policy_gross_r"][event_i, mode_i, horizon_i], expected[1],
                 )
                 np.testing.assert_array_equal(
                     output["policy_reached"][event_i, mode_i, horizon_i], expected[2]
@@ -247,6 +317,7 @@ def test_context_shard_roundtrip_and_hash_guard(tmp_path):
     frame = _frame(n=800)
     arrays, metadata = materialize_context_stream(
         frame, ticker="ES", timeframe="1min", config=_config(frame),
+        execution_economics=_economics(),
     )
     path = tmp_path / "ES_1min.npz"
     manifest = save_context_shard(
@@ -261,3 +332,18 @@ def test_context_shard_roundtrip_and_hash_guard(tmp_path):
         stream.write(b"tamper")
     with pytest.raises(ValueError, match="hash mismatch"):
         load_context_shard(path)
+
+
+def test_legacy_context_schema_requires_explicit_opt_in(tmp_path):
+    path = tmp_path / "legacy.npz"
+    arrays = {"x": np.asarray([1])}
+    metadata = {"rows": 1}
+    save_context_shard(path, arrays, metadata)
+    manifest_path = tmp_path / "legacy.npz.manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["schema_version"] = "ffm_event_context_shard_v2"
+    manifest_path.write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="unsupported"):
+        load_context_shard(path)
+    loaded, _ = load_context_shard(path, allow_legacy=True)
+    assert loaded["x"].item() == 1

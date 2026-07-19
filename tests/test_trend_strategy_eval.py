@@ -51,7 +51,8 @@ def _event(strategy, day, value, reached):
         "label_end_time_ns": ts + 3, "exit_time_ns": ts + 2,
         "source_signal_idx": 10, "direction": 1, "contract_id": "ESH5",
         "stop_mode": "atr", "raw_risk_price": .4, "risk_price": .5,
-        "risk_ticks": 2.0, "cost_r": .5, "risk_atr": .5, "peak_r": 3.0,
+        "risk_ticks": 2.0, "one_tick_r": .25, "fee_r": .25,
+        "cost_r": .5, "risk_atr": .5, "peak_r": 3.0,
         "realized": np.array([1.97, value, value], np.float32),
         "reached": np.array([True, reached, reached]),
     }
@@ -72,9 +73,9 @@ def test_event_arrays_sort_and_summary():
     assert report["profit_factor"] > 2.8
     assert set(report["by_target"]) == {"2.0", "3.0", "4.0"}
     np.testing.assert_allclose(report["cost_tick_sensitivity"]["0.0"]["mean_r"],
-                               report["mean_r"] + .5, atol=1e-6)
+                               report["mean_r"] + .25, atol=1e-6)
     np.testing.assert_allclose(report["cost_tick_sensitivity"]["2.0"]["mean_r"],
-                               report["mean_r"] - .5, atol=1e-6)
+                               report["mean_r"] - .25, atol=1e-6)
 
 
 def test_metric_summary_empty_and_drawdown():

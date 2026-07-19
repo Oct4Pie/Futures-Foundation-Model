@@ -23,7 +23,8 @@ def _write_csv(path, n, start='2024-01-01', freq='3min', base=4000.0):
     close = base + np.cumsum(rng.standard_normal(n))
     pd.DataFrame({'datetime': ts.astype(str), 'open': close, 'high': close + 1,
                   'low': close - 1, 'close': close,
-                  'volume': rng.integers(100, 1000, n).astype(float)}).to_csv(path, index=False)
+                  'volume': rng.integers(100, 1000, n).astype(float),
+                  'contract_id': np.full(n, 'ESH24')}).to_csv(path, index=False)
 
 
 # ---------------------------------------------------------------- torch-free data tests
@@ -37,6 +38,15 @@ def test_load_ohlcv(tmp_path):
     es = next(s for s in streams if s['sid'] == 'ES@3min')
     assert es['ohlcv'].shape == (500, 5) and es['ohlcv'].dtype == np.float32
     assert len(es['ts']) == 500
+
+
+def test_load_ohlcv_rejects_missing_contract_id(tmp_path):
+    path = tmp_path / 'ES_3min.csv'
+    _write_csv(path, 50)
+    frame = pd.read_csv(path).drop(columns=['contract_id'])
+    frame.to_csv(path, index=False)
+    with pytest.raises(ValueError, match='contract_id'):
+        ssl_data.load_ohlcv(str(tmp_path), tickers=['ES'], tfs=['3min'], verbose=False)
 
 
 def test_load_ohlcv_physically_reads_only_requested_dates(tmp_path):
@@ -142,18 +152,42 @@ def test_window_starts_rejects_time_gaps_and_contract_rolls():
     assert 7 in starts and 15 in starts and 16 in starts  # windows ending before breaks stay usable
 
 
-def test_window_starts_can_allow_only_bounded_aligned_session_gap():
-    # Bridge a normal one-hour maintenance closure for 60m bars (observed delta=120m), but not
-    # a weekend-sized hole. This exception is opt-in; exact cadence remains the default.
+def test_window_starts_rejects_unverified_session_gap_override():
     ts = pd.DatetimeIndex([
         '2024-01-01 20:00Z', '2024-01-01 22:00Z', '2024-01-01 23:00Z',
         '2024-01-02 00:00Z', '2024-01-05 00:00Z', '2024-01-05 01:00Z',
     ])
     exact = ssl_data.window_starts(np.arange(6), 3, timestamps=ts, expected_delta='60min')
-    allowed = ssl_data.window_starts(np.arange(6), 3, timestamps=ts, expected_delta='60min',
-                                     max_gap='120min')
-    assert 0 not in exact and 0 in allowed
-    assert 2 not in allowed and 3 not in allowed
+    assert 0 not in exact and 2 not in exact and 3 not in exact
+    with pytest.raises(ValueError, match='verified session-gap capability'):
+        ssl_data.window_starts(
+            np.arange(6), 3, timestamps=ts, expected_delta='60min', max_gap='4D',
+        )
+
+
+def test_window_starts_requires_cadence_and_aligned_metadata_lengths():
+    ts = pd.date_range('2024-01-01', periods=6, freq='1min', tz='UTC')
+    with pytest.raises(ValueError, match='expected_delta'):
+        ssl_data.window_starts(np.arange(6), 3, timestamps=ts)
+    with pytest.raises(ValueError, match='equal lengths'):
+        ssl_data.window_starts(
+            np.arange(6), 3, timestamps=ts, expected_delta='1min',
+            segment_ids=np.asarray(['A'] * 5),
+        )
+    with pytest.raises(ValueError, match='cannot disable contiguity'):
+        ssl_data.window_starts(
+            np.arange(6), 3, contiguous=False, timestamps=ts, expected_delta='1min',
+        )
+
+
+def test_assemble_rejects_legacy_aligned_market_gap_escape_hatch(tmp_path):
+    _write_csv(tmp_path / 'ES_60min.csv', 100, freq='60min')
+    streams = ssl_data.load_ohlcv(str(tmp_path), ['ES'], ['60min'], verbose=False)
+    with pytest.raises(ValueError, match='verified session-gap capability'):
+        ssl.assemble(
+            streams, seq=8, max_jitter=0, val_frac=0.1, holdout_start=None,
+            allow_aligned_market_gaps=True, verbose=False,
+        )
 
 
 def test_assemble_windows_stay_within_stream(tmp_path):
@@ -187,6 +221,8 @@ def test_assemble_returns_contiguous_stream_group_bounds(tmp_path):
 
 def test_assemble_exposes_stream_and_contract_objective_segments():
     ts = pd.date_range('2023-01-01', periods=20, freq='1h', tz='UTC')
+    gapped_ts = ts.copy()
+    gapped_ts = gapped_ts.where(np.arange(20) < 10, gapped_ts + pd.Timedelta(hours=4))
     streams = [
         {
             'sid': 'ES@1h', 'ticker': 'ES', 'tf': '1h', 'ts': ts,
@@ -194,15 +230,18 @@ def test_assemble_exposes_stream_and_contract_objective_segments():
             'contract_id': np.asarray(['ESH3'] * 12 + ['ESM3'] * 8),
         },
         {
-            'sid': 'NQ@1h', 'ticker': 'NQ', 'tf': '1h', 'ts': ts,
-            'ohlcv': np.ones((20, 5), np.float32), 'contract_id': None,
+            'sid': 'NQ@1h', 'ticker': 'NQ', 'tf': '1h', 'ts': gapped_ts,
+            'ohlcv': np.ones((20, 5), np.float32),
+            'contract_id': np.asarray(['NQH3'] * 20),
         },
     ]
     _, _, _, groups = ssl.assemble(
         streams, seq=3, max_jitter=0, val_frac=0.2, holdout_start=None,
         return_groups=True, verbose=False,
     )
-    assert groups['objective_row_bounds'].tolist() == [[0, 12], [12, 20], [20, 40]]
+    assert groups['objective_row_bounds'].tolist() == [
+        [0, 12], [12, 20], [20, 30], [30, 40],
+    ]
 
 
 def test_nextleg_reserve_covers_both_bounded_future_legs():
@@ -272,9 +311,11 @@ def test_targets_from_windows():
     chop = np.array([100, 101, 100, 101, 100, 101, 100, 101.0])
     def stk(close):
         return np.stack([close, close + 0.5, close - 0.5, close,
-                         np.full(seq, 500.0)], 1).astype(np.float32)
-    big = np.concatenate([stk(ramp), stk(chop)], 0)      # T=16, 5 cols
-    t = ssl_probe.targets_from_windows(big, [0, 8], seq, fwd_k=4)
+                         np.full(len(close), 500.0)], 1).astype(np.float32)
+    future = np.array([108., 109., 110., 111.])
+    future_chop = np.array([100., 101., 100., 101.])
+    big = np.concatenate([stk(ramp), stk(future), stk(chop), stk(future_chop)], 0)
+    t = ssl_probe.targets_from_windows(big, [0, 12], seq, fwd_k=4)
     assert t['trend_eff'][0] > 0.9 and t['trend_eff'][1] < 0.3   # trend vs chop
     assert t['direction'][0] == 1                                # net up
     assert set(t) == {'vol', 'trend_eff', 'range_expand', 'fwd_absmove',
@@ -698,6 +739,24 @@ def test_log_price_context_future_uses_context_only_volume_stats():
     expected_volume = ((torch.log1p(fut[:, 4:]) - cv.mean(2, keepdim=True)) /
                        cv.std(2, keepdim=True))
     assert torch.allclose(fs[:, 4:], expected_volume)
+
+
+@torch_test
+def test_log_price_preprocessing_rejects_nonpositive_futures_prices():
+    import torch
+    from futures_foundation.finetune.pretext._torch.common import (
+        preprocess_context_and_future, preprocess_windows,
+    )
+    contract = 'per_window_log_price_rel_volume_zscore_v1'
+    raw = torch.ones(1, 5, 4)
+    raw[:, 3, 2] = -1.0
+    with pytest.raises(ValueError, match='nonpositive prices'):
+        preprocess_windows(raw, contract)
+    context = torch.ones(1, 5, 4)
+    future = torch.ones(1, 5, 2)
+    future[:, 0, 0] = 0.0
+    with pytest.raises(ValueError, match='nonpositive prices'):
+        preprocess_context_and_future(context, future, contract)
 
 
 @torch_test

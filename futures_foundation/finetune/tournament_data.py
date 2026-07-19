@@ -14,6 +14,7 @@ from .tournament import OOS_START, TRAIN_START, VALIDATION_START
 
 
 CACHE_MANIFEST = "TOURNAMENT_CACHE.json"
+CACHE_SCHEMA_VERSION = "ffm_foundation_tournament_cache_v2"
 
 
 def _sha256(path):
@@ -36,6 +37,9 @@ def build_cache(source_dir, cache_dir, tickers, timeframes, *, verbose=True):
     """Materialize the train+validation date slice once as mmap-friendly arrays."""
     source_dir, cache_dir = Path(source_dir), Path(cache_dir)
     cache_dir.mkdir(parents=True, exist_ok=True)
+    source_manifest = source_dir / "MANIFEST.json"
+    if not source_manifest.is_file() or source_manifest.is_symlink():
+        raise ValueError("tournament cache requires a regular source MANIFEST.json")
     entries = {}
     for ticker in tickers:
         for timeframe in timeframes:
@@ -54,9 +58,8 @@ def build_cache(source_dir, cache_dir, tickers, timeframes, *, verbose=True):
             _atomic_npy(paths["ohlcv"], stream["ohlcv"])
             timestamp_ns = pd.DatetimeIndex(stream["ts"]).asi8.astype(np.int64)
             _atomic_npy(paths["timestamps"], timestamp_ns)
-            if stream.get("contract_id") is not None:
-                paths["contract_id"] = cache_dir / f"{stem}.contract_id.npy"
-                _atomic_npy(paths["contract_id"], np.asarray(stream["contract_id"], dtype=str))
+            paths["contract_id"] = cache_dir / f"{stem}.contract_id.npy"
+            _atomic_npy(paths["contract_id"], np.asarray(stream["contract_id"], dtype=str))
             entries[f"{ticker}@{timeframe}"] = {
                 "ticker": ticker, "timeframe": timeframe, "rows": int(len(timestamp_ns)),
                 "files": {
@@ -65,14 +68,16 @@ def build_cache(source_dir, cache_dir, tickers, timeframes, *, verbose=True):
                     for key, path in paths.items()
                 },
             }
-    source_manifest = source_dir / "MANIFEST.json"
     report = {
-        "schema_version": "ffm_foundation_tournament_cache_v1",
+        "schema_version": CACHE_SCHEMA_VERSION,
         "interval": {"start": TRAIN_START, "end_exclusive": OOS_START,
                      "contains_oos": False},
         "source_dir": str(source_dir.resolve()),
-        "source_manifest_sha256": (_sha256(source_manifest)
-                                   if source_manifest.is_file() else None),
+        "source_manifest": {
+            "path": str(source_manifest.resolve()),
+            "sha256": _sha256(source_manifest),
+            "bytes": source_manifest.stat().st_size,
+        },
         "entries": entries,
     }
     target = cache_dir / CACHE_MANIFEST
@@ -82,43 +87,93 @@ def build_cache(source_dir, cache_dir, tickers, timeframes, *, verbose=True):
     return report
 
 
-def load_cache(cache_dir, tickers, timeframes, *, verbose=True):
-    cache_dir = Path(cache_dir)
+def load_cache_manifest(cache_dir):
+    """Load and verify the one tournament-cache manifest contract."""
+    cache_dir = Path(cache_dir).resolve()
     manifest_path = cache_dir / CACHE_MANIFEST
-    if not manifest_path.is_file():
+    if not manifest_path.is_file() or manifest_path.is_symlink():
         raise FileNotFoundError(f"tournament cache manifest missing: {manifest_path}")
     manifest = json.loads(manifest_path.read_text())
-    if manifest.get("schema_version") != "ffm_foundation_tournament_cache_v1":
+    if manifest.get("schema_version") != CACHE_SCHEMA_VERSION:
         raise ValueError("unsupported tournament cache schema")
     interval = manifest.get("interval") or {}
     if (interval.get("start"), interval.get("end_exclusive"), interval.get("contains_oos")) != (
             TRAIN_START, OOS_START, False):
         raise ValueError("tournament cache interval does not match the locked protocol")
+    source_manifest = manifest.get("source_manifest") or {}
+    source_path = Path(str(source_manifest.get("path", "")))
+    expected_source_path = Path(str(manifest.get("source_dir", ""))) / "MANIFEST.json"
+    if (
+        source_path != expected_source_path
+        or not source_path.is_file()
+        or source_path.is_symlink()
+        or source_path.stat().st_size != source_manifest.get("bytes")
+        or _sha256(source_path) != source_manifest.get("sha256")
+    ):
+        raise ValueError("tournament cache source-manifest identity mismatch")
+    return manifest
+
+
+def load_cache_entry(cache_dir, manifest, ticker, timeframe):
+    """Return one identity-verified stream and its bound source-file identities."""
+    cache_dir = Path(cache_dir).resolve()
+    stream_id = f"{ticker}@{timeframe}"
+    entry = (manifest.get("entries") or {}).get(stream_id)
+    if entry is None:
+        raise KeyError(f"tournament cache lacks {stream_id}")
+    files = entry.get("files") or {}
+    if set(files) != {"ohlcv", "timestamps", "contract_id"}:
+        raise ValueError(f"cache files are incomplete for {stream_id}")
+    resolved = {}
+    verified = {}
+    for name, identity in files.items():
+        relative = Path(str(identity.get("path", "")))
+        file_path = cache_dir / relative
+        if (
+            relative.is_absolute() or ".." in relative.parts or file_path.is_symlink()
+            or not file_path.is_file() or file_path.stat().st_size != identity.get("bytes")
+            or _sha256(file_path) != identity.get("sha256")
+        ):
+            raise ValueError(f"cache file identity mismatch for {stream_id}:{name}")
+        resolved[name] = file_path
+        verified[name] = {
+            "path": str(file_path.resolve()), "sha256": identity["sha256"],
+            "bytes": int(identity["bytes"]),
+        }
+    values = np.load(resolved["ohlcv"], mmap_mode="r", allow_pickle=False)
+    timestamp_ns = np.load(resolved["timestamps"], mmap_mode="r", allow_pickle=False)
+    contract = np.load(resolved["contract_id"], mmap_mode="r", allow_pickle=False)
+    contract_text = np.asarray(contract, dtype=str)
+    if (
+        entry.get("ticker") != ticker or entry.get("timeframe") != timeframe
+        or values.shape != (int(entry["rows"]), 5)
+        or len(timestamp_ns) != len(values) or len(contract) != len(values)
+        or not np.all(np.diff(np.asarray(timestamp_ns, np.int64)) > 0)
+        or np.any(np.char.str_len(np.char.strip(contract_text)) == 0)
+    ):
+        raise ValueError(f"invalid cached array shape for {stream_id}")
+    stream = {
+        "sid": stream_id, "ticker": ticker, "tf": timeframe,
+        "ohlcv": values, "ts": np.asarray(timestamp_ns).astype("datetime64[ns]"),
+        "contract_id": contract,
+    }
+    return stream, verified
+
+
+def load_cache(cache_dir, tickers, timeframes, *, verbose=True):
+    cache_dir = Path(cache_dir).resolve()
+    manifest = load_cache_manifest(cache_dir)
     streams = []
     for ticker in tickers:
         for timeframe in timeframes:
-            entry = (manifest.get("entries") or {}).get(f"{ticker}@{timeframe}")
-            if entry is None:
+            if f"{ticker}@{timeframe}" not in (manifest.get("entries") or {}):
                 if verbose:
                     print(f"  [tournament-cache] skip missing {ticker}@{timeframe}", flush=True)
                 continue
-            files = entry["files"]
-            values = np.load(cache_dir / files["ohlcv"]["path"], mmap_mode="r",
-                             allow_pickle=False)
-            timestamp_ns = np.load(cache_dir / files["timestamps"]["path"], mmap_mode="r",
-                                   allow_pickle=False)
-            contract = (np.load(cache_dir / files["contract_id"]["path"], mmap_mode="r",
-                                allow_pickle=False)
-                        if "contract_id" in files else None)
-            if values.shape != (int(entry["rows"]), 5) or len(timestamp_ns) != len(values):
-                raise ValueError(f"invalid cached array shape for {ticker}@{timeframe}")
-            streams.append({
-                "sid": f"{ticker}@{timeframe}", "ticker": ticker, "tf": timeframe,
-                "ohlcv": values, "ts": np.asarray(timestamp_ns).astype("datetime64[ns]"),
-                "contract_id": contract,
-            })
+            stream, _ = load_cache_entry(cache_dir, manifest, ticker, timeframe)
+            streams.append(stream)
             if verbose:
-                print(f"  [tournament-cache] {ticker}@{timeframe} bars={len(values)}", flush=True)
+                print(f"  [tournament-cache] {ticker}@{timeframe} bars={len(stream['ohlcv'])}", flush=True)
     if not streams:
         raise FileNotFoundError("no requested streams in tournament cache")
     return streams
@@ -136,7 +191,7 @@ def load_adaptation_data(data_dir, tickers, timeframes, *, parent_length, verbos
     big, train, validation, groups = ssl.assemble(
         streams, seq=int(parent_length), max_jitter=0, val_frac=0.0,
         train_start=TRAIN_START, val_start=VALIDATION_START, holdout_start=OOS_START,
-        return_groups=True, verbose=verbose, allow_aligned_market_gaps=True,
+        return_groups=True, verbose=verbose, allow_aligned_market_gaps=False,
     )
     if len(groups["train_bounds"]) != len(streams) or len(groups["val_bounds"]) != len(streams):
         raise ValueError("every requested stream must have train and validation windows")

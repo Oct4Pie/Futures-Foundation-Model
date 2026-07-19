@@ -34,9 +34,10 @@ from futures_foundation.finetune.kronos_eval import (
     build_forecast_windows, window_fingerprint,
 )
 from futures_foundation.finetune.moment_eval import targets_from_context_future
+from futures_foundation.finetune.probe_targets import TARGET_SEMANTICS_VERSION
 
 
-SCHEMA = "ffm_cross_family_representation_probe_v1"
+SCHEMA = "ffm_cross_family_representation_probe_v2"
 CONTEXT = 256
 HORIZON = 16
 FOLDS = 5
@@ -710,7 +711,8 @@ def score(args):
         "probe": {"protocol": "five-fold expanding calendar walk-forward with two-span embargo",
                   "fold_contract_sha256": fold_hash,
                   "head": "standardized Ridge(alpha=1,lsqr) / LogisticRegression(C=1)",
-                  "targets": list(targets)},
+                  "targets": list(targets),
+                  "target_semantics_version": TARGET_SEMANTICS_VERSION},
         "results": rows, "coverage": expected,
     }
     output, _ = _write_report_artifacts(args.output_dir, report)

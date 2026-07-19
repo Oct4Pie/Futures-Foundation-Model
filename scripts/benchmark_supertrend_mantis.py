@@ -236,6 +236,19 @@ class SuperTrendMantis:
         return [self._b[tuple(k[0].split('@'))]['ts'][int(k[1]) + 1 + self.VERT]
                 for k in keys]
 
+    def sample_time_bounds_ns(self, keys):
+        """Exact inclusive input/decision/outcome bounds for purged inner validation."""
+        bounds = []
+        for key in keys:
+            bars = self._b[tuple(key[0].split('@'))]
+            decision = int(key[1])
+            bounds.append((
+                pd.Timestamp(bars['ts'][decision - self.MV_SEQ + 1]).value,
+                pd.Timestamp(bars['ts'][decision]).value,
+                pd.Timestamp(bars['ts'][decision + 1 + self.VERT]).value,
+            ))
+        return np.asarray(bounds, dtype=np.int64)
+
     def evaluate(self, keys, preds, risk_preds=None):
         col = 4 + FIXED_TARGETS.index(self.PRIMARY_R)
         return np.asarray([k[col] for k, pred in zip(keys, preds) if pred == 1])

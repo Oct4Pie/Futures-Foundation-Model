@@ -89,7 +89,7 @@ def target_values(
         y = np.asarray(arrays["forward_trend_eff"][:, horizon], np.float32)
         valid = np.isfinite(y) & (_forward_steps(arrays, spec.horizon_minutes) >= 2)
     elif spec.name.startswith("forward_direction_"):
-        raw = np.asarray(arrays["terminal_log_return"][:, horizon], np.float32)
+        raw = np.asarray(arrays["terminal_move_r"][:, horizon], np.float32)
         valid = np.isfinite(raw)
         y = (raw > 0).astype(np.int8)
     elif spec.name.startswith("trend_continuation_"):

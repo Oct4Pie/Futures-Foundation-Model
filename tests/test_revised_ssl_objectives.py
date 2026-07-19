@@ -59,6 +59,25 @@ def test_path_targets_do_not_read_beyond_each_horizon():
 
 
 @torch_test
+def test_path_and_structural_targets_support_negative_prices():
+    import torch
+    from futures_foundation.finetune.pretext._torch.path import path_targets
+    from futures_foundation.finetune.pretext._torch.structure_mask import structural_targets
+
+    close = torch.tensor([[5., 2., -3., -8., -4., 1.]])
+    context = torch.stack((close, close + 1., close - 1., close, torch.ones_like(close)), 1)
+    future_close = torch.tensor([[-2., -6., 3.]])
+    future = torch.stack((future_close, future_close + 1., future_close - 1.,
+                          future_close, torch.ones_like(future_close)), 1)
+    target = path_targets(
+        context, future, torch.tensor([[3]]), context_minutes=3,
+        bar_ns=torch.tensor([60_000_000_000]),
+    )
+    assert all(torch.isfinite(value).all() for value in target.values())
+    assert torch.isfinite(structural_targets(context)).all()
+
+
+@torch_test
 def test_path_loss_is_finite_and_quantiles_are_monotone():
     import torch
     from futures_foundation.finetune.pretext._torch.path import (

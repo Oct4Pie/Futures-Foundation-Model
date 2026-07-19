@@ -16,6 +16,7 @@ class PretextTask:
     diagnostic_targets = ('direction', 'fwd_dir')
     primary_targets = ()
     min_consistent_fold_fraction = 0.6
+    target_semantics_version = None
 
     def reserve(self, cfg):
         """Total parent-window length required by the task (0 = use seq+max_jitter)."""
@@ -34,6 +35,7 @@ class PretextTask:
         """Single promotion gate: per-target means + fold consistency, never mixed-metric sums."""
         no_collapse = bool(std > 0.01)
         detail = {'gate_schema': 'ffm_ssl_promotion_v3', 'no_collapse': no_collapse,
+                  'target_semantics_version': self.target_semantics_version,
                   'primary_targets': list(self.primary_targets),
                   'noninferiority_targets': list(self.noninferiority_targets),
                   'diagnostic_targets': list(self.diagnostic_targets),

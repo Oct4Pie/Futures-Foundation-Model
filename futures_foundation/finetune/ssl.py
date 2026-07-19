@@ -54,15 +54,24 @@ def assemble(streams, *, seq, max_jitter, val_frac, holdout_start, forecast_pare
         import pandas as pd
         tf_delta = pd.Timedelta(s['tf'])
         stream_bar_ns.append(int(tf_delta.value))
-        # A context longer than one futures session must span maintenance/weekends. Treat
-        # consecutive observed chart bars as consecutive without fabricating/filling closures;
-        # require grid alignment and cap closures at four days. Contract rolls remain hard
-        # boundaries, and longer outages still split. Shorter contexts retain exact cadence.
-        crosses_session = (bool(allow_aligned_market_gaps) or
-                           parent_len * tf_delta > pd.Timedelta('23h'))
-        session_gap = pd.Timedelta('4D') if crosses_session else None
-        start_kw = dict(timestamps=s['ts'], expected_delta=tf_delta, max_gap=session_gap,
-                        segment_ids=s.get('contract_id'))
+        if allow_aligned_market_gaps:
+            raise ValueError(
+                "allow_aligned_market_gaps is not admitted without a verified session-gap capability"
+            )
+        if s.get('contract_id') is None:
+            raise ValueError(f"{s['sid']} is missing required contract_id segmentation")
+        contract_id = np.asarray(s['contract_id'])
+        if contract_id.shape != (len(oh),):
+            raise ValueError(f"{s['sid']} contract_id must align one-to-one with OHLCV rows")
+        if pd.isna(contract_id).any() or np.any(
+            np.char.str_len(np.char.strip(contract_id.astype(str))) == 0
+        ):
+            raise ValueError(f"{s['sid']} contains blank contract_id values")
+        # Until the verified session denominator is wired into this consumer, every non-cadence
+        # edge is a hard boundary. This may make session-spanning contexts unavailable, but it
+        # cannot silently reinterpret a weekend, holiday, or acquisition hole as continuity.
+        start_kw = dict(timestamps=s['ts'], expected_delta=tf_delta,
+                        segment_ids=contract_id)
         ts = ssl_data.window_starts(tr_idx, parent_len, **start_kw)
         vs = ssl_data.window_starts(va_idx, parent_len, **start_kw)
         # Defense in depth: OOS rows are not merely absent from eligible starts; they are
@@ -75,15 +84,17 @@ def assemble(streams, *, seq, max_jitter, val_frac, holdout_start, forecast_pare
         else:
             usable_rows = len(oh)
         row_bounds.append((base, base + usable_rows))
-        contract_id = s.get('contract_id')
         if usable_rows:
-            if contract_id is None:
-                local_edges = np.asarray([0, usable_rows], np.int64)
-            else:
-                contract_id = np.asarray(contract_id)[:usable_rows]
-                local_edges = np.r_[
-                    0, np.flatnonzero(contract_id[1:] != contract_id[:-1]) + 1, usable_rows,
-                ].astype(np.int64)
+            bounded_contract_id = contract_id[:usable_rows]
+            bounded_time_ns = pd.DatetimeIndex(s['ts'][:usable_rows]).asi8
+            discontinuity = (
+                (bounded_contract_id[1:] != bounded_contract_id[:-1])
+                | (np.diff(bounded_time_ns) != int(tf_delta.value))
+            )
+            local_edges = np.r_[
+                0, np.flatnonzero(discontinuity) + 1,
+                usable_rows,
+            ].astype(np.int64)
             objective_row_bounds.extend(
                 (base + int(lo), base + int(hi))
                 for lo, hi in zip(local_edges[:-1], local_edges[1:]) if hi > lo
@@ -252,12 +263,8 @@ def _finalize(big, tr, va, state, probe_res, cfg, *, out_path, controls, val_sta
               'tfs': sorted({s['tf'] for s in streams}),
               'sampling': {
                   'mode': 'uniform_stream_then_uniform_window',
-                  'gap_policy': (
-                      ('all contexts allow aligned observed-market closures <=4D; '
-                       'no fill; contract rolls and longer gaps split')
-                      if cfg.get('allow_aligned_market_gaps') else
-                      ('contexts >23h allow aligned observed-bar closures <=4D; '
-                       'no fill; contract rolls and longer gaps split')),
+                  'gap_policy': ssl_data.WINDOW_GAP_POLICY,
+                  'session_gap_capability': None,
                   'stream_order': [s['sid'] for s in streams],
                   'objective_segments': int(len(cfg.get('objective_row_bounds', ()))),
                   'probe_sample_sha256': probe_hash.hexdigest(),

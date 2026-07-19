@@ -41,13 +41,12 @@ def validate_eval_period(eval_start, eval_end) -> tuple[pd.Timestamp, pd.Timesta
 def _read_slice(path: Path, lower: pd.Timestamp, upper: pd.Timestamp,
                 chunksize: int = 250_000) -> pd.DataFrame:
     available = set(pd.read_csv(path, nrows=0).columns)
-    required = {"datetime", *OHLCV}
+    required = {"datetime", *OHLCV, "contract_id"}
     missing = required - available
     if missing:
         raise ValueError(f"{path}: missing required columns {sorted(missing)}")
-    extra = ["contract_id"] if "contract_id" in available else []
     pieces = []
-    for chunk in pd.read_csv(path, usecols=["datetime", *OHLCV, *extra],
+    for chunk in pd.read_csv(path, usecols=["datetime", *OHLCV, "contract_id"],
                              chunksize=int(chunksize)):
         ts = pd.to_datetime(chunk.pop("datetime"), utc=True, errors="coerce")
         if ts.isna().any():
@@ -59,7 +58,7 @@ def _read_slice(path: Path, lower: pd.Timestamp, upper: pd.Timestamp,
         if len(ts) and ts.iloc[-1] >= upper:
             break
     if not pieces:
-        return pd.DataFrame(columns=["datetime", *OHLCV, *extra])
+        return pd.DataFrame(columns=["datetime", *OHLCV, "contract_id"])
     out = pd.concat(pieces, ignore_index=True).sort_values("datetime").reset_index(drop=True)
     if out["datetime"].duplicated().any():
         raise ValueError(f"{path}: duplicate timestamps in evaluation slice")
@@ -70,6 +69,10 @@ def _read_slice(path: Path, lower: pd.Timestamp, upper: pd.Timestamp,
     invalid = (h < np.maximum(o, c)) | (l > np.minimum(o, c)) | (h < l) | (v < 0)
     if invalid.any():
         raise ValueError(f"{path}: {int(invalid.sum())} invalid OHLCV rows")
+    contract_id = out["contract_id"]
+    if contract_id.isna().any() or (contract_id.astype(str).str.len() == 0).any():
+        raise ValueError(f"{path}: missing contract_id values")
+    out["contract_id"] = contract_id.astype(str)
     return out
 
 
@@ -126,11 +129,10 @@ def build_forecast_windows(data_dir, tickers, timeframes, *, context=512, horizo
                     print(f"[kronos-data] skip short {ticker}@{timeframe}", flush=True)
                 continue
             ts = pd.DatetimeIndex(df["datetime"])
-            max_gap = pd.Timedelta("4D") if total * delta > pd.Timedelta("23h") else None
-            segment = df["contract_id"].to_numpy() if "contract_id" in df else None
+            segment = df["contract_id"].to_numpy(dtype=str)
             valid = ssl_data.window_starts(
                 np.arange(len(df)), total, timestamps=ts, expected_delta=delta,
-                max_gap=max_gap, segment_ids=segment,
+                segment_ids=segment,
             )
             target_start = valid + context
             target_end = valid + total - 1

@@ -33,6 +33,27 @@ The correct standard is:
 Correct configuration does not require every model to train. A legitimate outcome is
 `forecast-only`, `frozen-only`, `research-only` or `blocked`.
 
+## Engineering authority rules
+
+SSOT, DRY and SOLID are admission requirements, not cleanup preferences:
+
+- The inference registry owns model, weight, tokenizer, source and license identity.
+- The native route catalog owns training-task semantics. Route instances reference it by hash;
+  they do not restate family facts.
+- The training-data authority owns corpus, split, session, lifecycle, roll, label and economics
+  capabilities. Model adapters consume typed capabilities and cannot accept caller-authored hash
+  bags or substitute configuration dictionaries.
+- Shared transport code owns canonical JSON, bounded reads, no-follow traversal and immutable file
+  identity. Business-schema consumers do not fork those filesystem rules.
+- Labelers own exact context-start, decision and label-end bounds. Generic trainers do not infer
+  them from tuple layout, `SEQ` or `VERT` conventions.
+- Architecture-specific adapters implement one narrow route interface. Common orchestration owns
+  splits, checkpoint lineage, resume/export evidence and reporting without flattening real model
+  differences into a universal stage abstraction.
+- A schema change that alters rows, targets, costs, purge behavior or artifact trust increments the
+  schema version. Legacy artifacts require an explicit archival opt-in and are never admitted by an
+  active research path.
+
 ## Status vocabulary
 
 Every model artifact and result must have one of these statuses:
@@ -356,6 +377,14 @@ Ticks and bars have different jobs.
 - Fixed wall-clock labels require actual timestamp/cadence checks.
 - Purge and embargo use each row's complete label-end timestamp.
 - No window crosses a contract roll; causal roll selection cannot use future volume.
+- Contract identity is mandatory and missing/blank IDs fail before string conversion.
+- Until an authenticated session-edge capability is connected, every non-cadence edge is a hard
+  boundary. Handwritten maintenance/weekend exceptions are not calendar authority.
+- Label and normalization semantics must support historically valid nonpositive futures prices;
+  silently dropping the April 2020 negative-CL regime is not admissible.
+- Shared path and representation-probe targets use raw price changes divided by a context/decision-
+  only causal range scale. A route requiring logarithmic prices must reject nonpositive inputs and
+  remains blocked until a reversible, architecture-valid negative-price contract passes parity.
 
 The primary bar set remains 1/3/5/15/30/60 minutes. Sub-minute inputs are separate experiments.
 

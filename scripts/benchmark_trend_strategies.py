@@ -10,7 +10,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 
+from futures_foundation.execution_economics import load_execution_economics
 from futures_foundation.finetune.trend_strategy_eval import (
     RulerConfig, evaluate_stream, events_to_arrays, load_stream, summarize_events,
 )
@@ -111,7 +113,16 @@ def run(args):
         context=args.context, horizon_hours=args.horizon_hours, atr_stop=args.atr_stop,
         structural_buffer_atr=args.structural_buffer_atr,
         targets=tuple(float(value) for value in args.targets.split(",") if value),
-        primary_target=args.primary_target, round_trip_cost_ticks=args.round_trip_cost_ticks,
+        primary_target=args.primary_target,
+        added_slippage_ticks_round_trip=(
+            0.0 if args.added_slippage_ticks is None else args.added_slippage_ticks
+        ),
+    )
+    economics = load_execution_economics(
+        args.execution_costs,
+        evaluation_start=pd.Timestamp(args.eval_start, tz="UTC").isoformat(),
+        evaluation_end=pd.Timestamp(args.eval_end, tz="UTC").isoformat(),
+        required_roots=tickers,
     )
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -124,7 +135,7 @@ def run(args):
                 path, cfg.eval_start, cfg.eval_end, warmup_days=cfg.warmup_days,
                 chunksize=args.csv_chunksize,
             )
-            events = evaluate_stream(frame, ticker, timeframe, cfg)
+            events = evaluate_stream(frame, ticker, timeframe, cfg, economics)
             all_events.extend(events)
             print(f"[events] {ticker}@{timeframe}: {len(events):,}", flush=True)
     arrays = events_to_arrays(all_events, cfg.targets)
@@ -136,10 +147,11 @@ def run(args):
         "horizon_hours": cfg.horizon_hours, "atr_period": cfg.atr_period,
         "atr_stop": cfg.atr_stop, "structural_buffer_atr": cfg.structural_buffer_atr,
         "targets": list(cfg.targets), "primary_target": cfg.primary_target,
-        "round_trip_cost_ticks": cfg.round_trip_cost_ticks,
+        "added_slippage_ticks_round_trip": cfg.added_slippage_ticks_round_trip,
         "same_bar_policy": cfg.same_bar_policy,
         "entry": "next_bar_open", "overlap": "one active trade per strategy/stream",
         "tickers": list(tickers), "timeframes": list(timeframes), "folds": args.folds,
+        "execution_economics": economics.manifest(),
     }
     report = {
         "schema_version": "ffm_matched_trend_strategy_events_v2",
@@ -179,7 +191,8 @@ def main():
     parser.add_argument("--structural-buffer-atr", type=float, default=0.05)
     parser.add_argument("--targets", default="2,3,4,6")
     parser.add_argument("--primary-target", type=float, default=3.0)
-    parser.add_argument("--round-trip-cost-ticks", type=float, default=1.0)
+    parser.add_argument("--added-slippage-ticks", type=float)
+    parser.add_argument("--execution-costs", default="config/execution_costs.yaml")
     parser.add_argument("--folds", type=int, default=6)
     parser.add_argument("--csv-chunksize", type=int, default=500000)
     run(parser.parse_args())

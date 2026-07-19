@@ -1,3 +1,4 @@
+import json
 import numpy as np
 
 import pandas as pd
@@ -48,6 +49,7 @@ def test_time_features_align_with_stream_local_global_offsets():
 def test_binary_cache_is_bounded_and_mmap_loadable(tmp_path):
     source, cache = tmp_path / "source", tmp_path / "cache"
     source.mkdir()
+    (source / "MANIFEST.json").write_text(json.dumps({"sealed": True}))
     ts = pd.date_range("2019-06-28", "2025-07-03", freq="1D", tz="UTC")
     close = np.arange(len(ts), dtype=float) + 100
     pd.DataFrame({
@@ -61,3 +63,22 @@ def test_binary_cache_is_bounded_and_mmap_loadable(tmp_path):
     assert times.min() == pd.Timestamp("2019-07-01", tz="UTC")
     assert times.max() == pd.Timestamp("2025-06-30", tz="UTC")
     assert isinstance(streams[0]["ohlcv"], np.memmap)
+
+
+def test_cache_requires_and_revalidates_source_and_array_hashes(tmp_path):
+    source, cache = tmp_path / "source", tmp_path / "cache"
+    source.mkdir()
+    ts = pd.date_range("2019-06-28", "2025-07-03", freq="1D", tz="UTC")
+    close = np.arange(len(ts), dtype=float) + 100
+    pd.DataFrame({
+        "datetime": ts, "open": close, "high": close + 1, "low": close - 1,
+        "close": close, "volume": 10, "contract_id": "X",
+    }).to_csv(source / "ES_1D.csv", index=False)
+    with np.testing.assert_raises_regex(ValueError, "source MANIFEST"):
+        build_cache(source, cache, ("ES",), ("1D",), verbose=False)
+    (source / "MANIFEST.json").write_text(json.dumps({"sealed": True}))
+    build_cache(source, cache, ("ES",), ("1D",), verbose=False)
+    with (cache / "ES_1D.ohlcv.npy").open("ab") as stream:
+        stream.write(b"tamper")
+    with np.testing.assert_raises_regex(ValueError, "cache file identity mismatch"):
+        load_cache(cache, ("ES",), ("1D",), verbose=False)

@@ -4,6 +4,7 @@ from .base import PretextTask
 
 class PathTask(PretextTask):
     name, trainer = 'path', 'train_ssl_path'
+    target_semantics_version = 'ffm_mantis_path_objective_atr20_mean_v2'
     primary_targets = ('fwd_absmove',)
 
     def reserve(self, cfg):

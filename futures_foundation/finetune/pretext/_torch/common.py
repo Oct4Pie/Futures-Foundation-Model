@@ -70,11 +70,13 @@ def preprocess_windows(x, preprocessing=PREPROCESSING_CONTRACT, clamp=None):
     if preprocessing == LOG_PRICE_PREPROCESSING_CONTRACT:
         if x.ndim != 3 or x.shape[1] < 4:
             raise ValueError('log-price preprocessing requires [B,C>=4,T] input')
+        if torch.any(x[:, :4, :] <= 0):
+            raise ValueError('log-price preprocessing is undefined for nonpositive prices')
         # One causal reference for every OHLC channel preserves candle geometry. Unlike a
         # per-window z-score, log(price / first close) retains return/volatility amplitude while
         # remaining invariant to the contract's absolute price level.
-        base = x[:, 3:4, :1].clamp_min(1e-9)
-        price = torch.log(x[:, :4, :].clamp_min(1e-9) / base)
+        base = x[:, 3:4, :1]
+        price = torch.log(x[:, :4, :] / base)
         if x.shape[1] == 4:
             out = price
         else:
@@ -103,9 +105,11 @@ def preprocess_context_and_future(context, future, preprocessing=PREPROCESSING_C
     else:
         if context.ndim != 3 or context.shape[1] < 4 or future.shape[1] != context.shape[1]:
             raise ValueError('log-price context/future preprocessing requires aligned [B,C>=4,T]')
-        base = context[:, 3:4, :1].clamp_min(1e-9)
-        cp = torch.log(context[:, :4, :].clamp_min(1e-9) / base)
-        fp = torch.log(future[:, :4, :].clamp_min(1e-9) / base)
+        if torch.any(context[:, :4, :] <= 0) or torch.any(future[:, :4, :] <= 0):
+            raise ValueError('log-price preprocessing is undefined for nonpositive prices')
+        base = context[:, 3:4, :1]
+        cp = torch.log(context[:, :4, :] / base)
+        fp = torch.log(future[:, :4, :] / base)
         if context.shape[1] == 4:
             ctx, fut = cp, fp
         else:

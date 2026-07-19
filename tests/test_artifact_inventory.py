@@ -31,13 +31,14 @@ def test_inventory_verifies_frozen_artifacts_and_fails_on_mutation(tmp_path):
     embedding.write_bytes(b"embedding")
     checkpoint.write_bytes(b"checkpoint")
     results = {
-        "schema_version": "ffm_cross_family_representation_probe_v1",
+        "schema_version": "ffm_cross_family_representation_probe_v2",
         "created_utc": "2026-07-16T00:00:00+00:00",
         "oos_read": False,
         "windows": {
             "path": str(windows), "sha256": sha256_file(windows), "fingerprint": "abc",
         },
         "probe": {"fold_contract_sha256": "fold"},
+        "probe": {"target_semantics_version": "ffm_causal_probe_targets_v2"},
         "results": {
             "arm:vanilla": {
                 "stage": "vanilla", "checkpoint": None, "checkpoint_sha256": None,

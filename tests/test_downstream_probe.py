@@ -32,7 +32,7 @@ def _arrays(n=120):
         "ticker": np.repeat(["ES", "NQ"], n // 2),
         "timeframe": np.full(n, "1min"),
         "horizons_minutes": np.array([60, 180, 360]),
-        "terminal_log_return": terminal,
+        "terminal_move_r": terminal,
         "forward_abs_move_r": np.abs(terminal),
         "forward_realized_vol": np.abs(terminal) + 0.1,
         "forward_trend_eff": np.abs(terminal) / 2,
@@ -64,7 +64,7 @@ def test_target_contract_and_causal_feature_identity():
 def test_linear_fold_is_predictive_and_controls_break_alignment():
     arrays = _arrays()
     X, _ = causal_feature_matrix(arrays, np.arange(120))
-    y = (arrays["terminal_log_return"][:, 0] > 0).astype(np.int8)
+    y = (arrays["terminal_move_r"][:, 0] > 0).astype(np.int8)
     groups = arrays["ticker"]
     train, test = np.arange(0, 80), np.arange(80, 120)
     real = fit_predict_fold(
@@ -111,7 +111,7 @@ def test_future_label_perturbations_cannot_change_causal_features():
     before, names = causal_feature_matrix(arrays, rows)
     rng = np.random.default_rng(91)
     for key in (
-        "terminal_log_return", "forward_abs_move_r", "forward_realized_vol",
+        "terminal_move_r", "forward_abs_move_r", "forward_realized_vol",
         "forward_trend_eff", "upside_mfe_r", "downside_mae_r", "trend_path_class",
         "barrier_state", "time_to_favorable_minutes", "time_to_adverse_minutes",
         "policy_r_gross",

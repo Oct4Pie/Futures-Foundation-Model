@@ -207,9 +207,10 @@ verification item is also checked.
   the universal Stage 1→2→3 assumption. The audit found the current v1 free-text route matrix is
   not authoritative: Kronos phases are collapsed, several provenance labels are wrong, and native
   optimizer routes are mixed with project extensions. All optimizer entrypoints remain disabled.
-- [ ] Replace the v1 free-text profiles with strict architecture route templates, data/session-bound
+- [x] Replace the v1 free-text profiles with strict architecture route templates, data/session-bound
   route instances, and separately hash-bound pipeline DAGs. A project Stage 1→2→3 pipeline may use
-  compatible route nodes, but it is not a native contract shared by all model families.
+  compatible route nodes, but it is not a native contract shared by all model families. Concrete
+  instances remain impossible while the typed data authority is blocked.
 - [x] Replace the duplicated v1 training-route/evidence JSON authority with one packaged,
   non-authorizing 42-route catalog. It references the 15 authoritative inference dossiers by
   content hash and owns only training semantics. The compatibility facade derives its display
@@ -262,6 +263,10 @@ verification item is also checked.
 - [x] Build and install the wheel outside the source checkout; the installed package resolved the
   exact 15-arm registry, 42-route catalog (`e83b59d1…71c`), Corpus v3 parent and blocked training
   data authority (`5bc2ecbb…528`), and rejected training admission and template materialization.
+- [x] Reverify after the Phase 3 data/session/economics/negative-price repair and P0 red-team fixes:
+  1,250 passed,
+  98 skipped and 8 warnings; the extracted wheel imported the new typed modules outside the
+  checkout. Skipped native routes remain blocked rather than inferred ready.
 - [x] Bind v2 templates to exact catalog routes; self-supplied family/governance maps cannot
   attest a template.
 - [x] Resolve every route-instance data/session/lifecycle/roll/label reference through its typed
@@ -333,6 +338,14 @@ verification item is also checked.
   omissions, semantic rehashes, non-finite JSON, dependency/source drift and path symlinks, and
   reopens/reverifies the file at the materialization boundary. Two independent reviews found and
   closed stale-open-override, empty-provenance, canonical-format and symlink-erasure defects.
+- [x] Add independent FFM parity for AlphaForge's partitioned session-bundle v2 mechanism at pinned
+  commit `b849257`, including exact partition×root/date closure and independent row re-derivation.
+  Shared transport rejects blocking FIFOs/devices, ancestor symlinks, hardlinks, mutation and
+  bool-as-int counts. The schema is permanently synthetic/production-blocked; optional live parity
+  is not production evidence.
+- [ ] Implement the complete independent expected-request parent chain in FFM (producer governance,
+  split-use, provider universe, lifecycle and official evidence) before accepting its bundle. Do
+  not replace semantic re-derivation with manifest/hash checks.
 - [ ] Build and review the production `market_calendar_rules_v2` evidence set: exact effective
   dates for all 43 roots, historical product-rule periods, and complete source-backed exceptional
   sessions. Fixture tests do not admit these facts. US equity and NKD require separate histories;

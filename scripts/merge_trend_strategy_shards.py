@@ -109,7 +109,7 @@ def run(args):
         horizon_hours=base["horizon_hours"], atr_period=base["atr_period"],
         atr_stop=base["atr_stop"], structural_buffer_atr=base["structural_buffer_atr"],
         targets=tuple(base["targets"]), primary_target=base["primary_target"],
-        round_trip_cost_ticks=base["round_trip_cost_ticks"],
+        added_slippage_ticks_round_trip=base["added_slippage_ticks_round_trip"],
         same_bar_policy=base["same_bar_policy"],
     )
     base["tickers"] = sorted(tickers)

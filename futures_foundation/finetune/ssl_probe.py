@@ -18,6 +18,8 @@ _ssl_torch.embed_encoder (lazy torch).
 """
 import numpy as np
 
+from .probe_targets import causal_probe_targets
+
 _TARGET_KIND = {'vol': 'reg', 'trend_eff': 'reg', 'range_expand': 'reg',
                 'fwd_absmove': 'reg', 'direction': 'bin', 'fwd_dir': 'bin'}
 # CORE targets define a "useful for buy/sell classification" representation: regime/vol/
@@ -168,25 +170,10 @@ def targets_from_windows(big, starts, seq, fwd_k=16):
     s = np.asarray(starts, np.int64)
     rows = s[:, None] + np.arange(seq)[None, :]              # [M, seq]
     win = big[rows]                                          # [M, seq, 5]
-    high, low, close = win[:, :, 1], win[:, :, 2], win[:, :, 3]
-    logret = np.diff(np.log(np.clip(close, 1e-9, None)), axis=1)   # [M, seq-1]
-    net = logret.sum(1)
-    vol = logret.std(1)
-    trend_eff = np.abs(net) / (np.abs(logret).sum(1) + 1e-9)
-    h = seq // 2
-    r1 = high[:, :h].max(1) - low[:, :h].min(1)
-    r2 = high[:, h:].max(1) - low[:, h:].min(1)
-    range_expand = np.log((r2 + 1e-9) / (r1 + 1e-9))
-    # FORWARD (buy/sell): log-return over the next fwd_k bars after the window end
-    end = np.clip(s + seq - 1, 0, len(big) - 1)
-    fwd = np.clip(s + seq - 1 + fwd_k, 0, len(big) - 1)
-    fwd_ret = (np.log(np.clip(big[fwd, 3], 1e-9, None))
-               - np.log(np.clip(big[end, 3], 1e-9, None)))
-    return {'vol': vol.astype(np.float32), 'trend_eff': trend_eff.astype(np.float32),
-            'range_expand': range_expand.astype(np.float32),
-            'fwd_absmove': np.abs(fwd_ret).astype(np.float32),
-            'direction': (net > 0).astype(np.int32),
-            'fwd_dir': (fwd_ret > 0).astype(np.int32)}
+    future_rows = s[:, None] + seq + np.arange(fwd_k)[None, :]
+    if np.any(future_rows >= len(big)):
+        raise ValueError("probe target future exceeds the reserved parent window")
+    return causal_probe_targets(win, big[future_rows])
 
 
 def _fit_score(emb, y, kind, tr, te):

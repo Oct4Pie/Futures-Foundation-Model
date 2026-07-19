@@ -1,9 +1,16 @@
+import hashlib
+import json
 import numpy as np
 import pytest
 import subprocess
 import sys
+from pathlib import Path
 
-from futures_foundation.finetune.downstream_trading import build_policy_events
+from futures_foundation.execution_economics import load_execution_economics
+from futures_foundation.finetune.downstream_trading import (
+    build_policy_events, load_policy_events, save_policy_events,
+)
+from futures_foundation.finetune.event_contexts import save_context_shard
 from futures_foundation.finetune.calibration import (
     apply_isotonic_expected_value,
     fit_isotonic_expected_value,
@@ -25,32 +32,65 @@ from scripts.benchmark_downstream_trading import (
 from scripts.analyze_downstream_trading import slippage_r_per_round_trip_tick
 
 
-def test_build_policy_events_expands_net_tick_costed_outcomes(tmp_path):
+DECISION_NS = 1_704_067_200_000_000_000
+EXIT_NS = DECISION_NS + 100
+
+
+def _policy_source(tmp_path, *, gross_r=2.0):
     shard = tmp_path / "ES_1min.npz"
-    np.savez_compressed(
-        shard,
+    arrays = dict(
         tag_names=np.asarray(["supertrend_flip"]), horizons_minutes=np.asarray([60]),
         targets_r=np.asarray([2.0], np.float32), policy_mode_names=np.asarray(["atr"]),
         policy_event_context_row=np.asarray([4]), policy_event_tag_index=np.asarray([0], np.int8),
         policy_event_direction=np.asarray([1], np.int8),
-        policy_valid=np.asarray([[True]]), policy_risk_ticks=np.asarray([[4.0]], np.float32),
-        policy_cost_r=np.asarray([[0.25]], np.float32),
+        policy_valid=np.asarray([[True]]), policy_risk_price=np.asarray([[1.0]], np.float32),
+        policy_risk_ticks=np.asarray([[4.0]], np.float32),
         policy_barrier_state=np.asarray([[[[1]]]], np.int8),
-        policy_realized_r=np.asarray([[[[1.75]]]], np.float32),
+        policy_gross_r=np.asarray([[[[gross_r]]]], np.float32),
         policy_reached=np.asarray([[[[True]]]]),
-        policy_exit_time_ns=np.asarray([[[[200]]]], np.int64),
+        policy_exit_time_ns=np.asarray([[[[EXIT_NS]]]], np.int64),
     )
-    import hashlib
-    digest = hashlib.sha256(shard.read_bytes()).hexdigest()
-    sample = {
+    manifest = save_context_shard(
+        shard, arrays, {
+            "config": {"context_bars": 256},
+            "execution_economics": _execution_costs().manifest(),
+        },
+    )
+    manifest_path = tmp_path / "ES_1min.npz.manifest.json"
+    source_info = {
+        "path": str(shard),
+        "sha256": manifest["artifact"]["sha256"],
+        "manifest_path": str(manifest_path),
+        "manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+        "content_fingerprint": manifest["content_fingerprint"],
+    }
+    return shard, manifest_path, source_info
+
+
+def _policy_sample():
+    return {
         "stream_id": np.asarray(["ES@1min"]), "shard_row": np.asarray([4]),
-        "decision_time_ns": np.asarray([100]), "ticker": np.asarray(["ES"]),
+        "decision_time_ns": np.asarray([DECISION_NS]), "ticker": np.asarray(["ES"]),
         "timeframe": np.asarray(["1min"]), "tag_names": np.asarray(["supertrend_flip"]),
     }
 
+
+def _execution_costs():
+    return load_execution_economics(
+        Path(__file__).resolve().parents[1] / "config/execution_costs.yaml",
+        evaluation_start="2024-01-01T00:00:00Z",
+        evaluation_end="2025-01-01T00:00:00Z",
+        required_roots=("ES",),
+    )
+
+
+def test_build_policy_events_applies_capability_costs_to_gross_outcomes(tmp_path):
+    _, _, source_info = _policy_source(tmp_path)
+    sample = _policy_sample()
+
     arrays, metadata = build_policy_events(
-        sample, np.asarray([0]), {"ES@1min": {"path": str(shard), "sha256": digest}},
-        {"ES": {"tick_size": 0.25, "tick_value_usd": 12.5, "fee_rt_usd": 5.0}},
+        sample, np.asarray([0]), {"ES@1min": source_info}, _execution_costs(),
+        slippage_ticks=1.0,
     )
 
     assert metadata["rows"] == 1
@@ -58,9 +98,61 @@ def test_build_policy_events_expands_net_tick_costed_outcomes(tmp_path):
     assert arrays["gross_r"].item() == 2.0
     assert arrays["barrier_state"].item() == 1
     assert arrays["slippage_r"].item() == 0.25
-    assert arrays["fee_r"].item() == pytest.approx(0.1)
-    assert arrays["realized_r"].item() == pytest.approx(1.65)
-    assert arrays["exit_time_ns"].item() == 200
+    assert arrays["fee_r"].item() == pytest.approx(4.36 / 50.0)
+    assert arrays["realized_r"].item() == pytest.approx(2.0 - 0.25 - 4.36 / 50.0)
+    assert arrays["exit_time_ns"].item() == EXIT_NS
+
+
+def test_build_policy_events_rejects_manifest_tampering_even_if_caller_rehashes_it(tmp_path):
+    _, manifest_path, source_info = _policy_source(tmp_path)
+    document = json.loads(manifest_path.read_text())
+    document["metadata"]["config"]["context_bars"] = 128
+    manifest_path.write_text(json.dumps(document))
+    source_info["manifest_sha256"] = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+    with pytest.raises(ValueError, match="content fingerprint mismatch"):
+        build_policy_events(
+            _policy_sample(), np.asarray([0]), {"ES@1min": source_info}, _execution_costs(),
+            slippage_ticks=0.0,
+        )
+
+
+def test_build_policy_events_rejects_missing_gross_outcome_array(tmp_path):
+    shard, _, source_info = _policy_source(tmp_path)
+    with np.load(shard, allow_pickle=False) as saved:
+        arrays = {key: saved[key] for key in saved.files if key != "policy_gross_r"}
+    np.savez_compressed(shard, **arrays)
+    source_info["sha256"] = hashlib.sha256(shard.read_bytes()).hexdigest()
+    with pytest.raises(ValueError, match="artifact hash mismatch"):
+        build_policy_events(
+            _policy_sample(), np.asarray([0]), {"ES@1min": source_info}, _execution_costs(),
+            slippage_ticks=0.0,
+        )
+
+
+def test_policy_artifact_binds_cost_and_lineage_metadata_and_legacy_is_explicit(tmp_path):
+    _, _, source_info = _policy_source(tmp_path)
+    arrays, metadata = build_policy_events(
+        _policy_sample(), np.asarray([0]), {"ES@1min": source_info}, _execution_costs(),
+        slippage_ticks=0.0,
+    )
+    path = tmp_path / "policy.npz"
+    save_policy_events(path, arrays, metadata)
+    manifest_path = tmp_path / "policy.npz.manifest.json"
+    document = json.loads(manifest_path.read_text())
+    document["execution_economics"]["instruments"]["ES"]["fee_rt_usd"] = 0.0
+    manifest_path.write_text(json.dumps(document))
+    with pytest.raises(ValueError, match="content fingerprint mismatch"):
+        load_policy_events(path)
+
+    save_policy_events(path, arrays, metadata)
+    document = json.loads(manifest_path.read_text())
+    document["schema_version"] = "ffm_downstream_policy_events_v2"
+    manifest_path.write_text(json.dumps(document))
+    with pytest.raises(ValueError, match="unsupported"):
+        load_policy_events(path)
+    loaded, legacy = load_policy_events(path, allow_legacy=True)
+    assert len(loaded["context_row"]) == 1
+    assert legacy["schema_version"] == "ffm_downstream_policy_events_v2"
 
 
 def test_concurrency_suppresses_overlapping_same_ticker_trades():
@@ -204,7 +296,7 @@ def test_nested_context_splits_cannot_read_outside_outer_training_rows():
         np.testing.assert_array_equal(train_a, train_b)
         np.testing.assert_array_equal(test_a, test_b)
         assert set(train_a).issubset(set(outer)) and set(test_a).issubset(set(outer))
-        assert label_end[train_a].max() + 20 <= times[test_a].min()
+        assert label_end[train_a].max() + 20 < times[test_a].min()
 
 
 def test_nested_oof_predictions_use_disjoint_later_rows():
