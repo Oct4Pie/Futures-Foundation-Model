@@ -64,6 +64,34 @@ def test_monotone_paths_and_trend_classes():
     assert down_labels["trend_path_class"][0, 0] == TREND_REVERSAL
 
 
+def test_gap_excursions_include_zero_decision_baseline():
+    gap_down = _frame([100, 90, 89, 88])
+    gap_down.loc[1:, ["open", "high", "low", "close"]] = [
+        [90.0, 91.0, 89.0, 90.0],
+        [89.5, 90.0, 88.0, 89.0],
+        [88.5, 89.0, 87.0, 88.0],
+    ]
+    down_labels = build_dense_path_labels(
+        gap_down, timeframe_minutes=1, config=_cfg(),
+    )
+    assert down_labels["valid"][0, 0]
+    assert down_labels["upside_mfe_r"][0, 0] == 0.0
+    assert down_labels["downside_mae_r"][0, 0] > 0.0
+
+    gap_up = _frame([100, 110, 111, 112])
+    gap_up.loc[1:, ["open", "high", "low", "close"]] = [
+        [110.0, 111.0, 109.0, 110.0],
+        [110.5, 112.0, 110.0, 111.0],
+        [111.5, 113.0, 111.0, 112.0],
+    ]
+    up_labels = build_dense_path_labels(
+        gap_up, timeframe_minutes=1, config=_cfg(),
+    )
+    assert up_labels["valid"][0, 0]
+    assert up_labels["downside_mae_r"][0, 0] == 0.0
+    assert up_labels["upside_mfe_r"][0, 0] > 0.0
+
+
 def test_chop_and_volatility_expansion_targets():
     quiet = _frame([100.0] * 10)
     volatile = _frame([100, 104, 96, 105, 95, 106, 94, 107, 93, 108])

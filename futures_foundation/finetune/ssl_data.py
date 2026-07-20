@@ -176,19 +176,44 @@ def time_split(ts, val_frac=0.1, holdout_start='2026-01-01', embargo=0, val_star
     return usable[:tr_end], usable[split:va_end]
 
 
+def valid_timestamp_edges(
+    timestamps, *, expected_delta, session_gap_capability=None,
+):
+    """Return admitted continuity for every adjacent timestamp edge."""
+    if timestamps is None or expected_delta is None:
+        raise ValueError("timestamps and expected_delta are required")
+    parsed_timestamps = np.asarray(
+        pd.to_datetime(timestamps, utc=True), dtype="datetime64[ns]",
+    )
+    expected_delta_ns = int(pd.Timedelta(expected_delta).value)
+    if expected_delta_ns <= 0 or np.isnat(parsed_timestamps).any():
+        raise ValueError("timestamps and expected_delta must be valid and positive")
+    if session_gap_capability is None:
+        if len(parsed_timestamps) < 2:
+            return np.zeros(0, dtype=bool)
+        observed = np.diff(parsed_timestamps).astype("timedelta64[ns]").astype(np.int64)
+        return observed == expected_delta_ns
+    from futures_foundation.session_gap import verified_session_edge_mask
+
+    return verified_session_edge_mask(
+        parsed_timestamps,
+        expected_delta=expected_delta,
+        capability=session_gap_capability,
+    )
+
+
 def window_starts(idx, seq_total, contiguous=True, *, timestamps=None,
                   expected_delta=None, max_gap=None, segment_ids=None,
                   session_gap_capability=None):
     """Valid window-start positions within an index range such that
     [start, start+seq_total) stays inside `idx`. With contiguous=True (default) the
     full window must be a run of consecutive bar indices (no split/holdout gap inside
-    the window). Timestamp-aware windows currently require exact cadence. Session gaps
-    fail closed until an explicit session-denominator capability is admitted. Returns an
+    the window). Timestamp-aware windows require exact cadence unless a verified
+    session-denominator capability proves one official segment transition. Returns an
     int array of start positions (absolute bar indices)."""
-    if max_gap is not None or session_gap_capability is not None:
+    if max_gap is not None:
         raise ValueError(
-            "session-crossing windows require an explicit verified session-gap capability; "
-            "no such capability is currently admitted"
+            "max_gap is not an admitted substitute for a verified session-gap capability"
         )
     seq_total = int(seq_total)
     if seq_total < 1:
@@ -207,13 +232,13 @@ def window_starts(idx, seq_total, contiguous=True, *, timestamps=None,
         raise ValueError("idx is outside timestamp/segment bounds")
     if not contiguous and lengths:
         raise ValueError("metadata-aware windows cannot disable contiguity")
+    timestamp_edges = None
     if timestamps is not None:
-        parsed_timestamps = np.asarray(
-            pd.to_datetime(timestamps, utc=True), dtype='datetime64[ns]'
+        timestamp_edges = valid_timestamp_edges(
+            timestamps,
+            expected_delta=expected_delta,
+            session_gap_capability=session_gap_capability,
         )
-        expected_delta_ns = int(pd.Timedelta(expected_delta).value)
-        if expected_delta_ns <= 0 or np.isnat(parsed_timestamps).any():
-            raise ValueError("timestamps and expected_delta must be valid and positive")
     if len(idx) < seq_total:
         return np.array([], int)
     if not contiguous:
@@ -229,9 +254,8 @@ def window_starts(idx, seq_total, contiguous=True, *, timestamps=None,
     if timestamps is not None or segment_ids is not None:
         n = len(timestamps) if timestamps is not None else len(segment_ids)
         bad_edge = np.zeros(max(0, n - 1), dtype=bool)
-        if timestamps is not None and expected_delta is not None and n > 1:
-            observed = np.diff(parsed_timestamps).astype('timedelta64[ns]').astype(np.int64)
-            bad_edge |= observed != expected_delta_ns
+        if timestamps is not None and n > 1:
+            bad_edge |= ~timestamp_edges
         if segment_ids is not None and n > 1:
             seg = np.asarray(segment_ids)
             bad_edge |= seg[1:] != seg[:-1]

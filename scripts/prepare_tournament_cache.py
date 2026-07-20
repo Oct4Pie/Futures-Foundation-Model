@@ -6,7 +6,10 @@ import argparse
 import json
 
 from futures_foundation.finetune.ssl_data import TFS_ALL, TICKERS_9
-from futures_foundation.finetune.tournament_data import build_cache
+from futures_foundation.finetune.tournament_data import (
+    build_cache,
+    cache_manifest_sha256,
+)
 
 
 def main():
@@ -15,14 +18,22 @@ def main():
     parser.add_argument("--cache-dir", default="output/foundation_tournament/data_cache")
     parser.add_argument("--tickers", default=",".join(TICKERS_9))
     parser.add_argument("--timeframes", default=",".join(TFS_ALL))
+    parser.add_argument("--source-authority", required=True)
+    parser.add_argument("--source-authority-sha256", required=True)
     args = parser.parse_args()
     report = build_cache(
         args.source_dir, args.cache_dir,
         tuple(x for x in args.tickers.split(",") if x),
         tuple(x for x in args.timeframes.split(",") if x),
+        source_authority_path=args.source_authority,
+        source_authority_sha256=args.source_authority_sha256,
     )
-    print(json.dumps({"streams": len(report["entries"]),
-                      "interval": report["interval"]}, indent=2))
+    print(json.dumps({
+        "streams": len(report["entries"]),
+        "interval": report["interval"],
+        "training_admitted": report["training_admitted"],
+        "cache_manifest_sha256": cache_manifest_sha256(args.cache_dir),
+    }, indent=2))
 
 
 if __name__ == "__main__":

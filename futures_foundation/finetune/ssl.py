@@ -21,6 +21,7 @@ Generalization is PROBE-GATED + OPTUNA-TUNED, mirroring WF/produce:
 Colab usage: see colab/mantis_ssl_pretrain.py.
 """
 import argparse
+from collections.abc import Mapping
 import hashlib
 import json
 import os
@@ -33,12 +34,38 @@ from .pretext import PRETEXTS, PretextTask, get_pretext   # noqa: F401 (pluggabl
 
 def assemble(streams, *, seq, max_jitter, val_frac, holdout_start, forecast_parent=0,
              val_start=None, train_start=None, return_groups=False, verbose=True,
-             allow_aligned_market_gaps=False):
+             allow_aligned_market_gaps=False, session_gap_capabilities=None,
+             request_authorities=None, train_request_use='self_supervised_training',
+             validation_request_use='validation'):
     """Concatenate all stream OHLCV into one big [T, 5] array + global parent-window start
     positions for the (leak-safe, 2026-excluded) train/val split. Each window reserves enough
     bars for its consumers: seq+max_jitter (probe/mask) OR forecast_parent (stage-2 = max context
     length + max horizon), whichever is larger — so context+future stay in-stream."""
     parent_len = max(seq + max_jitter, int(forecast_parent))
+    if allow_aligned_market_gaps:
+        raise ValueError(
+            "allow_aligned_market_gaps is not an admitted substitute for a verified session-gap capability"
+        )
+    capabilities = {} if session_gap_capabilities is None else session_gap_capabilities
+    if not isinstance(capabilities, Mapping):
+        raise TypeError("session_gap_capabilities must map stream IDs to verified capabilities")
+    stream_ids = {str(stream.get("sid")) for stream in streams}
+    unknown_capabilities = sorted(set(capabilities) - stream_ids)
+    if unknown_capabilities:
+        raise ValueError(f"session-gap capabilities name unknown streams: {unknown_capabilities}")
+    request_capabilities = {} if request_authorities is None else request_authorities
+    if not isinstance(request_capabilities, Mapping):
+        raise TypeError("request_authorities must map stream IDs to verified capabilities")
+    if request_authorities is not None and set(request_capabilities) != stream_ids:
+        raise ValueError(
+            "request authorities must exactly cover SSL streams: "
+            f"missing={sorted(stream_ids - set(request_capabilities))}, "
+            f"unknown={sorted(set(request_capabilities) - stream_ids)}"
+        )
+    if not str(train_request_use).strip() or not str(validation_request_use).strip():
+        raise ValueError("train and validation request uses must be non-empty")
+    session_manifests = []
+    request_manifests = []
     bigs, tr_starts, va_starts, base = [], [], [], 0
     tr_bounds, va_bounds, tr_labels, va_labels, row_bounds = [], [], [], [], []
     objective_row_bounds = []
@@ -54,10 +81,18 @@ def assemble(streams, *, seq, max_jitter, val_frac, holdout_start, forecast_pare
         import pandas as pd
         tf_delta = pd.Timedelta(s['tf'])
         stream_bar_ns.append(int(tf_delta.value))
-        if allow_aligned_market_gaps:
-            raise ValueError(
-                "allow_aligned_market_gaps is not admitted without a verified session-gap capability"
-            )
+        session_capability = capabilities.get(s['sid'])
+        if session_capability is not None:
+            from futures_foundation.session_gap import require_session_gap_capability
+
+            session_capability = require_session_gap_capability(session_capability)
+            if session_capability.root != str(s.get('ticker', '')).strip().upper():
+                raise ValueError(f"{s['sid']} session capability root mismatch")
+            if session_capability.expected_delta_ns != int(tf_delta.value):
+                raise ValueError(f"{s['sid']} session capability bar-size mismatch")
+            session_manifests.append(session_capability.manifest())
+        else:
+            session_manifests.append(None)
         if s.get('contract_id') is None:
             raise ValueError(f"{s['sid']} is missing required contract_id segmentation")
         contract_id = np.asarray(s['contract_id'])
@@ -67,13 +102,53 @@ def assemble(streams, *, seq, max_jitter, val_frac, holdout_start, forecast_pare
             np.char.str_len(np.char.strip(contract_id.astype(str))) == 0
         ):
             raise ValueError(f"{s['sid']} contains blank contract_id values")
-        # Until the verified session denominator is wired into this consumer, every non-cadence
-        # edge is a hard boundary. This may make session-spanning contexts unavailable, but it
-        # cannot silently reinterpret a weekend, holiday, or acquisition hole as continuity.
-        start_kw = dict(timestamps=s['ts'], expected_delta=tf_delta,
-                        segment_ids=contract_id)
-        ts = ssl_data.window_starts(tr_idx, parent_len, **start_kw)
-        vs = ssl_data.window_starts(va_idx, parent_len, **start_kw)
+        base_start_kw = dict(
+            timestamps=s['ts'], expected_delta=tf_delta,
+            session_gap_capability=session_capability,
+        )
+        request_capability = request_capabilities.get(s['sid'])
+        if request_capability is None:
+            request_manifests.append(None)
+            train_request_segments = validation_request_segments = None
+            train_segments = validation_segments = contract_id
+        else:
+            from futures_foundation.corpus_v3_request_authority import (
+                request_segment_ids_v1, require_request_authority_v1,
+            )
+
+            request_capability = require_request_authority_v1(request_capability)
+            request_manifests.append(request_capability.manifest())
+            timestamps_ns = pd.DatetimeIndex(s['ts']).asi8
+            train_request_segments = request_segment_ids_v1(
+                request_capability,
+                root=str(s.get('ticker', '')).strip().upper(),
+                requested_use=train_request_use,
+                timestamps_ns=timestamps_ns,
+                contract_ids=contract_id,
+            )
+            validation_request_segments = request_segment_ids_v1(
+                request_capability,
+                root=str(s.get('ticker', '')).strip().upper(),
+                requested_use=validation_request_use,
+                timestamps_ns=timestamps_ns,
+                contract_ids=contract_id,
+            )
+            train_segments = np.char.add(
+                contract_id.astype(str), np.char.add('|', train_request_segments.astype(str))
+            )
+            validation_segments = np.char.add(
+                contract_id.astype(str),
+                np.char.add('|', validation_request_segments.astype(str)),
+            )
+        ts = ssl_data.window_starts(
+            tr_idx, parent_len, segment_ids=train_segments, **base_start_kw,
+        )
+        vs = ssl_data.window_starts(
+            va_idx, parent_len, segment_ids=validation_segments, **base_start_kw,
+        )
+        if train_request_segments is not None:
+            ts = ts[train_request_segments[ts] >= 0]
+            vs = vs[validation_request_segments[vs] >= 0]
         # Defense in depth: OOS rows are not merely absent from eligible starts; they are
         # physically absent from the tensor handed to torch.  A future sampler bug therefore
         # cannot accidentally index July-2025+ data during this V2 lineage.
@@ -86,10 +161,15 @@ def assemble(streams, *, seq, max_jitter, val_frac, holdout_start, forecast_pare
         row_bounds.append((base, base + usable_rows))
         if usable_rows:
             bounded_contract_id = contract_id[:usable_rows]
-            bounded_time_ns = pd.DatetimeIndex(s['ts'][:usable_rows]).asi8
+            bounded_times = s['ts'][:usable_rows]
+            valid_time_edge = ssl_data.valid_timestamp_edges(
+                bounded_times,
+                expected_delta=tf_delta,
+                session_gap_capability=session_capability,
+            )
             discontinuity = (
                 (bounded_contract_id[1:] != bounded_contract_id[:-1])
-                | (np.diff(bounded_time_ns) != int(tf_delta.value))
+                | ~valid_time_edge
             )
             local_edges = np.r_[
                 0, np.flatnonzero(discontinuity) + 1,
@@ -136,6 +216,10 @@ def assemble(streams, *, seq, max_jitter, val_frac, holdout_start, forecast_pare
         'val_start_times_ns': (np.concatenate(va_times).astype(np.int64) if va_times
                                else np.array([], dtype=np.int64)),
         'stream_bar_ns': np.asarray(stream_bar_ns, dtype=np.int64),
+        'session_gap_capabilities': tuple(session_manifests),
+        'request_authorities': tuple(request_manifests),
+        'train_request_use': str(train_request_use),
+        'validation_request_use': str(validation_request_use),
     }
     return big, tr, va, groups
 
@@ -287,14 +371,22 @@ def _finalize(big, tr, va, state, probe_res, cfg, *, out_path, controls, val_sta
 # ------------------------------------------------------------------------------- entrypoints
 def _load_assemble(data_dir, tickers, tfs, seq, max_jitter, val_frac, holdout_start, verbose,
                    forecast_parent=0, val_start=None, train_start=None, return_groups=False,
-                   allow_aligned_market_gaps=False):
+                   allow_aligned_market_gaps=False, cache_manifest_sha256=None,
+                   session_gap_capabilities=None, request_authorities=None,
+                   train_request_use='self_supervised_training',
+                   validation_request_use='validation'):
     from pathlib import Path
     cache_manifest = Path(data_dir) / 'TOURNAMENT_CACHE.json'
     if cache_manifest.is_file():
         # Lazy import avoids a module cycle at import time (tournament_data itself reuses
         # assemble). The cache contains only the immutable train+validation interval.
-        from .tournament_data import load_cache
-        streams = load_cache(data_dir, tickers, tfs, verbose=verbose)
+        from .tournament_data import load_cache, resolve_cache_manifest_sha256
+        verified_cache_sha = resolve_cache_manifest_sha256(cache_manifest_sha256)
+        streams = load_cache(
+            data_dir, tickers, tfs,
+            expected_manifest_sha256=verified_cache_sha,
+            verbose=verbose,
+        )
     else:
         streams = ssl_data.load_ohlcv(
             data_dir, tickers, tfs, verbose=verbose,
@@ -304,13 +396,20 @@ def _load_assemble(data_dir, tickers, tfs, seq, max_jitter, val_frac, holdout_st
                          holdout_start=holdout_start, forecast_parent=forecast_parent,
                          val_start=val_start, train_start=train_start,
                          return_groups=return_groups, verbose=verbose,
-                         allow_aligned_market_gaps=allow_aligned_market_gaps)
+                         allow_aligned_market_gaps=allow_aligned_market_gaps,
+                         session_gap_capabilities=session_gap_capabilities,
+                         request_authorities=request_authorities,
+                         train_request_use=train_request_use,
+                         validation_request_use=validation_request_use)
     big, tr, va = assembled[:3]
     if verbose:
         print(f"[ssl] bars={len(big)} train_win={len(tr)} val_win={len(va)} "
               f"streams={len(streams)}", flush=True)
     if len(tr) == 0 or len(va) == 0:
         raise ValueError("no train/val windows — check seq/max_jitter vs data length")
+    if return_groups and cache_manifest.is_file():
+        assembled[3]['cache_manifest_sha256'] = verified_cache_sha
+        assembled[3]['contains_oos'] = False
     if return_groups and (len(assembled[3]['train_bounds']) != len(streams)
                           or len(assembled[3]['val_bounds']) != len(streams)):
         have_tr, have_va = set(assembled[3]['train_labels']), set(assembled[3]['val_labels'])
@@ -429,7 +528,9 @@ def _base_cfg(**kw):
              train_group_bounds=None, val_group_bounds=None,
              train_start_times_ns=None, val_start_times_ns=None, stream_bar_ns=None,
              objective_row_bounds=None,
-             val_batches=None, allow_aligned_market_gaps=False, probe_seed=None,
+             val_batches=None, allow_aligned_market_gaps=False,
+             cache_manifest_sha256=None, session_gap_capabilities=None,
+             probe_seed=None,
              probe_folds=1)                         # expanding walk-forward probe folds
     d.update({k: v for k, v in kw.items() if v is not None and k in d})
     return d
@@ -458,7 +559,9 @@ def loop_ssl(data_dir=None, *, tickers=None, tfs=None, controls=('shuffle', 'ran
         data_dir, tickers, tfs, cfg['seq'], cfg['max_jitter'], val_frac, holdout_start,
         verbose, forecast_parent=fc_reserve, val_start=val_start, train_start=train_start,
         return_groups=True,
-        allow_aligned_market_gaps=cfg['allow_aligned_market_gaps'])
+        allow_aligned_market_gaps=cfg['allow_aligned_market_gaps'],
+        cache_manifest_sha256=cfg['cache_manifest_sha256'],
+        session_gap_capabilities=cfg['session_gap_capabilities'])
     cfg['train_group_bounds'] = groups['train_bounds']
     cfg['val_group_bounds'] = groups['val_bounds']
     cfg['train_start_times_ns'] = groups['train_start_times_ns']

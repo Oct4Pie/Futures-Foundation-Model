@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 import numpy as np
@@ -9,6 +10,7 @@ from futures_foundation.finetune.event_contexts import (
     EventContextConfig,
     TAG_NAMES,
     causal_baseline_features,
+    context_shard_fingerprint,
     detect_context_tags,
     event_policy_labels,
     load_context_shard,
@@ -326,6 +328,7 @@ def test_context_shard_roundtrip_and_hash_guard(tmp_path):
     loaded, loaded_manifest = load_context_shard(path)
     assert loaded_manifest["content_fingerprint"] == manifest["content_fingerprint"]
     assert set(loaded) == set(arrays)
+    assert not any(value.flags.writeable for value in loaded.values())
     np.testing.assert_array_equal(loaded["decision_source_idx"], arrays["decision_source_idx"])
 
     with path.open("ab") as stream:
@@ -334,16 +337,57 @@ def test_context_shard_roundtrip_and_hash_guard(tmp_path):
         load_context_shard(path)
 
 
+def test_current_context_save_rejects_arbitrary_self_consistent_arrays(tmp_path):
+    with pytest.raises(ValueError, match="array keys mismatch"):
+        save_context_shard(
+            tmp_path / "fake-current.npz", {"x": np.asarray([1])}, {"rows": 1},
+        )
+
+
+def test_current_context_load_rejects_semantic_tamper_after_hash_repair(tmp_path):
+    frame = _frame(n=800)
+    arrays, metadata = materialize_context_stream(
+        frame, ticker="ES", timeframe="1min", config=_config(frame),
+        execution_economics=_economics(),
+    )
+    path = tmp_path / "ES_1min.npz"
+    save_context_shard(path, arrays, metadata)
+    tampered = {name: value.copy() for name, value in arrays.items()}
+    tampered["label_end_time_ns"][0, 0] += 60 * 1_000_000_000
+    np.savez_compressed(path, **tampered)
+    manifest_path = Path(str(path) + ".manifest.json")
+    manifest = json.loads(manifest_path.read_text())
+    manifest["artifact"]["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+    manifest["artifact"]["bytes"] = path.stat().st_size
+    manifest["content_fingerprint"] = context_shard_fingerprint(
+        tampered, manifest["metadata"],
+    )
+    manifest_path.write_text(json.dumps(manifest, allow_nan=False))
+    with pytest.raises(ValueError, match="label endpoints"):
+        load_context_shard(path)
+
+
 def test_legacy_context_schema_requires_explicit_opt_in(tmp_path):
     path = tmp_path / "legacy.npz"
     arrays = {"x": np.asarray([1])}
     metadata = {"rows": 1}
-    save_context_shard(path, arrays, metadata)
-    manifest_path = tmp_path / "legacy.npz.manifest.json"
-    manifest = json.loads(manifest_path.read_text())
-    manifest["schema_version"] = "ffm_event_context_shard_v2"
+    np.savez_compressed(path, **arrays)
+    manifest = {
+        "schema_version": "ffm_event_context_shard_v2",
+        "status": "complete",
+        "content_fingerprint": context_shard_fingerprint(arrays, metadata),
+        "artifact": {
+            "path": str(path.resolve()),
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "bytes": path.stat().st_size,
+        },
+        "source": {},
+        "metadata": metadata,
+    }
+    manifest_path = Path(str(path) + ".manifest.json")
     manifest_path.write_text(json.dumps(manifest))
     with pytest.raises(ValueError, match="unsupported"):
         load_context_shard(path)
     loaded, _ = load_context_shard(path, allow_legacy=True)
     assert loaded["x"].item() == 1
+    assert loaded["x"].flags.writeable is False

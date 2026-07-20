@@ -89,16 +89,14 @@ def test_every_route_has_the_exact_audited_task_kind():
     assert Counter(route["task_kind"] for route in CATALOG["routes"].values()) == {
         "classification": 6,
         "continuous_forecast": 4,
-        "contrastive_representation": 5,
-        "generative_forecast": 1,
+        "contrastive_representation": 2,
         "masked_reconstruction": 1,
-        "path_supervision": 10,
         "quantile_forecast": 5,
         "support_query_downstream": 1,
         "support_query_forecast": 1,
         "token_forecast": 3,
         "tokenizer_reconstruction": 2,
-        "unsupported": 3,
+        "unsupported": 17,
     }
     expected_examples = {
         "mantis_v1:R:official_crop_resize_contrastive": "contrastive_representation",
@@ -108,8 +106,8 @@ def test_every_route_has_the_exact_audited_task_kind():
         "chronos_bolt:F:direct_native_quantile_pinball": "quantile_forecast",
         "chronos_v1:F:native_64_t5_token_forecast_cross_entropy": "token_forecast",
         "kronos_small:F:tokenizer_reconstruction_bsq": "tokenizer_reconstruction",
-        "timesfm25:B:supervised_barrier_experimental_task": "path_supervision",
-        "sundial_base:F:custom_timeflow_research": "generative_forecast",
+        "timesfm25:B:supervised_barrier_experimental_task": "unsupported",
+        "sundial_base:F:custom_timeflow_research": "unsupported",
         "tabpfn_ts3_forecast:F:official_ts3_support_query_forecast": (
             "support_query_forecast"
         ),
@@ -162,13 +160,16 @@ def test_mantis_profiles_preserve_version_specific_training_and_deployment_contr
         "direction_tag": "query_to_key", "resize_length": 512,
         "negative_eligibility_tag": "other_parent_windows_only",
         "sibling_parent_policy_tag": "exclude_ohlcv_siblings",
+        "crop_sampling_scope_tag": "one_shared_crop_per_view_and_batch",
     }
     assert v1["export"]["value"]["output_tag"] == "final_cls_per_channel"
     assert _value("mantis_v2_contrastive", "objective")["training_projector_dim"] == 256
     assert _value("mantis_v2_contrastive", "objective")["deployment_embedding_dim"] == 512
-    assert set(v2["objective"]["value"]["unresolved_fields"]) == {
-        "temperature", "direction_tag", "crop_sampling_scope_tag",
-    }
+    assert _value("mantis_v2_contrastive", "objective")["temperature"] == 0.1
+    assert _value("mantis_v2_contrastive", "objective")["direction_tag"] == "query_to_key"
+    assert _value("mantis_v2_contrastive", "objective")["crop_sampling_scope_tag"] == (
+        "one_shared_crop_per_view_and_batch"
+    )
     assert v2["export"]["value"]["output_tag"] == "layer2_cls_mean_per_channel"
     assert CATALOG["routes"]["mantis_v1:C:supervised_classification_head"][
         "constraint_profile"
@@ -231,12 +232,16 @@ def test_forecast_family_constraints_retain_audited_shapes_and_objectives():
     assert _value("chronos2_lora", "optimization_surface")["trainable_tag"] == (
         "lora_only_fail_closed_without_peft"
     )
-    assert _value("timesfm_lora", "preprocessing")["mask_tag"] == "native_padding_missing_mask"
+    assert _value("timesfm_lora", "preprocessing")["mask_tag"] == (
+        "reject_nonfinite_context_and_target"
+    )
     timesfm = _value("timesfm_lora", "objective")
     assert timesfm["force_flip_invariance"] is True
     assert timesfm["truncate_negative"] is False
     assert timesfm["fix_quantile_crossing"] is False
-    assert _value("timesfm_lora", "optimization_surface")["adapter_target_tag"] == "all_linear"
+    assert _value("timesfm_lora", "optimization_surface")["adapter_target_tag"] == (
+        "all_linear_r4_alpha8_dropout005"
+    )
     ttm = _value("ttm_forecast_head_prefix", "objective")
     assert ttm["native_horizon"] == 48
     assert ttm["prediction_filter_length"] == 16
@@ -250,33 +255,74 @@ def test_sundial_and_toto_dispositions_do_not_claim_released_training():
         "pathway_kind"
     ] == "unsupported"
     timeflow = CATALOG["routes"]["sundial_base:F:custom_timeflow_research"]
-    assert timeflow["method_provenance"] == "project_extension"
+    assert timeflow["method_provenance"] == "unsupported"
+    assert timeflow["pathway_kind"] == "unsupported"
+    assert timeflow["permitted_use_scopes"] == []
     assert timeflow["constraint_profile"] == "sundial_timeflow"
+    assert timeflow["blocker_tags"] == [
+        "no_upstream_training_api", "unsupported_project_extension",
+    ]
     assert "nonfinite_hidden_states" in CATALOG["routes"][
         "sundial_base:R:nonfinite_hidden_state_representation"
     ]["blocker_tags"]
 
 
-def test_unfilled_methodology_is_explicit_and_never_hidden_by_prose():
-    for profile_id in ("project_contrastive_unresolved", "project_path_unresolved"):
+def test_excluded_methodology_is_closed_and_never_hidden_by_placeholders():
+    excluded_profiles = (
+        "project_contrastive_unresolved", "project_path_unresolved",
+        "sundial_timeflow", "unsupported",
+    )
+    for profile_id in excluded_profiles:
         profile = CATALOG["constraint_profiles"][profile_id]
-        assert profile["target"] == {"state": "unresolved", "value": None}
-        assert profile["objective"] == {"state": "unresolved", "value": None}
-        assert profile["optimization_hyperparameters"] == {
-            "state": "unresolved", "value": None,
+        assert {item["state"] for item in profile.values()} == {"resolved"}
+        assert profile["target"]["value"] == {
+            "interval": [0, 0], "target_tag": "not_applicable",
+        }
+        assert profile["objective"]["value"] == {"loss_tag": "not_applicable"}
+        assert profile["optimization_hyperparameters"]["value"] == {
+            "status": "not_applicable",
         }
     for route in CATALOG["routes"].values():
         assert route["blocker_tags"]
         assert all(isinstance(tag, str) and " " not in tag for tag in route["blocker_tags"])
-    for profile_id in (
-        "kronos_mini_tokenizer", "kronos_mini_predictor",
-        "kronos_small_tokenizer", "kronos_small_predictor",
-    ):
+        if route["pathway_kind"] == "unsupported":
+            assert route["method_provenance"] == "unsupported"
+            assert route["task_kind"] == "unsupported"
+            assert route["permitted_use_scopes"] == []
+            profile = CATALOG["constraint_profiles"][route["constraint_profile"]]
+            assert all(item["state"] == "resolved" for item in profile.values())
+    for profile_id in ("kronos_mini_tokenizer", "kronos_small_tokenizer"):
         preprocessing = CATALOG["constraint_profiles"][profile_id]["preprocessing"]
-        assert preprocessing["state"] == "partial"
-        assert preprocessing["value"]["unresolved_fields"] == [
-            "amount_source_route_instance_choice"
-        ]
+        assert preprocessing["state"] == "resolved"
+        assert preprocessing["value"]["amount_source_tag"] == (
+            "volume_times_mean_ohlc_v1"
+        )
+    mini_predictor = CATALOG["constraint_profiles"]["kronos_mini_predictor"]
+    assert mini_predictor["preprocessing"] == {
+        "state": "resolved",
+        "value": {
+            "amount_source_tag": "volume_times_mean_ohlc_v1",
+            "mask_tag": "none",
+            "scaler_tag": "kronos_context_only_normalize_clip5",
+        },
+    }
+    assert mini_predictor["target"]["value"] == {
+        "interval": [1, 528],
+        "target_tag": "full_parent_next_token_codes",
+    }
+    assert mini_predictor["time"]["value"]["timezone_tag"] == (
+        "america_chicago_cme_venue_v1"
+    )
+    small_predictor = CATALOG["constraint_profiles"]["kronos_small_predictor"]
+    assert small_predictor["preprocessing"] == {
+        "state": "resolved",
+        "value": {
+            "amount_source_tag": "volume_times_mean_ohlc_v1",
+            "mask_tag": "none",
+            "scaler_tag": "kronos_context_only_normalize_clip5",
+        },
+    }
+    assert small_predictor["optimization_hyperparameters"]["state"] == "resolved"
     ttm_pre = _value("ttm_forecast_head_prefix", "preprocessing")
     assert ttm_pre["three_minute_prefix_id"] == 0
     assert ttm_pre["selector_id"] == "512-48-ft-r2.1"
@@ -338,7 +384,7 @@ def test_catalog_rejects_free_text_nested_fields_and_malformed_partial_constrain
     catalog["constraint_profiles"]["mantis_v2_contrastive"]["objective"]["value"][
         "unresolved_fields"
     ] = []
-    with pytest.raises(NativeContractError, match="unresolved_fields is malformed"):
+    with pytest.raises(NativeContractError, match="nested fields mismatch"):
         validate_family_route_catalog(catalog)
     catalog = deepcopy(CATALOG)
     catalog["arms"]["tabpfn_v3_downstream"]["dossier_ref"]["content_sha256"] = None
@@ -362,16 +408,12 @@ def test_family_specific_audit_corrections_remain_explicit():
     assert moirai_objective["quantile_crossing_tag"] == "native_crossing_quantiles"
     assert moirai_objective["output_patch_audit_tag"] == "every_output_patch"
     sundial = CATALOG["constraint_profiles"]["sundial_timeflow"]
-    assert sundial["input"]["state"] == "resolved"
-    assert sundial["objective"]["value"]["loss_tag"] == "differentiable_timeflow"
-    for field in (
-        "time", "preprocessing", "target", "optimization_surface",
-        "optimization_hyperparameters", "lineage", "export",
-    ):
-        assert sundial[field] == {"state": "unresolved", "value": None}
+    assert all(item["state"] == "resolved" for item in sundial.values())
+    assert sundial["objective"]["value"]["loss_tag"] == "not_applicable"
+    assert sundial["input"]["value"]["layout_tag"] == "not_applicable"
     assert CATALOG["routes"]["sundial_base:F:custom_timeflow_research"][
         "permitted_use_scopes"
-    ] == ["research_noncommercial"]
+    ] == []
     assert "checkpoint_unavailable" in CATALOG["routes"][
         "tabpfn_ts3_forecast:F:official_ts3_support_query_forecast"
     ]["blocker_tags"]

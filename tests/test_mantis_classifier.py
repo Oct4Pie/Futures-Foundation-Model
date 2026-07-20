@@ -11,6 +11,8 @@ import os
 import numpy as np
 import pytest
 
+from futures_foundation.finetune.native_contracts import NativeContractError
+
 torch_test = pytest.mark.skipif(
     os.environ.get('CHRONOS_TORCH_TESTS') != '1',
     reason='torch test — set CHRONOS_TORCH_TESTS=1 (libomp isolation)')
@@ -76,34 +78,29 @@ def test_head_mode_freezes_all_backbone():
 # ---- torch-gated: the trainer learns + shapes ----------------------------
 @torch_test
 def test_fit_predict_torch_shapes_and_learns():
-    from sklearn.metrics import roc_auc_score
     from futures_foundation.finetune.classifiers.mantis._torch import fit_predict_torch
     X, y = _toy(N=300, seed=2)
-    p_val, p_eval, ba, be = fit_predict_torch(
-        X[:200], y[:200], X[200:250], y[200:250], X[250:],
-        ft_mode='partial', epochs=15, batch=64, threads=2, device='cpu', verbose=False)
-    assert p_val.shape == (50,) and p_eval.shape == (50,)
-    assert np.all((p_eval >= 0) & (p_eval <= 1))
-    assert roc_auc_score(y[250:], p_eval) > 0.7
-    assert 0.0 <= ba <= 1.0 and be >= 0
+    with pytest.raises(NativeContractError, match='training admission is disabled'):
+        fit_predict_torch(
+            X[:200], y[:200], X[200:250], y[200:250], X[250:],
+            ft_mode='partial', epochs=15, batch=64, threads=2,
+            device='cpu', verbose=False)
 
 
 # ---- torch-gated: memmap input + per-batch standardize (the full-data path) ----
 @torch_test
 def test_fit_predict_torch_memmap_and_standardize(tmp_path):
-    from sklearn.metrics import roc_auc_score
     from futures_foundation.finetune.classifiers.mantis._torch import fit_predict_torch
     X, y = _toy(N=300, seed=3)                      # raw (unstandardized)
     p = str(tmp_path / 'Xtr.npy'); np.save(p, X[:200])
     Xtr_mm = np.load(p, mmap_mode='r')              # disk-backed train
     flat = X[:200].transpose(0, 2, 1).reshape(-1, X.shape[1])
     mu, sd = flat.mean(0), flat.std(0) + 1e-6
-    p_val, p_eval, ba, be = fit_predict_torch(
-        Xtr_mm, y[:200], X[200:250], y[200:250], X[250:], ft_mode='partial', epochs=12,
-        batch=64, device='cpu', standardize_mu=mu.tolist(), standardize_sd=sd.tolist(),
-        verbose=False)
-    assert p_eval.shape == (50,) and np.all((p_eval >= 0) & (p_eval <= 1))
-    assert roc_auc_score(y[250:], p_eval) > 0.65    # learns from a memmap w/ per-batch std
+    with pytest.raises(NativeContractError, match='training admission is disabled'):
+        fit_predict_torch(
+            Xtr_mm, y[:200], X[200:250], y[200:250], X[250:],
+            ft_mode='partial', epochs=12, batch=64, device='cpu',
+            standardize_mu=mu.tolist(), standardize_sd=sd.tolist(), verbose=False)
 
 
 # ---- torch-gated: the adapter end-to-end (spawns the isolated worker) -----
@@ -113,6 +110,5 @@ def test_adapter_fit_predict_via_worker():
     X, y = _toy(N=120)
     clf = get_classifier('mantis', ft_mode='head', epochs=2, batch=32, threads=2,
                          device='cpu', verbose=False)
-    p_val, p_eval, ba = clf.fit_predict(X[:90], y[:90], X[90:], y[90:], X[90:], seed=0)
-    assert p_val.shape == (30,) and p_eval.shape == (30,)
-    assert np.all((p_eval >= 0) & (p_eval <= 1))
+    with pytest.raises(NativeContractError, match='training admission is disabled'):
+        clf.fit_predict(X[:90], y[:90], X[90:], y[90:], X[90:], seed=0)

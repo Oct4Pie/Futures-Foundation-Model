@@ -6,12 +6,19 @@ import hashlib
 import json
 import os
 from pathlib import Path
+from typing import Mapping
 
 import numpy as np
 import pandas as pd
 
+from futures_foundation.corpus_v3_request_authority import (
+    VerifiedRequestAuthorityV1,
+    load_request_authority_manifest_v1,
+    request_segment_ids_v1,
+    require_request_authority_v1,
+)
 from futures_foundation.execution_economics import (
-    ExecutionEconomics, require_execution_economics,
+    ExecutionEconomics, load_execution_economics, require_execution_economics,
 )
 from futures_foundation.finetune.path_labels import (
     BARRIER_ADVERSE_FIRST, BARRIER_AMBIGUOUS, BARRIER_FAVORABLE_FIRST,
@@ -20,6 +27,13 @@ from futures_foundation.finetune.path_labels import (
 from futures_foundation.finetune.trend_strategy_eval import executable_risk
 from futures_foundation.pipeline._primitives import compute_atr, compute_supertrend
 from futures_foundation.pivots import causal_htf_dir
+from futures_foundation.session_gap import (
+    VerifiedSessionGapCapability,
+    advance_admitted_bars,
+    load_session_gap_capability,
+    require_session_gap_capability,
+    verified_session_edge_mask,
+)
 from futures_foundation.primitives.detection import (
     detect_atr_zigzag_pivots_v2,
     detect_fractal_pivots,
@@ -27,11 +41,12 @@ from futures_foundation.primitives.detection import (
 )
 
 
-SCHEMA_VERSION = "ffm_event_context_shard_v4"
-COLLECTION_SCHEMA_VERSION = "ffm_event_context_collection_v3"
+SCHEMA_VERSION = "ffm_event_context_shard_v6"
+COLLECTION_SCHEMA_VERSION = "ffm_event_context_collection_v5"
 LEGACY_SCHEMA_VERSIONS = {
     "ffm_event_context_shard_v1", "ffm_event_context_shard_v2",
-    "ffm_event_context_shard_v3",
+    "ffm_event_context_shard_v3", "ffm_event_context_shard_v4",
+    "ffm_event_context_shard_v5",
 }
 TAG_NAMES = (
     "atr_zigzag_v2", "fractal_k2", "supertrend_flip", "fractal_zigzag",
@@ -48,6 +63,25 @@ PATH_ROW_KEYS = (
     "label_end_time_ns", "trend_path_class", "barrier_state",
     "time_to_favorable_minutes", "time_to_adverse_minutes", "policy_r_gross",
 )
+_EVENT_ARRAY_KEYS = {
+    "ticker", "timeframe", "contract_id", "request_segment_id",
+    "context_start_source_idx", "decision_source_idx", "decision_time_ns",
+    "block_id", "sample_weight",
+    "features", "feature_names", "tag_names", "horizons_minutes", "targets_r",
+    "directions", "causal_scale", "context_direction", "contract_segment_id",
+    "bars_since_contract_start", *PATH_ROW_KEYS, "tags", "tag_direction",
+    "tag_origin_source_idx", "tag_htf_agreement", "htf_direction",
+    "policy_mode_names", "policy_event_context_row", "policy_event_tag_index",
+    "policy_event_direction", "policy_valid", "policy_risk_price",
+    "policy_risk_ticks", "policy_barrier_state", "policy_gross_r",
+    "policy_reached", "policy_exit_time_ns",
+}
+_EVENT_METADATA_KEYS = {
+    "schema_version", "ticker", "timeframe", "config", "rows", "source_rows",
+    "event_rows", "policy_events", "tag_counts", "split", "detectors",
+    "context_gap_policy", "session_gap_capability", "future_gap_policy",
+    "request_authority", "requested_use", "execution_economics",
+}
 
 
 @dataclass(frozen=True)
@@ -512,9 +546,19 @@ def _block_weights(block_id: np.ndarray) -> np.ndarray:
     return (weight / weight.mean()).astype(np.float32)
 
 
-def _context_edge_is_valid(ts: pd.DatetimeIndex, expected_ns: int) -> np.ndarray:
-    """Accept exact bar cadence only until a verified session-edge capability is wired."""
-    return np.diff(ts.asi8) == int(expected_ns)
+def _context_edge_is_valid(
+    ts: pd.DatetimeIndex,
+    expected_ns: int,
+    session_gap_capability: VerifiedSessionGapCapability | None = None,
+) -> np.ndarray:
+    """Accept exact cadence or an independently verified adjacent session edge."""
+    if session_gap_capability is None:
+        return np.diff(ts.asi8) == int(expected_ns)
+    return verified_session_edge_mask(
+        ts,
+        expected_delta=pd.Timedelta(int(expected_ns), unit="ns"),
+        capability=session_gap_capability,
+    )
 
 
 def _single_policy_path(
@@ -726,6 +770,9 @@ def materialize_context_stream(
     timeframe: str,
     execution_economics: ExecutionEconomics,
     config: EventContextConfig | None = None,
+    session_gap_capability: VerifiedSessionGapCapability | None = None,
+    request_authority: VerifiedRequestAuthorityV1 | None = None,
+    requested_use: str = "validation",
 ) -> tuple[dict[str, np.ndarray], dict[str, object]]:
     """Build one row per eligible decision context for one stream."""
     config = config or EventContextConfig()
@@ -736,8 +783,35 @@ def materialize_context_stream(
     )
     minutes = _timeframe_minutes(timeframe)
     config.path.validate(minutes)
+    if session_gap_capability is not None:
+        session_gap_capability = require_session_gap_capability(session_gap_capability)
+        if session_gap_capability.root != str(ticker).strip().upper():
+            raise ValueError("session-gap capability root differs from the event stream")
+        if session_gap_capability.expected_delta_ns != minutes * 60 * 1_000_000_000:
+            raise ValueError("session-gap capability bar size differs from the event stream")
     ts, o, h, l, c, _, contract, segment, source_row = _frame_arrays(frame)
-    labels = build_dense_path_labels(frame, timeframe_minutes=minutes, config=config.path)
+    request_manifest = None
+    requested_use_value = None
+    request_segments = np.full(len(frame), -1, dtype=np.int64)
+    if request_authority is not None:
+        request_authority = require_request_authority_v1(request_authority)
+        requested_use_value = str(requested_use).strip()
+        if not requested_use_value:
+            raise ValueError("requested_use must be non-empty when request authority is supplied")
+        request_segments = request_segment_ids_v1(
+            request_authority,
+            root=str(ticker).strip().upper(),
+            requested_use=requested_use_value,
+            timestamps_ns=ts.asi8,
+            contract_ids=contract,
+        )
+        request_manifest = request_authority.manifest()
+    labels = build_dense_path_labels(
+        frame,
+        timeframe_minutes=minutes,
+        config=config.path,
+        session_gap_capability=session_gap_capability,
+    )
     atr = np.asarray(labels["causal_scale"], dtype=np.float64)
     features, feature_names = causal_baseline_features(
         frame, event_config=config,
@@ -750,8 +824,22 @@ def materialize_context_stream(
     context = int(config.context_bars)
     expected_ns = minutes * 60 * 1_000_000_000
     bad_gap_prefix = np.r_[
-        0, np.cumsum(~_context_edge_is_valid(ts, expected_ns), dtype=np.int64)
+        0, np.cumsum(
+            ~_context_edge_is_valid(ts, expected_ns, session_gap_capability),
+            dtype=np.int64,
+        )
     ]
+    if request_authority is None:
+        bad_request_prefix = np.zeros(n, dtype=np.int64)
+    else:
+        bad_request_edge = (
+            (request_segments[1:] != request_segments[:-1])
+            | (request_segments[1:] < 0)
+            | (request_segments[:-1] < 0)
+        )
+        bad_request_prefix = np.r_[
+            0, np.cumsum(bad_request_edge, dtype=np.int64)
+        ]
     context_ok = np.zeros(n, dtype=bool)
     rows = np.arange(context - 1, n, dtype=np.int64)
     starts = rows - context + 1
@@ -759,7 +847,29 @@ def materialize_context_stream(
         (bad_gap_prefix[rows] - bad_gap_prefix[starts] == 0)
         & (segment[rows] == segment[starts])
     )
-    label_ok = np.asarray(labels["valid"]).all(axis=1)
+    if request_authority is not None:
+        context_ok[rows] &= (
+            (request_segments[rows] >= 0)
+            & (bad_request_prefix[rows] - bad_request_prefix[starts] == 0)
+        )
+    label_valid = np.asarray(labels["valid"]).copy()
+    if request_authority is not None:
+        for horizon_i, horizon_minutes in enumerate(labels["horizons_minutes"]):
+            steps = int(horizon_minutes) // minutes
+            if n <= steps:
+                continue
+            decision_rows = np.arange(0, n - steps, dtype=np.int64)
+            end_rows = decision_rows + steps
+            label_valid[decision_rows, horizon_i] &= (
+                (request_segments[decision_rows] >= 0)
+                & (request_segments[end_rows] == request_segments[decision_rows])
+                & (
+                    bad_request_prefix[end_rows]
+                    - bad_request_prefix[decision_rows]
+                    == 0
+                )
+            )
+    label_ok = label_valid.all(axis=1)
     feature_ok = np.isfinite(features).all(axis=1)
     start_ns, end_ns = _utc(config.eval_start).value, _utc(config.eval_end).value
     interval_ok = (ts.asi8 >= start_ns) & (ts.asi8 < end_ns)
@@ -773,14 +883,20 @@ def materialize_context_stream(
     for segment_value in np.unique(segment):
         segment_rows = np.flatnonzero(segment == segment_value)
         local_in_segment[segment_rows] = np.arange(len(segment_rows))
-    block_id = (segment[selected] << np.int64(32)) + (
-        local_in_segment[selected] // context
+    block_segment = segment if request_authority is None else request_segments
+    local_in_block_segment = np.zeros(n, dtype=np.int64)
+    for segment_value in np.unique(block_segment[block_segment >= 0]):
+        segment_rows = np.flatnonzero(block_segment == segment_value)
+        local_in_block_segment[segment_rows] = np.arange(len(segment_rows))
+    block_id = (block_segment[selected] << np.int64(32)) + (
+        local_in_block_segment[selected] // context
     )
 
     arrays: dict[str, np.ndarray] = {
         "ticker": np.full(len(selected), str(ticker)),
         "timeframe": np.full(len(selected), str(timeframe)),
         "contract_id": contract[selected],
+        "request_segment_id": request_segments[selected],
         "context_start_source_idx": source_row[selected - context + 1],
         "decision_source_idx": source_row[selected],
         "decision_time_ns": ts.asi8[selected],
@@ -833,12 +949,431 @@ def materialize_context_stream(
             "pullback_continuation": "ema20_50_reclaim_v1",
             "compression_breakout": "prior20_atr_bounded_close_break_v1",
         },
-        "context_gap_policy": "exact_timestamp_cadence_and_contract_segments_v1",
-        "session_gap_capability": None,
-        "future_gap_policy": "exact_cadence_only_mask_never_truncate",
+        "context_gap_policy": (
+            "exact_timestamp_cadence_and_contract_segments_v1"
+            if session_gap_capability is None
+            else "verified_session_edges_and_contract_segments_v1"
+        ),
+        "session_gap_capability": (
+            None if session_gap_capability is None else session_gap_capability.manifest()
+        ),
+        "future_gap_policy": (
+            "exact_cadence_only_mask_never_truncate"
+            if session_gap_capability is None
+            else "verified_session_edges_mask_never_truncate_v1"
+        ),
+        "request_authority": request_manifest,
+        "requested_use": requested_use_value,
         "execution_economics": execution_economics.manifest(),
     }
     return arrays, metadata
+
+
+def validate_context_shard(
+    arrays: Mapping[str, np.ndarray], metadata: Mapping[str, object],
+) -> None:
+    """Validate the complete current event-shard contract.
+
+    A content hash proves only byte consistency.  This validator proves that those
+    bytes have the exact shapes, dtypes, relationships, split semantics, event
+    geometry, request authority, and authenticated economics required by
+    ``ffm_event_context_shard_v6``.
+    """
+    if not isinstance(arrays, Mapping) or set(arrays) != _EVENT_ARRAY_KEYS:
+        missing = sorted(_EVENT_ARRAY_KEYS - set(arrays)) if isinstance(arrays, Mapping) else []
+        unknown = sorted(set(arrays) - _EVENT_ARRAY_KEYS) if isinstance(arrays, Mapping) else []
+        raise ValueError(f"event-context array keys mismatch; missing={missing}, unknown={unknown}")
+    if not isinstance(metadata, Mapping) or set(metadata) != _EVENT_METADATA_KEYS:
+        missing = sorted(_EVENT_METADATA_KEYS - set(metadata)) if isinstance(metadata, Mapping) else []
+        unknown = sorted(set(metadata) - _EVENT_METADATA_KEYS) if isinstance(metadata, Mapping) else []
+        raise ValueError(f"event-context metadata keys mismatch; missing={missing}, unknown={unknown}")
+    if metadata["schema_version"] != SCHEMA_VERSION:
+        raise ValueError("event-context metadata schema mismatch")
+
+    def count(value: object, field: str, *, minimum: int = 0) -> int:
+        if type(value) is not int or value < minimum:
+            raise ValueError(f"{field} must be an integer >= {minimum}")
+        return value
+
+    def array(
+        name: str,
+        *,
+        dtype: str | np.dtype | None = None,
+        kind: str | None = None,
+        shape: tuple[int, ...] | None = None,
+    ) -> np.ndarray:
+        value = arrays[name]
+        if not isinstance(value, np.ndarray) or value.dtype.hasobject:
+            raise ValueError(f"event-context array {name} must be a non-object ndarray")
+        if dtype is not None and value.dtype != np.dtype(dtype):
+            raise ValueError(f"event-context array {name} has dtype {value.dtype}, expected {np.dtype(dtype)}")
+        if kind is not None and value.dtype.kind != kind:
+            raise ValueError(f"event-context array {name} must have dtype kind {kind}")
+        if shape is not None and value.shape != shape:
+            raise ValueError(f"event-context array {name} has shape {value.shape}, expected {shape}")
+        return value
+
+    rows = count(metadata["rows"], "metadata.rows", minimum=1)
+    source_rows = count(metadata["source_rows"], "metadata.source_rows", minimum=rows)
+    ticker = str(metadata["ticker"])
+    timeframe = str(metadata["timeframe"])
+    if not ticker or ticker != ticker.strip().upper():
+        raise ValueError("event-context ticker must be non-empty uppercase text")
+    minutes = _timeframe_minutes(timeframe)
+
+    ticker_values = array("ticker", kind="U", shape=(rows,)).astype(str)
+    timeframe_values = array("timeframe", kind="U", shape=(rows,)).astype(str)
+    contract = array("contract_id", kind="U", shape=(rows,)).astype(str)
+    request_segment = array("request_segment_id", dtype=np.int64, shape=(rows,))
+    if not np.all(ticker_values == ticker) or not np.all(timeframe_values == timeframe):
+        raise ValueError("event-context stream identity arrays disagree with metadata")
+    if np.any(np.char.str_len(np.char.strip(contract)) == 0):
+        raise ValueError("event-context contract_id contains blank values")
+    request_manifest = metadata["request_authority"]
+    requested_use = metadata["requested_use"]
+    request_capability = None
+    if request_manifest is None:
+        if requested_use is not None or np.any(request_segment != -1):
+            raise ValueError("event-context rows claim request membership without authority")
+    else:
+        if not isinstance(requested_use, str) or not requested_use.strip():
+            raise ValueError("event-context requested_use must be non-empty")
+        try:
+            request_capability = load_request_authority_manifest_v1(request_manifest)
+        except (TypeError, ValueError, FileNotFoundError) as exc:
+            raise ValueError("event-context request authority cannot be reverified") from exc
+        if np.any(request_segment < 0):
+            raise ValueError("event-context authorized rows contain missing request membership")
+
+    config_value = metadata["config"]
+    if not isinstance(config_value, Mapping):
+        raise ValueError("event-context config must be a mapping")
+    try:
+        raw_config = dict(config_value)
+        raw_path = raw_config.pop("path")
+        if not isinstance(raw_path, Mapping):
+            raise TypeError("path config is not a mapping")
+        path_config = PathLabelConfig(**dict(raw_path))
+        config = EventContextConfig(path=path_config, **raw_config)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("event-context config does not match the current dataclass contract") from exc
+    config.validate()
+    config.path.validate(minutes)
+    if int(config.context_bars) > source_rows:
+        raise ValueError("event-context source row count cannot contain the declared context")
+
+    split = metadata["split"]
+    if not isinstance(split, Mapping) or set(split) != {"eval_start", "eval_end", "oos_read"}:
+        raise ValueError("event-context split contract is malformed")
+    if (
+        split["eval_start"] != config.eval_start
+        or split["eval_end"] != config.eval_end
+        or split["oos_read"] is not False
+    ):
+        raise ValueError("event-context split contract differs from the materialization config")
+    session_manifest = metadata["session_gap_capability"]
+    session_capability = None
+    if session_manifest is None:
+        if metadata["context_gap_policy"] != "exact_timestamp_cadence_and_contract_segments_v1":
+            raise ValueError("event-context exact-cadence context-gap policy is unsupported")
+        if metadata["future_gap_policy"] != "exact_cadence_only_mask_never_truncate":
+            raise ValueError("event-context exact-cadence future-gap policy is unsupported")
+    else:
+        if metadata["context_gap_policy"] != "verified_session_edges_and_contract_segments_v1":
+            raise ValueError("event-context verified-session context-gap policy is unsupported")
+        if metadata["future_gap_policy"] != "verified_session_edges_mask_never_truncate_v1":
+            raise ValueError("event-context verified-session future-gap policy is unsupported")
+        try:
+            session_capability = load_session_gap_capability(session_manifest)
+        except (TypeError, ValueError, FileNotFoundError) as exc:
+            raise ValueError("event-context session-gap capability cannot be reverified") from exc
+        if session_capability.root != ticker:
+            raise ValueError("event-context session-gap root differs from the stream")
+        if session_capability.expected_delta_ns != minutes * 60 * 1_000_000_000:
+            raise ValueError("event-context session-gap bar size differs from the stream")
+
+    feature_names = array("feature_names", kind="U")
+    if feature_names.ndim != 1 or not len(feature_names):
+        raise ValueError("event-context feature names must be a non-empty vector")
+    if len(np.unique(feature_names.astype(str))) != len(feature_names):
+        raise ValueError("event-context feature names must be unique")
+    features = array("features", dtype=np.float32, shape=(rows, len(feature_names)))
+    if not np.isfinite(features).all():
+        raise ValueError("event-context features must be finite")
+
+    tag_names = array("tag_names", kind="U", shape=(len(TAG_NAMES),)).astype(str)
+    if tuple(tag_names.tolist()) != TAG_NAMES:
+        raise ValueError("event-context tag-name contract differs from the canonical order")
+    horizons = array("horizons_minutes", dtype=np.int32)
+    targets = array("targets_r", dtype=np.float32)
+    directions = array("directions", dtype=np.int8, shape=(2,))
+    if horizons.ndim != 1 or not len(horizons) or np.any(horizons <= 0):
+        raise ValueError("event-context horizons must be a positive vector")
+    if targets.ndim != 1 or not len(targets) or not np.isfinite(targets).all() or np.any(targets <= 0):
+        raise ValueError("event-context targets must be a positive finite vector")
+    if not np.array_equal(horizons, np.asarray(config.path.horizons_minutes, np.int32)):
+        raise ValueError("event-context horizons differ from the config")
+    if not np.array_equal(targets, np.asarray(config.path.targets_r, np.float32)):
+        raise ValueError("event-context targets differ from the config")
+    if not np.array_equal(directions, np.asarray((1, -1), np.int8)):
+        raise ValueError("event-context direction order is not canonical")
+    horizon_count, target_count = len(horizons), len(targets)
+
+    context_start = array("context_start_source_idx", dtype=np.int64, shape=(rows,))
+    decision_source = array("decision_source_idx", dtype=np.int64, shape=(rows,))
+    decision_time = array("decision_time_ns", dtype=np.int64, shape=(rows,))
+    if (
+        np.any(np.diff(decision_source) <= 0)
+        or np.any(np.diff(decision_time) <= 0)
+        or np.any(context_start < 0)
+        or np.any(decision_source < context_start)
+        or np.any(decision_source - context_start != int(config.context_bars) - 1)
+    ):
+        raise ValueError("event-context source/timestamp ordering or context geometry is invalid")
+    eval_start_ns = _utc(config.eval_start).value
+    eval_end_ns = _utc(config.eval_end).value
+    if np.any(decision_time < eval_start_ns) or np.any(decision_time >= eval_end_ns):
+        raise ValueError("event-context decision timestamps escape the declared split")
+    if request_capability is not None:
+        expected_request_segment = request_segment_ids_v1(
+            request_capability,
+            root=ticker,
+            requested_use=requested_use,
+            timestamps_ns=decision_time,
+            contract_ids=contract,
+        )
+        if not np.array_equal(request_segment, expected_request_segment):
+            raise ValueError("event-context decision request membership is stale or invalid")
+
+    block_id = array("block_id", dtype=np.int64, shape=(rows,))
+    sample_weight = array("sample_weight", dtype=np.float32, shape=(rows,))
+    if not np.isfinite(sample_weight).all() or np.any(sample_weight <= 0):
+        raise ValueError("event-context sample weights must be positive and finite")
+    try:
+        np.testing.assert_allclose(
+            sample_weight, _block_weights(block_id), rtol=0.0, atol=1e-6,
+            err_msg="event-context block weights are not canonical",
+        )
+    except AssertionError as exc:
+        raise ValueError("event-context block weights are not canonical") from exc
+
+    segment = array("contract_segment_id", dtype=np.int64, shape=(rows,))
+    bars_since = array("bars_since_contract_start", dtype=np.int64, shape=(rows,))
+    if np.any(segment < 0) or np.any(np.diff(segment) < 0) or np.any(bars_since < 0):
+        raise ValueError("event-context contract-segment geometry is invalid")
+    if rows > 1:
+        segment_change = segment[1:] != segment[:-1]
+        contract_change = contract[1:] != contract[:-1]
+        if not np.array_equal(segment_change, contract_change):
+            raise ValueError("event-context contract IDs and segment IDs disagree")
+        same = ~segment_change
+        if not np.array_equal(
+            np.diff(bars_since)[same], np.diff(decision_source)[same]
+        ):
+            raise ValueError("event-context bars-since-contract geometry drifted")
+
+    causal_scale = array("causal_scale", dtype=np.float32, shape=(rows,))
+    context_direction = array("context_direction", dtype=np.int8, shape=(rows,))
+    htf_direction = array("htf_direction", dtype=np.int8, shape=(rows,))
+    if not np.isfinite(causal_scale).all() or np.any(causal_scale <= 0):
+        raise ValueError("event-context causal scale must be positive and finite")
+    if not np.isin(context_direction, (-1, 0, 1)).all() or not np.isin(htf_direction, (-1, 0, 1)).all():
+        raise ValueError("event-context direction arrays contain invalid states")
+
+    float_paths = (
+        "terminal_move_r", "forward_abs_move_r", "forward_realized_vol",
+        "upside_mfe_r", "downside_mae_r", "forward_trend_eff",
+    )
+    for name in float_paths:
+        value = array(name, dtype=np.float32, shape=(rows, horizon_count))
+        if not np.isfinite(value).all():
+            raise ValueError(f"event-context path array {name} must be finite")
+    if (
+        np.any(arrays["forward_abs_move_r"] < 0)
+        or np.any(arrays["forward_realized_vol"] < 0)
+        or np.any(arrays["upside_mfe_r"] < 0)
+        or np.any(arrays["downside_mae_r"] < 0)
+        or np.any((arrays["forward_trend_eff"] < 0) | (arrays["forward_trend_eff"] > 1 + 1e-6))
+    ):
+        raise ValueError("event-context path magnitudes violate their declared domains")
+    label_end = array("label_end_time_ns", dtype=np.int64, shape=(rows, horizon_count))
+    if session_capability is None:
+        expected_end = (
+            decision_time[:, None]
+            + horizons.astype(np.int64)[None, :] * 60_000_000_000
+        )
+    else:
+        expected_end = np.column_stack([
+            advance_admitted_bars(
+                decision_time,
+                np.full(rows, int(horizon) // minutes, dtype=np.int64),
+                capability=session_capability,
+            )
+            for horizon in horizons
+        ])
+    if not np.array_equal(label_end, expected_end) or np.any(label_end >= eval_end_ns):
+        raise ValueError("event-context label endpoints are incomplete or escape the split")
+    if request_capability is not None:
+        endpoint_segments = request_segment_ids_v1(
+            request_capability,
+            root=ticker,
+            requested_use=requested_use,
+            timestamps_ns=label_end.reshape(-1),
+            contract_ids=np.repeat(contract, horizon_count),
+        ).reshape(rows, horizon_count)
+        if not np.array_equal(
+            endpoint_segments,
+            np.broadcast_to(request_segment[:, None], endpoint_segments.shape),
+        ):
+            raise ValueError("event-context label endpoints escape their planned request")
+    trend_class = array("trend_path_class", dtype=np.int8, shape=(rows, horizon_count))
+    if not np.isin(trend_class, (-1, 0, 1, 2)).all():
+        raise ValueError("event-context trend-path class contains invalid states")
+    path_shape = (rows, horizon_count, 2, target_count)
+    barrier_state = array("barrier_state", dtype=np.int8, shape=path_shape)
+    favorable_time = array("time_to_favorable_minutes", dtype=np.int32, shape=path_shape)
+    adverse_time = array("time_to_adverse_minutes", dtype=np.int32, shape=path_shape)
+    path_gross = array("policy_r_gross", dtype=np.float32, shape=path_shape)
+    if not np.isin(barrier_state, (0, 1, 2, 3)).all() or not np.isfinite(path_gross).all():
+        raise ValueError("event-context dense barrier labels are incomplete")
+    horizon_limit = horizons[None, :, None, None]
+    if np.any(favorable_time < -1) or np.any(adverse_time < -1):
+        raise ValueError("event-context barrier times use an invalid negative sentinel")
+    if np.any(favorable_time > horizon_limit) or np.any(adverse_time > horizon_limit):
+        raise ValueError("event-context barrier times exceed their horizon")
+    neither = barrier_state == BARRIER_NEITHER
+    favorable = barrier_state == BARRIER_FAVORABLE_FIRST
+    adverse = barrier_state == BARRIER_ADVERSE_FIRST
+    ambiguous = barrier_state == BARRIER_AMBIGUOUS
+    if (
+        np.any(neither & ((favorable_time != -1) | (adverse_time != -1)))
+        or np.any(favorable & ((favorable_time < 0) | ((adverse_time >= 0) & (favorable_time >= adverse_time))))
+        or np.any(adverse & ((adverse_time < 0) | ((favorable_time >= 0) & (adverse_time >= favorable_time))))
+        or np.any(ambiguous & ((favorable_time < 0) | (favorable_time != adverse_time)))
+    ):
+        raise ValueError("event-context barrier times disagree with first-touch states")
+
+    tags = array("tags", dtype=np.bool_, shape=(rows, len(TAG_NAMES)))
+    tag_direction = array("tag_direction", dtype=np.int8, shape=(rows, len(TAG_NAMES)))
+    tag_origin = array("tag_origin_source_idx", dtype=np.int64, shape=(rows, len(TAG_NAMES)))
+    tag_agreement = array("tag_htf_agreement", dtype=np.bool_, shape=(rows, len(TAG_NAMES)))
+    if not np.isin(tag_direction, (-1, 0, 1)).all():
+        raise ValueError("event-context tag directions contain invalid states")
+    if np.any(tag_direction[~tags] != 0) or np.any(tag_direction[tags] == 0):
+        raise ValueError("event-context tag presence and direction disagree")
+    if np.any(tag_origin[~tags] != -1) or np.any(tag_origin[tags] < 0):
+        raise ValueError("event-context tag origins are malformed")
+    if np.any(tag_origin[tags] > np.broadcast_to(decision_source[:, None], tags.shape)[tags]):
+        raise ValueError("event-context tag origin occurs after its decision")
+    expected_agreement = tags & (tag_direction == htf_direction[:, None]) & (htf_direction[:, None] != 0)
+    if not np.array_equal(tag_agreement, expected_agreement):
+        raise ValueError("event-context HTF agreement is not derivable from tag directions")
+
+    event_rows = int(np.any(tags, axis=1).sum())
+    if count(metadata["event_rows"], "metadata.event_rows") != event_rows:
+        raise ValueError("event-context event-row count mismatch")
+    tag_counts = metadata["tag_counts"]
+    expected_tag_counts = {name: int(tags[:, i].sum()) for i, name in enumerate(TAG_NAMES)}
+    if not isinstance(tag_counts, Mapping) or dict(tag_counts) != expected_tag_counts:
+        raise ValueError("event-context tag counts mismatch")
+
+    modes = array("policy_mode_names", kind="U", shape=(2,)).astype(str)
+    if tuple(modes.tolist()) != ("atr_stop", "structural_stop"):
+        raise ValueError("event-context policy-mode order is not canonical")
+    policy_rows = array("policy_event_context_row", dtype=np.int64)
+    event_count = len(policy_rows)
+    if policy_rows.shape != (event_count,):
+        raise ValueError("event-context policy row vector is malformed")
+    policy_tag = array("policy_event_tag_index", dtype=np.int8, shape=(event_count,))
+    policy_direction = array("policy_event_direction", dtype=np.int8, shape=(event_count,))
+    if (
+        np.any(policy_rows < 0) or np.any(policy_rows >= rows)
+        or np.any(policy_tag < 0) or np.any(policy_tag >= len(TAG_NAMES))
+        or not np.isin(policy_direction, (-1, 1)).all()
+    ):
+        raise ValueError("event-context policy-event identity is invalid")
+    if event_count:
+        keys = np.column_stack((policy_rows, policy_tag))
+        if len(np.unique(keys, axis=0)) != event_count:
+            raise ValueError("event-context policy events are duplicated")
+        policy_names = tag_names[policy_tag.astype(np.int64)]
+        if any(name not in POLICY_TAG_NAMES for name in policy_names):
+            raise ValueError("event-context policy event references a non-policy tag")
+        if not tags[policy_rows, policy_tag].all():
+            raise ValueError("event-context policy event references an absent tag")
+        if not np.array_equal(policy_direction, tag_direction[policy_rows, policy_tag]):
+            raise ValueError("event-context policy-event direction disagrees with its tag")
+    if count(metadata["policy_events"], "metadata.policy_events") != event_count:
+        raise ValueError("event-context policy-event count mismatch")
+
+    policy_valid = array("policy_valid", dtype=np.bool_, shape=(event_count, 2))
+    risk_price = array("policy_risk_price", dtype=np.float32, shape=(event_count, 2))
+    risk_ticks = array("policy_risk_ticks", dtype=np.float32, shape=(event_count, 2))
+    policy_shape = (event_count, 2, horizon_count, target_count)
+    policy_state = array("policy_barrier_state", dtype=np.int8, shape=policy_shape)
+    policy_gross = array("policy_gross_r", dtype=np.float32, shape=policy_shape)
+    policy_reached = array("policy_reached", dtype=np.bool_, shape=policy_shape)
+    policy_exit = array("policy_exit_time_ns", dtype=np.int64, shape=policy_shape)
+
+    economics_manifest = metadata["execution_economics"]
+    if not isinstance(economics_manifest, Mapping):
+        raise ValueError("event-context execution economics must be a mapping")
+    try:
+        reopened_economics = load_execution_economics(
+            str(economics_manifest["schedule_path"]),
+            evaluation_start=str(economics_manifest["evaluation_start_utc"]),
+            evaluation_end=str(economics_manifest["evaluation_end_exclusive_utc"]),
+            required_roots=(ticker,),
+        )
+    except (KeyError, TypeError, ValueError, FileNotFoundError) as exc:
+        raise ValueError("event-context execution economics cannot be reverified") from exc
+    if reopened_economics.manifest() != dict(economics_manifest):
+        raise ValueError("event-context execution economics differs from canonical re-verification")
+    tick_size = reopened_economics.instrument(ticker).tick_size
+    if (
+        np.any(~np.isfinite(risk_price[policy_valid]))
+        or np.any(risk_price[policy_valid] <= 0)
+        or np.any(~np.isfinite(risk_ticks[policy_valid]))
+        or np.any(risk_ticks[policy_valid] <= 0)
+        or np.any(~np.isnan(risk_price[~policy_valid]))
+        or np.any(~np.isnan(risk_ticks[~policy_valid]))
+    ):
+        raise ValueError("event-context policy risk validity mask is inconsistent")
+    try:
+        np.testing.assert_allclose(
+            risk_ticks[policy_valid], risk_price[policy_valid] / tick_size,
+            rtol=1e-6, atol=1e-6,
+            err_msg="event-context policy risk/tick geometry differs",
+        )
+    except AssertionError as exc:
+        raise ValueError("event-context policy risk/tick geometry differs") from exc
+    valid_policy = np.broadcast_to(policy_valid[:, :, None, None], policy_shape)
+    if (
+        not np.isin(policy_state[valid_policy], (0, 1, 2, 3)).all()
+        or np.any(~np.isfinite(policy_gross[valid_policy]))
+        or np.any(policy_exit[valid_policy] < 0)
+        or np.any(policy_state[~valid_policy] != -1)
+        or np.any(~np.isnan(policy_gross[~valid_policy]))
+        or np.any(policy_reached[~valid_policy])
+        or np.any(policy_exit[~valid_policy] != -1)
+    ):
+        raise ValueError("event-context policy outcome mask is inconsistent")
+    if np.any(policy_reached != (policy_state == BARRIER_FAVORABLE_FIRST)):
+        raise ValueError("event-context policy reached flags disagree with barrier states")
+    if event_count:
+        decision_for_event = decision_time[policy_rows][:, None, None, None]
+        end_for_event = label_end[policy_rows][:, None, :, None]
+        if np.any(policy_exit[valid_policy] <= np.broadcast_to(decision_for_event, policy_shape)[valid_policy]):
+            raise ValueError("event-context policy exit is not after the decision")
+        if np.any(policy_exit[valid_policy] > np.broadcast_to(end_for_event, policy_shape)[valid_policy]):
+            raise ValueError("event-context policy exit exceeds its label endpoint")
+
+    detectors = metadata["detectors"]
+    if not isinstance(detectors, Mapping) or set(detectors) != {
+        "atr_zigzag", "fractal", "supertrend", "fractal_zigzag",
+        "pullback_continuation", "compression_breakout",
+    }:
+        raise ValueError("event-context detector provenance is incomplete")
 
 
 def context_shard_fingerprint(arrays: dict[str, np.ndarray], metadata: dict[str, object]) -> str:
@@ -868,6 +1403,7 @@ def save_context_shard(
     *,
     source: dict[str, object] | None = None,
 ) -> dict[str, object]:
+    validate_context_shard(arrays, metadata)
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     fingerprint = context_shard_fingerprint(arrays, metadata)
@@ -904,6 +1440,10 @@ def load_context_shard(
         arrays = {key: saved[key] for key in saved.files}
     if context_shard_fingerprint(arrays, manifest["metadata"]) != manifest["content_fingerprint"]:
         raise ValueError("event-context content fingerprint mismatch")
+    if manifest["schema_version"] == SCHEMA_VERSION:
+        validate_context_shard(arrays, manifest["metadata"])
+    for value in arrays.values():
+        value.setflags(write=False)
     return arrays, manifest
 
 
@@ -912,6 +1452,6 @@ __all__ = [
     "BASELINE_LOOKBACKS",
     "EventContextConfig",
     "causal_baseline_features", "detect_context_tags", "materialize_context_stream",
-    "event_policy_labels", "context_shard_fingerprint", "save_context_shard",
-    "load_context_shard",
+    "event_policy_labels", "validate_context_shard", "context_shard_fingerprint",
+    "save_context_shard", "load_context_shard",
 ]

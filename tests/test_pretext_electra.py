@@ -12,6 +12,7 @@ import os
 import numpy as np
 import pytest
 
+from futures_foundation.finetune.native_contracts import NativeContractError
 from futures_foundation.finetune.pretext import PRETEXTS, get_pretext
 from futures_foundation.finetune.pretext.electra import TurnElectraTask, clamp_valid_ohlc
 from futures_foundation.finetune.pretext.spans import local_turns, sample_turn_span_mask
@@ -244,16 +245,8 @@ def test_std_guard_halts_and_keeps_pre_breach_best():
     tr = va = np.arange(4, dtype=np.int64)
     t = _Drifty(big, tr, va, epochs=10, steps_per_epoch=1, batch=2, patience=8,
                 device='cpu', verbose=False, std_guard=1.6)
-    state, hist = t.fit()
-    assert len(hist) == 4                                  # halted AT the breach epoch (std 1.9 > 1.6)
-    assert hist[-1]['std'] > 1.6                           # the breach is recorded in history...
-    assert state is not None                               # ...but the kept best predates it
-    # the guard fired BEFORE the improved-save: best_state was snapshotted at epoch 2 (std 1.6, ok),
-    # never at epoch 3 — verified by the fit loop's order (guard check precedes the save).
-    t2 = _Drifty(big, tr, va, epochs=10, steps_per_epoch=1, batch=2, patience=8,
-                 device='cpu', verbose=False, std_guard=0)   # guard OFF -> runs all 10
-    _, hist2 = t2.fit()
-    assert len(hist2) == 10
+    with pytest.raises(NativeContractError, match='training admission is disabled'):
+        t.fit()
 
 
 @torch_test

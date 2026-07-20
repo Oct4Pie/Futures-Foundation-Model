@@ -10,6 +10,7 @@ import pandas as pd
 import pytest
 
 from futures_foundation.finetune import ssl, ssl_data, ssl_probe
+from futures_foundation.finetune.native_contracts import NativeContractError
 from futures_foundation.finetune.pretext.nextleg import NextLegTask
 
 torch_test = pytest.mark.skipif(
@@ -672,6 +673,8 @@ def test_ssl_clean_embedding_matches_legacy_and_bundle_deployment(tmp_path, seq,
         preprocess_windows, make_deployment_bundle)
     rng = np.random.default_rng(seq)
     windows = rng.standard_normal((3, 5, seq)).astype(np.float32)
+    if preprocessing == 'per_window_log_price_rel_volume_zscore_v1':
+        windows[:, :4] = 100.0 + np.abs(windows[:, :4])
     net = S.MaskNetwork(C=5, new_channels=8, seq=seq).eval()
     with torch.no_grad():
         training_clean = net.embed(preprocess_windows(
@@ -790,7 +793,6 @@ def test_deployment_loader_rejects_full_training_state(tmp_path):
 def test_mask_network_and_trainer(tmp_path):
     import torch
     from futures_foundation.finetune import _ssl_torch as S
-    from futures_foundation.finetune.classifiers.mantis._torch import build_model
     net = S.MaskNetwork(C=5, new_channels=4, seq=64)
     x = torch.randn(8, 5, 64)
     assert net(x).shape == (8, 5, 64)                               # reconstruct full window
@@ -798,18 +800,10 @@ def test_mask_network_and_trainer(tmp_path):
     rng = np.random.default_rng(0)
     big = rng.standard_normal((2000, 5)).astype(np.float32)
     starts = np.arange(0, 1900, 4)
-    state, hist = S.train_ssl_mask(big, starts, starts[-50:], seq=32, new_channels=4,
-                                   mask_ratio=0.4, epochs=2, steps_per_epoch=3, batch=16,
-                                   device='cpu', control='real', verbose=False)
-    assert len(hist) >= 1 and np.isfinite(hist[-1]['val_loss']) and 'std' in hist[-1]
-    anchored_state, anchored_hist = S.train_ssl_mask(
-        big, starts, starts[-50:], seq=32, new_channels=4, mask_ratio=0.4,
-        feature_anchor_weight=0.05, epochs=1, steps_per_epoch=1, batch=8,
-        device='cpu', control='real', verbose=False)
-    assert anchored_state and np.isfinite(anchored_hist[-1]['val_loss'])
-    ckpt = str(tmp_path / 'enc.pt'); torch.save(state, ckpt)        # encoder ckpt round-trips
-    _, new_c = build_model(5, new_channels=4, device='cpu', backbone_ckpt=ckpt)
-    assert new_c == 4
+    with pytest.raises(NativeContractError, match='training admission is disabled'):
+        S.train_ssl_mask(big, starts, starts[-50:], seq=32, new_channels=4,
+                         mask_ratio=0.4, epochs=2, steps_per_epoch=3, batch=16,
+                         device='cpu', control='real', verbose=False)
 
 
 @torch_test
@@ -924,25 +918,16 @@ def test_train_multihorizon_runs_variable_context_and_warmstart(tmp_path):
     saves an encoder ckpt that loads downstream, and accepts a warm-start ckpt (from stage-1)."""
     import torch
     from futures_foundation.finetune import _ssl_torch as S
-    from futures_foundation.finetune.classifiers.mantis._torch import build_model
     rng = np.random.default_rng(0)
     big = (100 + np.cumsum(rng.standard_normal((3000, 5)) * 0.1, 0)).astype(np.float32)
     big[:, 4] = np.abs(big[:, 4]) * 100 + 500                       # positive-ish volume
     hz, cl = (5, 10, 20), (32, 48)                                  # parent = 48 + 20 = 68
     starts = np.arange(0, 3000 - 68 - 1, 4)
-    state, hist = S.train_ssl_forecast(big, starts, starts[-50:], horizons=hz, context_lengths=cl,
-                                       new_channels=4, epochs=2, steps_per_epoch=3,
-                                       batch=16, device='cpu', control='real', verbose=False)
-    assert len(hist) >= 1 and np.isfinite(hist[-1]['val_loss']) and hist[-1]['std'] > 0
-    assert 'persist_loss' in hist[-1] and hist[-1]['persist_loss'] > 0    # anti-shortcut baseline
-    assert 'skill' in hist[-1] and np.isfinite(hist[-1]['skill'])
-    ckpt = str(tmp_path / 'enc1.pt'); torch.save(state, ckpt)
-    _, new_c = build_model(5, new_channels=4, device='cpu', backbone_ckpt=ckpt)
-    assert new_c == 4
-    state2, hist2 = S.train_ssl_forecast(big, starts, starts[-50:], horizons=hz, context_lengths=cl,
-                                         new_channels=4, epochs=1, steps_per_epoch=2, batch=16,
-                                         device='cpu', control='real', backbone_ckpt=ckpt, verbose=False)
-    assert set(state2.keys()) == set(state.keys()) and np.isfinite(hist2[-1]['val_loss'])
+    with pytest.raises(NativeContractError, match='training admission is disabled'):
+        S.train_ssl_forecast(big, starts, starts[-50:], horizons=hz,
+                             context_lengths=cl, new_channels=4, epochs=2,
+                             steps_per_epoch=3, batch=16, device='cpu',
+                             control='real', verbose=False)
 
 
 @torch_test
@@ -1125,13 +1110,12 @@ def test_forecast_dist_trainer_smoke():
     rng = np.random.default_rng(0)
     big = (100 + np.cumsum(rng.standard_normal((3000, 5)) * 0.1, 0)).astype(np.float32)
     starts = np.arange(0, 3000 - (48 + 8) - 1, 4)
-    state, hist = S.train_ssl_forecast_dist(big, starts, starts[-50:], horizons=(4, 8),
-                                            context_lengths=(32, 48), new_channels=4,
-                                            objective='candle_quantile', epochs=2,
-                                            steps_per_epoch=3, batch=16, device='cpu',
-                                            control='real', verbose=False)
-    assert len(hist) >= 1 and np.isfinite(hist[-1]['val_loss'])
-    assert 'skill' in hist[-1] and 'dir_acc' in hist[-1] and hist[-1]['std'] > 0
+    with pytest.raises(NativeContractError, match='training admission is disabled'):
+        S.train_ssl_forecast_dist(big, starts, starts[-50:], horizons=(4, 8),
+                                  context_lengths=(32, 48), new_channels=4,
+                                  objective='candle_quantile', epochs=2,
+                                  steps_per_epoch=3, batch=16, device='cpu',
+                                  control='real', verbose=False)
 
 
 # --------------------------- stage-3 temporal-neighborhood contrastive (torch, gated)
@@ -1313,7 +1297,6 @@ def test_contrastive_net_shape_and_trainer_smoke(tmp_path):
     accepts a warm-start ckpt; regime_gate evaluates the metrics dict."""
     import torch
     from futures_foundation.finetune import _ssl_torch as S
-    from futures_foundation.finetune.classifiers.mantis._torch import build_model
     net = S.ContrastiveTrendNet(C=5, new_channels=4, proj_dim=64).to('cpu')
     z = net(torch.randn(6, 5, 64))
     assert z.shape == (6, 64) and torch.allclose(z.norm(dim=1), torch.ones(6), atol=1e-4)
@@ -1321,26 +1304,12 @@ def test_contrastive_net_shape_and_trainer_smoke(tmp_path):
     big = (100 + np.cumsum(rng.standard_normal((3000, 5)) * 0.1, 0)).astype(np.float32)
     big[:, 4] = np.abs(big[:, 4]) * 100 + 500                      # positive-ish volume
     starts = np.arange(0, 3000 - 64 - 32 - 1, 2)                   # reserve = max delta (32)
-    state, hist = S.train_ssl_contrastive(big, starts, starts[-120:], seq=64,
-                                          pos_deltas=(2, 8, 32), far_min=128, metrics_n=48,
-                                          new_channels=4, proj_dim=64, epochs=1,
-                                          steps_per_epoch=2, batch=8, device='cpu',
-                                          control='real', verbose=False)
-    assert len(hist) >= 1 and np.isfinite(hist[-1]['val_loss']) and hist[-1]['std'] > 0
-    for k in ('smooth', 'sil', 'scale_span', 'scale_mono', 'vol_ratio', 'drift'):
-        assert k in hist[-1]                                       # the spec's A-E metrics
-    ok, checks = S.regime_gate(hist[-1])
-    assert set(checks) == {'A_temporal_consistency', 'B_emergent_structure', 'C_multi_scale',
-                           'D_noise_robustness', 'E_temporal_stability'}
-    ckpt = str(tmp_path / 'enc.pt'); torch.save(state, ckpt)
-    _, new_c = build_model(5, new_channels=4, device='cpu', backbone_ckpt=ckpt)
-    assert new_c == 4                                              # encoder ckpt loads downstream
-    state2, _ = S.train_ssl_contrastive(big, starts, starts[-120:], seq=64,
-                                        pos_deltas=(2, 8, 32), far_min=128, metrics_n=48,
-                                        new_channels=4, proj_dim=64, epochs=1, steps_per_epoch=1,
-                                        batch=8, device='cpu', control='real',
-                                        backbone_ckpt=ckpt, verbose=False)
-    assert set(state2.keys()) == set(state.keys())                # warm-start same encoder keys
+    with pytest.raises(NativeContractError, match='training admission is disabled'):
+        S.train_ssl_contrastive(big, starts, starts[-120:], seq=64,
+                                pos_deltas=(2, 8, 32), far_min=128, metrics_n=48,
+                                new_channels=4, proj_dim=64, epochs=1,
+                                steps_per_epoch=2, batch=8, device='cpu',
+                                control='real', verbose=False)
 
 
 # --------------------------------------------- save/resume + anti-forgetting freeze (all pretexts)
@@ -1378,26 +1347,12 @@ def test_contrastive_save_resume_and_control_guard(tmp_path):
     train_starts = np.arange(0, 2200, 4)
     val_starts = np.arange(2400, 3000 - (64 + 64) + 1, 4)
     ck = str(tmp_path / 'enc.pt')
-    st, _ = S.train_ssl_contrastive(big, train_starts, val_starts,
-                                    new_channels=4, proj_dim=32, epochs=2, steps_per_epoch=3,
-                                    batch=16, device='cpu', control='real', ckpt_path=ck, verbose=False)
-    assert os.path.exists(ck) and os.path.exists(ck + '.meta.json')
-    assert os.path.exists(ck + '.train.pt')                             # full exact-resume state
-    st2, _ = S.train_ssl_contrastive(big, train_starts, val_starts,
-                                     new_channels=4, proj_dim=32, epochs=2, steps_per_epoch=3,
-                                     batch=16, device='cpu', control='real', ckpt_path=ck,
-                                     resume=True, verbose=False)
-    assert all(torch.equal(st2[k], st[k]) for k in st)                  # exact completed restore
-    with pytest.raises(ValueError, match='resume configuration differs'):
-        S.train_ssl_contrastive(
-            big, train_starts, val_starts, new_channels=4, proj_dim=32, epochs=2,
-            steps_per_epoch=3, batch=16, device='cpu', control='real', ckpt_path=ck,
-            resume=True, contrastive_objective='bar_offset_v1', verbose=False)
-    before = os.path.getmtime(ck)                                       # controls must NOT touch ckpt
-    S.train_ssl_contrastive(big, train_starts, val_starts,
-                            new_channels=4, proj_dim=32, epochs=1, steps_per_epoch=2, batch=16,
-                            device='cpu', control='shuffle', ckpt_path=ck, verbose=False)
-    assert os.path.getmtime(ck) == before                              # shuffle control didn't save
+    with pytest.raises(NativeContractError, match='training admission is disabled'):
+        S.train_ssl_contrastive(big, train_starts, val_starts,
+                                new_channels=4, proj_dim=32, epochs=2, steps_per_epoch=3,
+                                batch=16, device='cpu', control='real', ckpt_path=ck,
+                                verbose=False)
+    assert not os.path.exists(ck)
 
 
 @torch_test
@@ -1440,19 +1395,10 @@ def test_exact_resume_matches_uninterrupted_trajectory(tmp_path):
                   device='cpu', seed=17, verbose=False)
     full_path = str(tmp_path / 'full.pt')
     resumed_path = str(tmp_path / 'resumed.pt')
-    full_best, full_hist = Trainer(big, starts[:96], starts[96:], ckpt_path=full_path,
-                                   **common).fit()
-    Trainer(big, starts[:96], starts[96:], ckpt_path=resumed_path,
-            stop_after_epoch=1, **common).fit()
-    resumed_best, resumed_hist = Trainer(big, starts[:96], starts[96:], ckpt_path=resumed_path,
-                                         resume=True, **common).fit()
-    full_state = torch.load(full_path + '.train.pt', weights_only=False)
-    resumed_state = torch.load(resumed_path + '.train.pt', weights_only=False)
-    assert full_hist == resumed_hist
-    assert all(torch.equal(full_best[k], resumed_best[k]) for k in full_best)
-    assert all(torch.equal(full_state['model_state'][k], resumed_state['model_state'][k])
-               for k in full_state['model_state'])
-    assert full_state['scheduler_state'] == resumed_state['scheduler_state']
+    with pytest.raises(NativeContractError, match='training admission is disabled'):
+        Trainer(big, starts[:96], starts[96:], ckpt_path=full_path, **common).fit()
+    assert not os.path.exists(full_path)
+    assert not os.path.exists(resumed_path)
 
 
 # ---------------------------------------------- stage-2 forecast: optional DIRECTION-head squeeze
@@ -1481,8 +1427,8 @@ def test_forecast_direction_head_optional_and_backcompat():
     big = (100 + np.cumsum(rng.standard_normal((3000, 5)) * 0.1, 0)).astype(np.float32)
     big[:, 4] = np.abs(big[:, 4]) * 100 + 500
     hz, cl = (5, 10, 20), (32, 48); starts = np.arange(0, 3000 - 68 - 1, 4)
-    _, hist = S.train_ssl_forecast(big, starts, starts[-50:], horizons=hz, context_lengths=cl,
-                                   new_channels=4, epochs=2, steps_per_epoch=3, batch=16, device='cpu',
-                                   control='real', objective='candle_direction', dir_weight=0.5, verbose=False)
-    assert 'dir_acc' in hist[-1] and 0.0 <= hist[-1]['dir_acc'] <= 1.0
-    assert np.isfinite(hist[-1]['val_loss']) and 'skill' in hist[-1]    # candle metrics still there
+    with pytest.raises(NativeContractError, match='training admission is disabled'):
+        S.train_ssl_forecast(big, starts, starts[-50:], horizons=hz, context_lengths=cl,
+                             new_channels=4, epochs=2, steps_per_epoch=3, batch=16,
+                             device='cpu', control='real', objective='candle_direction',
+                             dir_weight=0.5, verbose=False)

@@ -369,7 +369,13 @@ def export_encoder_onnx(path, *, ckpt=None, C=5, seq=64,
                                 expected_channels=int(C))
     enc = enc.to(device).eval()
     m = _EncoderONNX(enc, C, preprocessing=preprocessing).to(device).eval()
-    dummy = torch.randn(2, int(C), int(seq), device=device)   # >1 row so std is well-defined
+    # Trace with values inside the declared preprocessing domain.  Log-price preprocessing
+    # intentionally rejects nonpositive OHLC, so a standard-normal dummy made export outcome
+    # depend on random signs rather than the model contract.
+    if preprocessing == LOG_PRICE_PREPROCESSING_CONTRACT:
+        dummy = 100.0 + torch.rand(2, int(C), int(seq), device=device)
+    else:
+        dummy = torch.randn(2, int(C), int(seq), device=device)
     # Mantis calls torch.diff internally (aten::diff has no ONNX symbolic) -> swap for an
     # equivalent slice-subtract during export so the traced graph is exportable. Restored after.
     _orig_diff = torch.diff

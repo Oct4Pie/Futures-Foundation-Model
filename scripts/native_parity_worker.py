@@ -933,15 +933,34 @@ def _run_chronos(
     }
 
 
-def _future_timestamps(timestamps: np.ndarray) -> list[Any]:
+KRONOS_VENUE_TIMEZONE = "America/Chicago"
+
+
+def _kronos_timestamp_series(values: np.ndarray) -> Any:
+    """Convert canonical UTC nanoseconds to the CME venue-local calendar surface.
+
+    Kronos extracts minute/hour/weekday/day/month directly from the supplied timestamps.
+    Passing UTC and venue-local timestamps therefore produces different model inputs.  The
+    futures contract uses CME-local calendar features while retaining UTC nanoseconds as the
+    source-of-truth timeline.
+    """
     import pandas as pd
+
+    return pd.Series(
+        pd.to_datetime(np.asarray(values, np.int64), utc=True).tz_convert(
+            KRONOS_VENUE_TIMEZONE
+        )
+    )
+
+
+def _future_timestamps(timestamps: np.ndarray) -> list[Any]:
     output = []
     for row in timestamps:
         step = int(row[-1] - row[-2])
         future = row[-1] + step * np.arange(1, HORIZON + 1, dtype=np.int64)
         # The pinned public Kronos helper documents DatetimeIndex support but calls
         # ``.dt`` internally; a Series is therefore the executable upstream contract.
-        output.append(pd.Series(pd.to_datetime(future, utc=True)))
+        output.append(_kronos_timestamp_series(future))
     return output
 
 
@@ -951,7 +970,7 @@ def _kronos_inputs(values: np.ndarray, timestamps: np.ndarray) -> tuple[list[Any
         pd.DataFrame(row, columns=["open", "high", "low", "close", "volume"])
         for row in values
     ]
-    context_times = [pd.Series(pd.to_datetime(row, utc=True)) for row in timestamps]
+    context_times = [_kronos_timestamp_series(row) for row in timestamps]
     return frames, context_times, _future_timestamps(timestamps)
 
 
@@ -1036,7 +1055,8 @@ def _run_kronos(
                 "top_p": 1.0, "sample_count": 1,
             }],
             "timeframes_minutes": list(TIMEFRAMES_MINUTES),
-            "timestamp_timezone": "UTC",
+            "source_timestamp_timezone": "UTC",
+            "calendar_feature_timezone": KRONOS_VENUE_TIMEZONE,
         },
         "metrics": {"output_shapes": output_shapes, "finite": True, "amount_fallback": "volume_times_mean_ohlc"},
         "channel": _invariant(
@@ -1046,7 +1066,7 @@ def _run_kronos(
         "padding": None,
         "frequency": _invariant(
             set(output_shapes) == {f"{value}min" for value in TIMEFRAMES_MINUTES},
-            "UTC calendar inputs exercised 1/3/5/15/30/60-minute deltas",
+            "CME venue-local calendar features exercised 1/3/5/15/30/60-minute UTC deltas",
         ),
         "scaling": _affine_evidence(
             scaled_output, expected_scaled, label="Kronos native normalize/inverse"

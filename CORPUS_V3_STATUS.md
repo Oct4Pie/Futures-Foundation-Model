@@ -74,6 +74,64 @@ selection_status: blocked_pending_sessionized_liquidity_matrix_and_scale_admissi
 
 Its five diagnostic flags are report-only. They do not admit or reject MCL, MET, MHG, MNG or ZT.
 
+## Sessionized audit consumer checkpoint
+
+FFM now has an independent sessionized coverage/yield consumer at
+[`futures_foundation/corpus_v3_session_audit.py`](futures_foundation/corpus_v3_session_audit.py)
+and a bound CLI at
+[`scripts/audit_corpus_v3_sessionized_coverage.py`](scripts/audit_corpus_v3_sessionized_coverage.py).
+It does not trust UTC coverage buckets or scan for exports. Expected open sessions come only from a
+reverified session-denominator-bundle capability; observed activity comes only from contract-day
+capabilities that are independently reverified against raw leaves again at audit use.
+
+The consumer:
+
+- reopens the exact canonical export index and rejects duplicate, reordered or substituted entries;
+- rejects observed rows outside exact denominator segments, including declared market breaks;
+- preserves missing open sessions as explicit denominator rows;
+- records session coverage, contract-day counts, trade/quote rows, negative/zero prices, volume,
+  source-file counts and median/p10 top-contract activity without reading labels or outcomes;
+- always emits `selected_roots=[]`, `materialization_admitted=false` and
+  `training_admitted=false`.
+
+The checked-in current authority is
+[`config/corpus_v3/sessionized_export_index_v1.json`](config/corpus_v3/sessionized_export_index_v1.json).
+It has zero entries and therefore states—rather than infers—that no scale exports are admitted.
+Physical SHA-256:
+`07d95cc48ead4d8a6f45b9f7824ea2ca386fb7bdabbb729c30da7214129e461d`; semantic SHA-256:
+`a4b8181fe0a54db5d99000b535f8f9ef2ebfea4cf1d0a97c2885f4078ee72d72`.
+The joined authority, request-binding, SSL and event-materialization compatibility suite now
+passes `190` tests.
+
+FFM also independently consumes and joins the upstream scale authorities before any expected
+request can exist:
+
+- `corpus_v3_producer_governance.py` reopens detached producer governance and the exact frozen
+  exchange-session-day split/use protocol by expected physical hashes;
+- `corpus_v3_provider_candidates.py` verifies one metadata-only HTTPS pagination proof and joins its
+  scope claims to those producer/split semantic identities without opening the market namespace;
+- `corpus_v3_contract_lifecycle.py` requires a normalized provider-universe artifact to reproduce
+  that pagination capability and derives admit/quarantine only from claim-scoped official evidence;
+- `corpus_v3_expected_requests.py` intersects admitted lifecycle intervals with exact official
+  session segments and preserves quarantined candidates and zero intersections explicitly;
+- `corpus_v3_materialization_plan.py` requires one canonical inventory-observation row per expected
+  request, validates source path/hash metadata and interval coverage, then selects only
+  `available_exact` requests into a plan that remains non-executable;
+- `corpus_v3_request_authority.py` reopens the expected/inventory/plan chain and exposes only exact
+  planned `(root, contract, use, interval)` membership. SSL train/validation windows and event
+  context/label paths reject missing or crossed request segments, and event shard v6 binds and
+  reverifies the request manifest plus per-row request ID.
+
+The production-facing commands are
+`build_corpus_v3_expected_requests.py` and `build_corpus_v3_materialization_plan.py`. They do not
+remove any gate: all producer/provider/lifecycle fixture evidence remains synthetic, source bytes
+are not reopened by the plan verifier, and materialization/training admission stays false.
+
+This completes the FFM consumer and planning mechanisms, not the production audit. Completion still
+requires the real 43-root producer governance, provider evidence, lifecycle registry, official
+session denominator, inventory observations, immutable-storage/approval authority and a nonempty
+verified export index.
+
 After the streaming export exists, the root universe will have two frozen tiers:
 
 - `core_comparable`: identical sessionized rows used for cross-family ranking and validation.

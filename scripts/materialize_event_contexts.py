@@ -13,6 +13,9 @@ import time
 import numpy as np
 import pandas as pd
 
+from futures_foundation.corpus_v3_request_authority import (
+    load_and_verify_request_authority_v1,
+)
 from futures_foundation.execution_economics import load_execution_economics
 from futures_foundation.finetune.event_contexts import (
     COLLECTION_SCHEMA_VERSION,
@@ -24,6 +27,7 @@ from futures_foundation.finetune.tournament_data import (
     load_cache_entry,
     load_cache_manifest,
 )
+from futures_foundation.session_gap import load_session_gap_capability_set
 
 
 def _sha256(path: Path) -> str:
@@ -72,10 +76,56 @@ def run(args) -> dict:
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     cache_manifest_path = cache_dir / CACHE_MANIFEST
-    cache_manifest = load_cache_manifest(cache_dir)
+    cache_manifest = load_cache_manifest(
+        cache_dir, expected_manifest_sha256=args.cache_manifest_sha256,
+    )
 
     tickers = tuple(value.strip().upper() for value in args.tickers.split(",") if value.strip())
     timeframes = tuple(value.strip() for value in args.timeframes.split(",") if value.strip())
+    if bool(args.session_gap_capability_set) != bool(args.session_gap_capability_set_sha256):
+        raise ValueError(
+            "session-gap capability set path and SHA-256 must be supplied together"
+        )
+    session_capabilities = (
+        load_session_gap_capability_set(
+            args.session_gap_capability_set,
+            expected_sha256=args.session_gap_capability_set_sha256,
+        )
+        if args.session_gap_capability_set else {}
+    )
+    request_values = (
+        args.request_expected,
+        args.request_expected_sha256,
+        args.request_inventory,
+        args.request_inventory_sha256,
+        args.request_plan,
+        args.request_plan_sha256,
+    )
+    if any(request_values) and not all(request_values):
+        raise ValueError(
+            "request expected/inventory/plan paths and SHA-256 values must all be supplied"
+        )
+    request_authority = (
+        load_and_verify_request_authority_v1(
+            expected_path=args.request_expected,
+            expected_physical_sha256=args.request_expected_sha256,
+            inventory_path=args.request_inventory,
+            inventory_physical_sha256=args.request_inventory_sha256,
+            plan_path=args.request_plan,
+            plan_physical_sha256=args.request_plan_sha256,
+        )
+        if all(request_values) else None
+    )
+    request_manifest = None if request_authority is None else request_authority.manifest()
+    requested_streams = {
+        f"{ticker}@{timeframe}" for ticker in tickers for timeframe in timeframes
+    }
+    if session_capabilities and set(session_capabilities) != requested_streams:
+        raise ValueError(
+            "session-gap capability set must exactly cover requested streams: "
+            f"missing={sorted(requested_streams - set(session_capabilities))}, "
+            f"unknown={sorted(set(session_capabilities) - requested_streams)}"
+        )
     path_config = PathLabelConfig(
         horizons_minutes=tuple(int(value) for value in args.horizons.split(",")),
         targets_r=tuple(float(value) for value in args.targets.split(",")),
@@ -109,10 +159,24 @@ def run(args) -> dict:
             if entry is None:
                 raise KeyError(f"source cache is missing {sid}")
             output = output_dir / f"{ticker}_{timeframe}.npz"
+            capability = session_capabilities.get(sid)
             if output.exists() and not args.overwrite:
                 _, existing = load_context_shard(output)
                 if existing["metadata"].get("config") != config_json:
                     raise ValueError(f"existing shard config differs for {sid}; use --overwrite")
+                expected_session = None if capability is None else capability.manifest()
+                if existing["metadata"].get("session_gap_capability") != expected_session:
+                    raise ValueError(
+                        f"existing shard session authority differs for {sid}; use --overwrite"
+                    )
+                if (
+                    existing["metadata"].get("request_authority") != request_manifest
+                    or existing["metadata"].get("requested_use")
+                    != (None if request_authority is None else args.requested_use)
+                ):
+                    raise ValueError(
+                        f"existing shard request authority differs for {sid}; use --overwrite"
+                    )
                 _, current_source = load_cache_entry(
                     cache_dir, cache_manifest, ticker, timeframe,
                 )
@@ -128,12 +192,25 @@ def run(args) -> dict:
             arrays, metadata = materialize_context_stream(
                 frame, ticker=ticker, timeframe=timeframe, config=config,
                 execution_economics=economics,
+                session_gap_capability=capability,
+                request_authority=request_authority,
+                requested_use=args.requested_use,
             )
             source = {
                 "cache_manifest": str(cache_manifest_path),
                 "cache_manifest_sha256": _sha256(cache_manifest_path),
                 "stream": sid, "files": source_files,
                 "loaded_start": load_start.isoformat(), "loaded_end": eval_end.isoformat(),
+                "session_gap_capability_set": (
+                    None if not args.session_gap_capability_set else {
+                        "path": str(Path(args.session_gap_capability_set).resolve()),
+                        "sha256": args.session_gap_capability_set_sha256,
+                    }
+                ),
+                "request_authority": request_manifest,
+                "requested_use": (
+                    None if request_authority is None else args.requested_use
+                ),
             }
             manifest = save_context_shard(output, arrays, metadata, source=source)
             manifest["elapsed_seconds"] = time.perf_counter() - started
@@ -150,6 +227,14 @@ def run(args) -> dict:
         "config": config_json,
         "cache_manifest": str(cache_manifest_path),
         "cache_manifest_sha256": _sha256(cache_manifest_path),
+        "session_gap_capability_set": (
+            None if not args.session_gap_capability_set else {
+                "path": str(Path(args.session_gap_capability_set).resolve()),
+                "sha256": args.session_gap_capability_set_sha256,
+            }
+        ),
+        "request_authority": request_manifest,
+        "requested_use": None if request_authority is None else args.requested_use,
         "shards": {
             sid: {
                 "path": manifest["artifact"]["path"],
@@ -178,6 +263,16 @@ def run(args) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cache-dir", default="output/foundation_tournament/data_cache")
+    parser.add_argument("--cache-manifest-sha256", required=True)
+    parser.add_argument("--session-gap-capability-set")
+    parser.add_argument("--session-gap-capability-set-sha256")
+    parser.add_argument("--request-expected")
+    parser.add_argument("--request-expected-sha256")
+    parser.add_argument("--request-inventory")
+    parser.add_argument("--request-inventory-sha256")
+    parser.add_argument("--request-plan")
+    parser.add_argument("--request-plan-sha256")
+    parser.add_argument("--requested-use", default="validation")
     parser.add_argument("--output-dir", default="output/foundation_tournament/event_contexts_v1")
     parser.add_argument("--tickers", default="ES")
     parser.add_argument("--timeframes", default="5min")

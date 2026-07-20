@@ -6,8 +6,25 @@ import json
 from pathlib import Path
 from zoneinfo import TZPATH, ZoneInfo
 
+import numpy as np
+import pandas as pd
 import pytest
 
+from futures_foundation.execution_economics import load_execution_economics
+from futures_foundation.finetune import ssl_data
+from futures_foundation.finetune.event_contexts import (
+    EventContextConfig,
+    load_context_shard,
+    materialize_context_stream,
+    save_context_shard,
+)
+from futures_foundation.finetune.path_labels import PathLabelConfig, build_dense_path_labels
+from futures_foundation.session_gap import (
+    advance_admitted_bars,
+    build_session_gap_capability,
+    load_session_gap_capability,
+    verified_session_edge_mask,
+)
 from futures_foundation.session_denominator import (
     DENOMINATOR_SCHEMA,
     RULES_SCHEMA,
@@ -297,6 +314,217 @@ def _fixture(tmp_path: Path):
         rules.physical_sha256, scope.physical_sha256, rules.document["dependencies"]
     )
     return rules, consumer, scope, denominator
+
+
+def _session_gap_fixture(tmp_path: Path):
+    rules, consumer, scope, document = _fixture(tmp_path)
+    denominator_path = _canonical(tmp_path / "denominator.json", document)
+    denominator = load_and_verify_session_denominator(
+        denominator_path,
+        expected_sha256=sha256_file(denominator_path),
+        rules=rules,
+        scope=scope,
+        consumer=consumer,
+    )
+    capability = build_session_gap_capability(
+        denominator,
+        rules=rules,
+        scope=scope,
+        consumer=consumer,
+        root="CL",
+        expected_delta="1min",
+    )
+    return capability, denominator_path
+
+
+def test_verified_session_gap_accepts_only_adjacent_official_segments(tmp_path):
+    capability, _ = _session_gap_fixture(tmp_path)
+    first_end = capability.segment_ends_ns[0]
+    second_start = capability.segment_starts_ns[1]
+    times = pd.to_datetime([
+        first_end - 2 * 60_000_000_000,
+        first_end - 60_000_000_000,
+        second_start,
+        second_start + 60_000_000_000,
+    ], utc=True)
+    assert verified_session_edge_mask(
+        times, expected_delta="1min", capability=capability,
+    ).tolist() == [True, True, True]
+    starts = ssl_data.window_starts(
+        np.arange(4), 4, timestamps=times, expected_delta="1min",
+        session_gap_capability=capability,
+    )
+    assert starts.tolist() == [0]
+
+
+def test_session_gap_manifest_reopens_and_bar_clock_advances_across_closure(tmp_path):
+    capability, _ = _session_gap_fixture(tmp_path)
+    reopened = load_session_gap_capability(capability.manifest())
+    assert reopened == capability
+    delta = capability.expected_delta_ns
+    first = capability.segment_ends_ns[0] - 2 * delta
+    advanced = advance_admitted_bars(
+        np.asarray([first, first, first]),
+        np.asarray([0, 1, 2]),
+        capability=capability,
+    )
+    assert advanced.tolist() == [
+        first,
+        capability.segment_ends_ns[0] - delta,
+        capability.segment_starts_ns[1],
+    ]
+    with pytest.raises(ValueError, match="not an admitted bar open"):
+        advance_admitted_bars(
+            np.asarray([capability.segment_ends_ns[0]]),
+            np.asarray([1]),
+            capability=capability,
+        )
+
+
+def test_dense_path_labels_use_verified_bar_clock_across_official_closure(tmp_path):
+    capability, _ = _session_gap_fixture(tmp_path)
+    delta = capability.expected_delta_ns
+    timestamps = pd.to_datetime([
+        capability.segment_ends_ns[0] - 2 * delta,
+        capability.segment_ends_ns[0] - delta,
+        capability.segment_starts_ns[1],
+        capability.segment_starts_ns[1] + delta,
+        capability.segment_starts_ns[1] + 2 * delta,
+    ], utc=True)
+    close = np.asarray([70.0, 70.2, 70.4, 70.6, 70.8])
+    frame = pd.DataFrame({
+        "datetime": timestamps,
+        "open": close,
+        "high": close + 0.1,
+        "low": close - 0.1,
+        "close": close,
+        "volume": np.ones(len(close)),
+        "contract_id": np.full(len(close), "CLG20"),
+    })
+    config = PathLabelConfig(
+        horizons_minutes=(2,), targets_r=(1.0,), atr_period=1,
+        context_minutes=1,
+    )
+    exact = build_dense_path_labels(
+        frame, timeframe_minutes=1, config=config,
+    )
+    verified = build_dense_path_labels(
+        frame, timeframe_minutes=1, config=config,
+        session_gap_capability=capability,
+    )
+    assert exact["valid"][0, 0] is np.False_
+    assert bool(verified["valid"][0, 0])
+    assert verified["label_end_time_ns"][0, 0] == capability.segment_starts_ns[1]
+    assert verified["target_semantics"]["horizon_basis"] == (
+        "admitted_bar_minutes_across_verified_sessions_v1"
+    )
+    assert verified["session_gap_capability"] == capability.manifest()
+
+
+def test_event_shard_materialization_uses_and_reverifies_session_capability(tmp_path):
+    capability, _ = _session_gap_fixture(tmp_path)
+    delta = capability.expected_delta_ns
+    first = np.arange(
+        capability.segment_ends_ns[0] - 220 * delta,
+        capability.segment_ends_ns[0],
+        delta,
+        dtype=np.int64,
+    )
+    second = np.arange(
+        capability.segment_starts_ns[1],
+        capability.segment_starts_ns[1] + 400 * delta,
+        delta,
+        dtype=np.int64,
+    )
+    timestamps = np.r_[first, second]
+    close = 70.0 + np.arange(len(timestamps), dtype=np.float64) * 0.01
+    frame = pd.DataFrame({
+        "datetime": pd.to_datetime(timestamps, utc=True),
+        "open": close,
+        "high": close + 0.05,
+        "low": close - 0.05,
+        "close": close,
+        "volume": np.full(len(close), 100.0),
+        "contract_id": np.full(len(close), "CLG20"),
+        "source_row_idx": np.arange(len(close), dtype=np.int64),
+    })
+    start = pd.Timestamp(capability.segment_starts_ns[1], unit="ns", tz="UTC")
+    end = start + pd.Timedelta(minutes=400)
+    config = EventContextConfig(
+        eval_start=start.isoformat(),
+        eval_end=end.isoformat(),
+        context_bars=256,
+        atr_period=20,
+        path=PathLabelConfig(
+            horizons_minutes=(60,), targets_r=(1.0,), atr_period=20,
+            context_minutes=60,
+        ),
+    )
+    economics = load_execution_economics(
+        Path(__file__).resolve().parents[1] / "config/execution_costs.yaml",
+        evaluation_start=start.isoformat(),
+        evaluation_end=end.isoformat(),
+        required_roots=("CL",),
+    )
+    exact_arrays, _ = materialize_context_stream(
+        frame,
+        ticker="CL",
+        timeframe="1min",
+        execution_economics=economics,
+        config=config,
+    )
+    arrays, metadata = materialize_context_stream(
+        frame,
+        ticker="CL",
+        timeframe="1min",
+        execution_economics=economics,
+        config=config,
+        session_gap_capability=capability,
+    )
+    assert arrays["decision_time_ns"].min() < exact_arrays["decision_time_ns"].min()
+    assert metadata["session_gap_capability"] == capability.manifest()
+    assert metadata["context_gap_policy"] == "verified_session_edges_and_contract_segments_v1"
+    path = tmp_path / "CL_1min.npz"
+    manifest = save_context_shard(path, arrays, metadata)
+    loaded, reopened = load_context_shard(path)
+    assert reopened["content_fingerprint"] == manifest["content_fingerprint"]
+    np.testing.assert_array_equal(loaded["label_end_time_ns"], arrays["label_end_time_ns"])
+
+
+def test_verified_session_gap_rejects_missing_bars_and_skipped_open_session(tmp_path):
+    capability, _ = _session_gap_fixture(tmp_path)
+    first_start = capability.segment_starts_ns[0]
+    missing_inside = pd.to_datetime([
+        first_start, first_start + 2 * 60_000_000_000,
+    ], utc=True)
+    assert not verified_session_edge_mask(
+        missing_inside, expected_delta="1min", capability=capability,
+    )[0]
+
+    skipped_open = pd.to_datetime([
+        capability.segment_ends_ns[0] - 60_000_000_000,
+        capability.segment_starts_ns[2],
+    ], utc=True)
+    assert not verified_session_edge_mask(
+        skipped_open, expected_delta="1min", capability=capability,
+    )[0]
+
+
+def test_verified_session_gap_rejects_wrong_bar_size_and_post_load_mutation(tmp_path):
+    capability, denominator_path = _session_gap_fixture(tmp_path)
+    times = pd.to_datetime([
+        capability.segment_starts_ns[0],
+        capability.segment_starts_ns[0] + 60_000_000_000,
+    ], utc=True)
+    with pytest.raises(ValueError, match="bar size"):
+        verified_session_edge_mask(
+            times, expected_delta="5min", capability=capability,
+        )
+    denominator_path.write_bytes(denominator_path.read_bytes() + b"\n")
+    with pytest.raises(SessionDenominatorVerificationError, match="bytes changed"):
+        verified_session_edge_mask(
+            times, expected_delta="1min", capability=capability,
+        )
 
 
 def test_independent_verifier_accepts_complete_non_oos_denominator(tmp_path):

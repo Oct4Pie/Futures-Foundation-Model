@@ -9,6 +9,8 @@ import os
 import numpy as np
 import pytest
 
+from futures_foundation.finetune.native_contracts import NativeContractError
+
 torch_test = pytest.mark.skipif(
     os.environ.get('CHRONOS_TORCH_TESTS') != '1',
     reason='torch test — set CHRONOS_TORCH_TESTS=1 (libomp isolation; import torch in body)')
@@ -77,26 +79,21 @@ def test_in_proj_raw_feature_sequence():
     # fit_and_infer with proj_dim learns a SPARSE feature/bar signal — but only
     # with the right config: prototype loss OFF (it caps sparse-signal learning)
     # + adequate proj/lr/epochs. (Diagnosed: proto-on/lr1e-3/20ep -> 0.57; this -> 0.9+.)
-    from sklearn.metrics import roc_auc_score
     rng = np.random.default_rng(0)
     N, T, k = 600, 12, 10
     Y = rng.integers(0, 2, N)
     X = rng.standard_normal((N, T, k)).astype(np.float32)
     X[Y == 1, -5:, 0] += 1.5                      # class-1 signal: feature 0 elevated, last 5 bars
     tr = np.zeros(N, bool); tr[:420] = True
-    p, c, val_auc = fit_and_infer(X, Y, tr, epochs=80, device='cpu', proj_dim=32,
-                                  depth=1, heads=2, proto=False, lr=2e-3)
-    assert c.shape == (N, 32)
-    assert 0.0 <= val_auc <= 1.0                  # early-stopping returns best val AUC
-    assert np.isfinite(p).all()
-    assert roc_auc_score(Y[~tr], p[~tr]) > 0.6   # learns the raw-feature-seq signal (in_proj path)
+    with pytest.raises(NativeContractError, match='training admission is disabled'):
+        fit_and_infer(X, Y, tr, epochs=80, device='cpu', proj_dim=32,
+                      depth=1, heads=2, proto=False, lr=2e-3)
 
 
 # ---- axial adapter: cross-feature + temporal, detects a FEATURE LIFE-CYCLE ----
 @torch_test
 def test_axial_adapter_lifecycle():
     import torch
-    from sklearn.metrics import roc_auc_score
     from futures_foundation.extractors.chronos.shape_adapter import (
         AxialShapeAdapter, fit_and_infer)
     m = AxialShapeAdapter(T=20, F=9, d=32, depth=1, heads=2)
@@ -111,40 +108,29 @@ def test_axial_adapter_lifecycle():
     X = rng.standard_normal((N, T, Fdim)).astype(np.float32)
     X[Y == 1, :, 2] += np.linspace(0, 2, T)[None, :]
     tr = np.zeros(N, bool); tr[:340] = True
-    p, c, va = fit_and_infer(X, Y, tr, epochs=40, device='cpu', proj_dim=32,
-                             arch='axial', depth=1, heads=2)
-    assert c.shape == (N, 64)
-    assert roc_auc_score(Y[~tr], p[~tr]) > 0.8   # sees the growing feature's life-cycle
+    with pytest.raises(NativeContractError, match='training admission is disabled'):
+        fit_and_infer(X, Y, tr, epochs=40, device='cpu', proj_dim=32,
+                      arch='axial', depth=1, heads=2)
 
 
 # ---- pipeline: OOF-stacked adapter feature (leak-safe) + val/test monitor --
 @torch_test
 def test_oof_adapter_feature():
-    from sklearn.metrics import roc_auc_score
-    from futures_foundation.pipeline.shape_stack import (
-        oof_adapter_feature, val_test_gap)
+    from futures_foundation.pipeline.shape_stack import oof_adapter_feature
     rng = np.random.default_rng(0)
     N, T, Fdim = 500, 8, 6
     Y = rng.integers(0, 2, N)
     S = rng.standard_normal((N, T, Fdim)).astype(np.float32)
     S[Y == 1, -2:, :] += 1.5                          # easy: all features, last 2 bars
     tr = np.zeros(N, bool); tr[:340] = True
-    cls, info = oof_adapter_feature(S, Y, tr, n_folds=2, proj_dim=16, epochs=40,
-                                    device='cpu', patience=8)
-    assert cls.shape == (N, 16)
-    assert info['adapter_probs'].shape == (N,)
-    assert 0.0 <= info['mean_val_auc'] <= 1.0
-    # adapter generalizes on the held/test rows (OOF, leak-safe)
-    assert roc_auc_score(Y[~tr], info['adapter_probs'][~tr]) > 0.65
-    gap, overfit = val_test_gap(info['mean_val_auc'],
-                                roc_auc_score(Y[~tr], info['adapter_probs'][~tr]))
-    assert isinstance(bool(overfit), bool)
+    with pytest.raises(RuntimeError, match='training admission is disabled'):
+        oof_adapter_feature(S, Y, tr, n_folds=2, proj_dim=16, epochs=40,
+                            device='cpu', patience=8)
 
 
 # ---- fit_and_infer LEARNS a separable shape (end-to-end) ------------------
 @torch_test
 def test_fit_and_infer_learns_separable_shape():
-    from sklearn.metrics import roc_auc_score
     from futures_foundation.extractors.chronos.shape_adapter import fit_and_infer
     rng = np.random.default_rng(0)
     N, T, d = 600, 6, 16
@@ -152,8 +138,5 @@ def test_fit_and_infer_learns_separable_shape():
     X = rng.standard_normal((N, T, d)).astype(np.float32)
     X[Y == 1, -1, :] += 1.5                      # class-1 'shape' = bump in last token
     tr = np.zeros(N, bool); tr[:400] = True
-    probs, cls, val_auc = fit_and_infer(X, Y, tr, epochs=60, device='cpu',
-                                        depth=1, heads=2)
-    assert probs.shape == (N,) and cls.shape == (N, d)
-    assert np.isfinite(probs).all()
-    assert roc_auc_score(Y[~tr], probs[~tr]) > 0.7   # learned the shape, OOS
+    with pytest.raises(NativeContractError, match='training admission is disabled'):
+        fit_and_infer(X, Y, tr, epochs=60, device='cpu', depth=1, heads=2)

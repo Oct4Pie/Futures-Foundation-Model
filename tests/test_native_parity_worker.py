@@ -93,6 +93,28 @@ def test_profile_selection_rejects_wrong_family(monkeypatch):
         worker.validate_runtime_profile("common", "ttm_r2")
 
 
+def test_kronos_calendar_features_use_cme_local_time_across_dst():
+    import pandas as pd
+
+    source = pd.to_datetime([
+        "2024-03-10 07:58:00+00:00",
+        "2024-03-10 07:59:00+00:00",
+        "2024-03-10 08:00:00+00:00",
+    ]).asi8
+    series = worker._kronos_timestamp_series(source)
+    assert str(series.dt.tz) == worker.KRONOS_VENUE_TIMEZONE
+    assert series.dt.hour.tolist() == [1, 1, 3]
+    assert series.dt.minute.tolist() == [58, 59, 0]
+
+    values = np.ones((1, 3, 5), np.float32)
+    _, context, future = worker._kronos_inputs(values, source[None, :])
+    assert str(context[0].dt.tz) == worker.KRONOS_VENUE_TIMEZONE
+    assert str(future[0].dt.tz) == worker.KRONOS_VENUE_TIMEZONE
+    assert future[0].iloc[0] == pd.Timestamp(
+        "2024-03-10 03:01:00", tz=worker.KRONOS_VENUE_TIMEZONE
+    )
+
+
 def test_bound_artifact_rejects_unsealed_or_different_path(tmp_path, monkeypatch):
     supplied = tmp_path / "supplied"
     supplied.write_text("x")

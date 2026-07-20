@@ -11,16 +11,25 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import math
-from pathlib import Path
+import os
+from pathlib import Path, PurePosixPath
 from types import MappingProxyType
-from typing import Mapping
+from typing import Any, Mapping
 
 import yaml
+
+from futures_foundation._authority_bundle_io import (
+    AuthorityBundleIOError,
+    read_regular_file,
+)
 
 
 EXECUTION_ECONOMICS_SCHEMA_VERSION = "ffm_execution_economics_v2"
 CANONICAL_SCHEDULE_SHA256 = "0a644bb0de81b9a2119d6df94a7585bdb8e19e19651d78473462d556501d8ea4"
 _CAPABILITY_TOKEN = object()
+_MAX_ECONOMICS_BYTES = 4 * 1024 * 1024
+_MAX_YAML_NODES = 100_000
+_MAX_YAML_DEPTH = 24
 
 
 class _UniqueKeyLoader(yaml.SafeLoader):
@@ -42,21 +51,81 @@ _UniqueKeyLoader.add_constructor(
 )
 
 
+def _absolute_lexical_path(path: str | Path) -> Path:
+    """Make a path absolute without resolving away symlink evidence."""
+    return Path(os.path.abspath(os.fspath(path)))
+
+
+def _safe_relative_path(value: object, *, field: str) -> PurePosixPath:
+    if not isinstance(value, str):
+        raise ValueError(f"{field} must be a relative path string")
+    relative = PurePosixPath(value)
+    if (
+        relative.is_absolute()
+        or relative.as_posix() != value
+        or not relative.parts
+        or any(part in {"", ".", ".."} for part in relative.parts)
+    ):
+        raise ValueError(f"{field} must be a canonical relative path")
+    return relative
+
+
+def _read_authority_bytes(path: str | Path, *, label: str) -> tuple[Path, bytes, str]:
+    try:
+        return read_regular_file(
+            _absolute_lexical_path(path),
+            label=label,
+            max_bytes=_MAX_ECONOMICS_BYTES,
+        )
+    except AuthorityBundleIOError as exc:
+        raise ValueError(str(exc)) from exc
+
+
 def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for block in iter(lambda: stream.read(1 << 20), b""):
-            digest.update(block)
-    return digest.hexdigest()
+    return _read_authority_bytes(path, label="execution-economics artifact")[2]
 
 
-def _strict_yaml(path: Path) -> dict:
-    if not path.is_file():
-        raise FileNotFoundError(f"execution-economics document is missing: {path}")
-    document = yaml.load(path.read_text(), Loader=_UniqueKeyLoader)
+def _strict_yaml(path: str | Path, *, label: str) -> tuple[Path, dict, str]:
+    source, raw, physical = _read_authority_bytes(path, label=label)
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"{label} must be UTF-8 YAML") from exc
+    try:
+        tokens = list(yaml.scan(text))
+    except yaml.YAMLError as exc:
+        raise ValueError(f"cannot scan {label}") from exc
+    if len(tokens) > _MAX_YAML_NODES:
+        raise ValueError(f"{label} exceeds YAML token limits")
+    if any(isinstance(token, (yaml.tokens.AnchorToken, yaml.tokens.AliasToken)) for token in tokens):
+        raise ValueError(f"{label} may not contain YAML anchors or aliases")
+    try:
+        document = yaml.load(text, Loader=_UniqueKeyLoader)
+    except (yaml.YAMLError, RecursionError) as exc:
+        raise ValueError(f"cannot parse {label}") from exc
     if not isinstance(document, dict):
-        raise ValueError(f"expected a YAML mapping: {path}")
-    return document
+        raise ValueError(f"expected a YAML mapping: {source}")
+
+    nodes = 0
+
+    def walk(value: Any, depth: int) -> None:
+        nonlocal nodes
+        nodes += 1
+        if nodes > _MAX_YAML_NODES or depth > _MAX_YAML_DEPTH:
+            raise ValueError(f"{label} exceeds YAML structure limits")
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if not isinstance(key, str):
+                    raise ValueError(f"{label} mapping keys must be strings")
+                walk(child, depth + 1)
+        elif isinstance(value, list):
+            for child in value:
+                walk(child, depth + 1)
+        elif value is not None and not isinstance(value, (str, bool, int, float)):
+            raise ValueError(f"{label} contains an unsupported scalar")
+
+    walk(document, 0)
+    return source, document, physical
 
 
 def _utc(value: str, *, field: str) -> datetime:
@@ -209,8 +278,9 @@ def load_execution_economics(
     required_roots=(),
 ) -> ExecutionEconomics:
     """Load, source-verify, date-scope, and freeze an economics capability."""
-    schedule_path = Path(path).resolve()
-    document = _strict_yaml(schedule_path)
+    schedule_path, document, schedule_sha = _strict_yaml(
+        path, label="execution-economics schedule",
+    )
     _exact_keys(
         document,
         {
@@ -232,15 +302,18 @@ def load_execution_economics(
         field="source",
     )
     repository_root = schedule_path.parent.parent
-    source_path = (
-        repository_root / str(source["project_path"]) / str(source["document_path"])
-    ).resolve()
-    if not source_path.is_file():
-        raise FileNotFoundError(f"pinned economics source is missing: {source_path}")
-    actual_source_sha = _sha256(source_path)
+    project_path = (
+        PurePosixPath()
+        if source["project_path"] == "."
+        else _safe_relative_path(source["project_path"], field="source.project_path")
+    )
+    document_path = _safe_relative_path(source["document_path"], field="source.document_path")
+    source_path, source_document, actual_source_sha = _strict_yaml(
+        repository_root / Path(project_path) / Path(document_path),
+        label="pinned execution-economics source",
+    )
     if actual_source_sha != source["sha256"]:
         raise ValueError("pinned economics source hash mismatch")
-    source_document = _strict_yaml(source_path)
     if source_document.get("schema_version") != source["schema_version"]:
         raise ValueError("pinned economics source schema mismatch")
     source_instruments = source_document.get("instruments")
@@ -314,7 +387,6 @@ def load_execution_economics(
     )
     if missing:
         raise ValueError(f"execution economics missing instruments: {missing}")
-    schedule_sha = _sha256(schedule_path)
     return ExecutionEconomics(
         schema_version=document["schema_version"],
         schedule_path=str(schedule_path),

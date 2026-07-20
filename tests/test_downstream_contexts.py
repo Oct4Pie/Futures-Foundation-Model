@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from futures_foundation.finetune.downstream_contexts import (
@@ -9,8 +10,15 @@ from futures_foundation.finetune.downstream_contexts import (
     load_downstream_contexts,
     save_downstream_contexts,
 )
-from futures_foundation.finetune.tournament import OOS_START, TRAIN_START
-from futures_foundation.finetune.tournament_data import CACHE_MANIFEST, CACHE_SCHEMA_VERSION
+from futures_foundation.finetune.tournament_cache_authority import (
+    SOURCE_AUTHORITY_SCHEMA_VERSION,
+    canonical_authority_document,
+)
+from futures_foundation.finetune.tournament_data import (
+    CACHE_MANIFEST,
+    build_cache,
+    cache_manifest_sha256,
+)
 
 
 def _sha(path: Path) -> str:
@@ -18,43 +26,72 @@ def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _write_cache_manifest(cache_dir: Path, files: dict, rows: int) -> Path:
-    source_dir = cache_dir / "source"
+def _build_cache(
+    tmp_path: Path,
+    ohlcv: np.ndarray,
+    timestamp: np.ndarray,
+    contract: np.ndarray,
+) -> tuple[Path, str]:
+    source_dir = tmp_path / "source"
+    cache_dir = tmp_path / "cache"
     source_dir.mkdir()
+    csv = source_dir / "ES_1min.csv"
+    pd.DataFrame({
+        "datetime": pd.to_datetime(timestamp, utc=True),
+        "open": ohlcv[:, 0], "high": ohlcv[:, 1], "low": ohlcv[:, 2],
+        "close": ohlcv[:, 3], "volume": ohlcv[:, 4], "contract_id": contract,
+    }).to_csv(csv, index=False)
     source_manifest = source_dir / "MANIFEST.json"
-    source_manifest.write_text("{}\n")
-    path = cache_dir / CACHE_MANIFEST
-    path.write_text(json.dumps({
-        "schema_version": CACHE_SCHEMA_VERSION,
-        "interval": {
-            "start": TRAIN_START, "end_exclusive": OOS_START, "contains_oos": False,
+    source_manifest.write_text(json.dumps({
+        "schema_version": "ffm_ssl_corpus_v1",
+        "created_utc": "2026-07-18T00:00:00+00:00",
+        "purpose": "self-supervised OHLCV only; no labels or outcomes read",
+        "source_root": str(source_dir.resolve()),
+        "source_snapshot_sha256": _sha(csv),
+        "roots": ["ES"],
+        "timeframes_minutes": [1],
+        "resample": {
+            "closed": "left", "label": "left", "origin": "epoch",
+            "forward_fill": False, "within_contract_only": True,
         },
-        "source_dir": str(source_dir.resolve()),
+        "roots_report": {},
+        "outputs": {"ES_1min": {
+            "path": str(csv.resolve()), "bytes": csv.stat().st_size,
+            "sha256": _sha(csv), "rows": len(ohlcv),
+        }},
+    }, indent=2) + "\n")
+    authority = tmp_path / "source-authority.json"
+    authority.write_bytes(canonical_authority_document({
+        "schema_version": SOURCE_AUTHORITY_SCHEMA_VERSION,
+        "authority_id": "downstream-context-test",
+        "purpose": "tournament_cache_source_admission",
         "source_manifest": {
             "path": str(source_manifest.resolve()), "sha256": _sha(source_manifest),
             "bytes": source_manifest.stat().st_size,
+            "schema_version": "ffm_ssl_corpus_v1",
         },
-        "entries": {"ES@1min": {
-            "ticker": "ES", "timeframe": "1min", "rows": rows, "files": files,
-        }},
+        "admitted_streams": ["ES@1min"],
+        "cache_construction_admitted": True,
+        "training_admitted": False,
     }))
-    return path
+    build_cache(
+        source_dir, cache_dir, ("ES",), ("1min",),
+        source_authority_path=authority,
+        source_authority_sha256=_sha(authority),
+        verbose=False,
+    )
+    return cache_dir / CACHE_MANIFEST, cache_manifest_sha256(cache_dir)
 
 
 def test_context_artifact_reconstructs_exact_rows_and_binds_sample(tmp_path):
-    cache_dir = tmp_path / "cache"
-    cache_dir.mkdir()
     n = 20
     close = 100 + np.arange(n, dtype=np.float32)
     ohlcv = np.column_stack((close, close + 1, close - 1, close, np.ones(n))).astype(np.float32)
-    timestamp = np.arange(n, dtype=np.int64) * 60_000_000_000
+    timestamp = pd.date_range(
+        "2020-01-01", periods=n, freq="1min", tz="UTC",
+    ).asi8
     contract = np.full(n, "ESZ4")
-    files = {}
-    for key, value in (("ohlcv", ohlcv), ("timestamps", timestamp), ("contract_id", contract)):
-        path = cache_dir / f"ES_1min.{key}.npy"
-        np.save(path, value)
-        files[key] = {"path": path.name, "sha256": _sha(path), "bytes": path.stat().st_size}
-    cache = _write_cache_manifest(cache_dir, files, n)
+    cache, cache_sha = _build_cache(tmp_path, ohlcv, timestamp, contract)
     sample = {
         "stream_id": np.array(["ES@1min", "ES@1min"]),
         "context_start_source_idx": np.array([2, 10]),
@@ -65,9 +102,15 @@ def test_context_artifact_reconstructs_exact_rows_and_binds_sample(tmp_path):
         "status": "complete", "oos_read": False,
         "artifact": {"path": "sample.npz", "sha256": "sample-sha"},
         "content_fingerprint": "sample-fingerprint",
+        "metadata": {
+            "source_shards": {
+                "ES@1min": {"session_gap_capability": None},
+            },
+        },
     }
     arrays, metadata = build_downstream_contexts(
-        sample, sample_manifest, cache, context_bars=4,
+        sample, sample_manifest, cache,
+        cache_manifest_sha256=cache_sha, context_bars=4,
     )
     assert arrays["context"].shape == (2, 4, 5)
     np.testing.assert_array_equal(arrays["context"][0], ohlcv[2:6])
@@ -86,17 +129,12 @@ def test_context_artifact_reconstructs_exact_rows_and_binds_sample(tmp_path):
 
 
 def test_context_builder_rejects_roll_crossing(tmp_path):
-    cache_dir = tmp_path / "cache"
-    cache_dir.mkdir()
     ohlcv = np.tile(np.array([100, 101, 99, 100, 1], np.float32), (5, 1))
-    timestamp = np.arange(5, dtype=np.int64)
+    timestamp = pd.date_range(
+        "2020-01-01", periods=5, freq="1min", tz="UTC",
+    ).asi8
     contract = np.array(["A", "A", "B", "B", "B"])
-    files = {}
-    for key, value in (("ohlcv", ohlcv), ("timestamps", timestamp), ("contract_id", contract)):
-        path = cache_dir / f"x.{key}.npy"
-        np.save(path, value)
-        files[key] = {"path": path.name, "sha256": _sha(path), "bytes": path.stat().st_size}
-    cache = _write_cache_manifest(cache_dir, files, len(ohlcv))
+    cache, cache_sha = _build_cache(tmp_path, ohlcv, timestamp, contract)
     sample = {
         "stream_id": np.array(["ES@1min"]),
         "context_start_source_idx": np.array([0]), "decision_source_idx": np.array([3]),
@@ -105,6 +143,14 @@ def test_context_builder_rejects_roll_crossing(tmp_path):
     manifest = {
         "status": "complete", "oos_read": False,
         "artifact": {"path": "x", "sha256": "x"}, "content_fingerprint": "x",
+        "metadata": {
+            "source_shards": {
+                "ES@1min": {"session_gap_capability": None},
+            },
+        },
     }
     with pytest.raises(ValueError, match="crosses a contract roll"):
-        build_downstream_contexts(sample, manifest, cache, context_bars=4)
+        build_downstream_contexts(
+            sample, manifest, cache,
+            cache_manifest_sha256=cache_sha, context_bars=4,
+        )

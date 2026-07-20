@@ -226,13 +226,99 @@ technical evidence, but its registry-bound reports do not authorize the refrozen
   explicit blockers rather than placeholder hashes.
 - [x] Bind strict route templates to exact resolved catalog routes and authoritative data contracts.
   The current data authority remains blocked, so no concrete route instance can be built.
-- [ ] Admit route-specific synthetic smoke, exact-resume and export evidence.
+- [x] Admit route-specific synthetic smoke, exact-resume and export evidence for the five exact
+  development routes that passed all 20 mandatory checks: Chronos Bolt forecast, Chronos V1
+  forecast, MOMENT masked reconstruction, Kronos Mini tokenizer and the parent-bound Kronos Mini
+  predictor. Kronos Small tokenizer remains explicitly failed on both chronology controls. Smoke
+  admission remains synthetic-only and does not imply pilot, full-training or deployment admission.
+
+### Phase 2B execution-readiness checkpoint — 2026-07-18
+
+- [x] Add a deterministic, non-authorizing execution-readiness audit at
+  `scripts/audit_native_training_readiness.py`. It binds the 42-route catalog, route-profile hashes,
+  current launcher bytes, blocked training-data authority, inference-registry state and Git
+  methodology state.
+- [x] Distinguish catalog inventory from exact executable training routes. Current measured counts
+  are 42 catalog routes, 23 exact executors, 17 fully closed unsupported routes and two externally
+  blocked in-context routes; zero candidate mismatches or unspecified implementations remain.
+  Twenty-one exact routes pass all 20 smoke checks, Kronos Small tokenizer has complete failed-smoke
+  evidence and its predictor is parent-blocked. All 23 exact routes have terminal pilot and
+  downstream dispositions: 15 bounded pilots completed, nine survive their native objective, six
+  classification routes are blocked on governed labels, eight compatible downstream screens fail,
+  and zero routes are training-admitted.
+- [x] Expand the shared smoke harness with one-batch gradient/update, controlled learnable loss
+  decrease, shuffled/time-destroyed control rejection, exact interruption/resume comparison,
+  future-corruption invariance, invalid-boundary rejection, multivariate layout, bounded
+  throughput/memory and negative-price behavior checks. These are reusable test primitives, not
+  route evidence.
+- [x] Reclassify legacy optimizer tests as kill-switch tests. Model construction, pure native-loss
+  seams and export parity remain testable, while every retired optimizer fails before checkpoint
+  writes or data access.
+- [x] Build exact architecture-native executors for all 23 internally supported routes and
+  route-specific raw smoke bundles for every executable route whose parent lineage is available.
+  The readiness audit reopens every raw artifact, records a complete failed smoke without admitting
+  it, and intentionally cannot convert generic harness checks or historical inference parity into
+  training admission.
+
+### Cross-model configuration audit checkpoint — 2026-07-19
+
+- [x] Add `scripts/audit_native_configuration.py` and the fail-closed
+  `ffm_native_configuration_audit_v1` contract. It compares all 15 inference identities, 42
+  routes and 29 profiles, and independently inspects all 23 exact executors' Python constants,
+  route defaults, optimizer construction, scheduler runtime, preprocessing/time contract and
+  export surface.
+- [x] Correct four configuration-contract defects found by that audit rather than grandfathering
+  prior evidence: Kronos parity now derives calendar features in `America/Chicago` from the UTC
+  source timeline; exact executors advertise only the implemented accumulation value `1`; cosine
+  no-warmup routes advertise exactly zero warmup; Kronos tokenizer profiles no longer claim stamp
+  inputs and Chronos forecast bundles no longer claim unexported hidden states/tokens.
+- [x] Record PyTorch OneCycle's native Kronos behavior explicitly: AdamW starts at betas
+  `(0.9,0.95)`, while the official/default OneCycle scheduler cycles beta1 over `[0.85,0.95]` with
+  cosine annealing, `pct_start=0.03`, `div_factor=10` and `final_div_factor=1e4`.
+- [x] Build clean parity wheel
+  `117e103a451751f5f1a0b2cd278ab8745e42373f41380a124521ade1b674e06e`
+  and regenerate all 16 currently admitted native F/R parity tracks against the current 15-arm
+  registry. Aggregate SHA-256:
+  `c9fe0cd39fed22297ca52fab2cf42074d3e6f7034608326674c88db6734f015d`.
+  Build the final sealed wheel at
+  `13540578b3fd6050b78572978fd341dd8e3d0bf605c6901ce6e7419099378672`;
+  its parity-critical registry/catalog/worker/adapter/route bytes match the tested checkout exactly.
+- [x] Regenerate every exact-route smoke, every eligible pilot and the common-information downstream
+  ruler after the catalog/profile/executor hashes changed. Twenty-one smokes pass; Kronos Small
+  tokenizer remains eliminated by both chronology controls and its predictor remains parent-blocked.
+  Fifteen pilots complete and nine survive; all eight compatible common-information routes fail the
+  downstream funding screen. Current screen collection:
+  `e74d0b5476e7dead9bfcecb2430abc8b53ee64a8bf1ee90bf020f71084e29597`.
+- [x] Seal configuration audit
+  `a32d731ed5b7e521ee003e18aaf982b954f856f8a8595dc230138108fca7b374`
+  with zero cross-layer discrepancies, zero unresolved constraints and current inference parity
+  complete. This does **not** say all models are admitted: two TabPFN identities remain externally
+  blocked, 17 routes are explicitly unsupported, zero routes pass the downstream funding gate, and
+  training, OOS, deployment and trading admission remain false. Current readiness SHA-256:
+  `5583b6d9dc975dd62a88fe1102fbb38fc9567447c773a4497574165b3d5c126f`.
 
 ## Phase 3 — data and label contract
 
 - [x] Complete the outcome-blind, manifest-level Corpus v3 inventory audit and pin all governance
   and leaf-manifest inputs. Root selection remains blocked pending a sessionized export audit.
 - [ ] Complete the governed sessionized Corpus v3 coverage/yield audit before materialization.
+  - [x] Implement the independent FFM consumer audit and bound CLI. It accepts only a reverified
+    session-denominator-bundle capability plus reverified contract-day export capabilities, checks
+    every event against exact denominator segments, preserves missing sessions explicitly and can
+    never select roots or authorize materialization/training.
+  - [x] Freeze the current export authority as the exact empty canonical index
+    `config/corpus_v3/sessionized_export_index_v1.json` (physical SHA-256
+    `07d95cc48ead4d8a6f45b9f7824ea2ca386fb7bdabbb729c30da7214129e461d`; semantic SHA-256
+    `a4b8181fe0a54db5d99000b535f8f9ef2ebfea4cf1d0a97c2885f4078ee72d72`). This states that zero
+    scale exports are currently admitted; it does not infer inventory from the filesystem.
+  - [x] Implement independent FFM consumers for detached producer governance/frozen split-use,
+    joined metadata-only provider pagination, official-claim lifecycle/quarantine, exact expected
+    requests and a split-scoped inventory/non-executable plan. The two production-facing CLIs are
+    `scripts/build_corpus_v3_expected_requests.py` and
+    `scripts/build_corpus_v3_materialization_plan.py`.
+  - [ ] Populate the production 43-root producer governance, provider evidence, lifecycle,
+    session denominator, expected-request denominator, inventory observations and nonempty verified
+    export index; obtain immutable-storage and independent materialization approval.
 - [ ] Freeze common-information and native-best views separately.
 - [ ] Seal regular bars, contract IDs, source rows and timestamps.
 - [ ] Seal native future-series forecast targets separately from trading labels.
@@ -265,11 +351,33 @@ technical evidence, but its registry-bound reports do not authorize the refrozen
   root-dirfd/no-follow transport and adversarial FIFO, symlink, hardlink, mutation, orphan and
   bool-as-int rejection. This is synthetic producer/consumer parity only and is hard-coded
   `production_admitted=false`.
-- [ ] Build independent FFM consumers for producer governance, frozen split-use, provider
-  candidates, contract lifecycle and official lifecycle evidence before accepting expected-request
-  bundle v1. Hash-only acceptance is prohibited.
-- [ ] Connect one authenticated session/request capability to both SSL and event materialization;
-  coarse/session-spanning training remains intentionally unavailable until then.
+- [x] Add `ffm_corpus_v3_sessionized_coverage_audit_v1` and
+  `scripts/audit_corpus_v3_sessionized_coverage.py`. The consumer reopens the exact export index,
+  independently reruns raw-leaf contract-day verification at use, reopens the denominator at use,
+  rejects events in declared market breaks and records exact missing-session/liquidity/yield rows.
+  The original Corpus-v3/export/denominator compatibility sweep is incorporated into the current
+  `190 passed` joined authority/materialization sweep; production completion stays blocked because
+  the checked-in index has zero entries and the denominator evidence is synthetic.
+- [x] Build independent FFM consumers for producer governance, frozen split-use, provider
+  candidates, contract lifecycle and official lifecycle evidence before accepting expected
+  requests. Every consumer requires exact physical hashes, mandatory reopen-at-use and
+  non-forgeable capability continuity; hash-only acceptance is prohibited.
+- [x] Derive `ffm_corpus_v3_expected_request_denominator_v1` only from frozen split/use, session
+  denominator and lifecycle capabilities. Candidate quarantine, closed sessions and zero
+  intersections remain explicit; no month-code inference, availability or market observation is
+  permitted.
+- [x] Add canonical `ffm_corpus_v3_inventory_observations_v1`,
+  `ffm_corpus_v3_split_scoped_inventory_v1` and `ffm_corpus_v3_materialization_plan_v1` contracts.
+  Exact request closure, source-path/hash metadata, gap/overlap checks and available-only selection
+  are enforced, while source-byte reopening, plan execution and production admission remain false.
+- [x] Connect the verified plan-derived request capability to both SSL and event materialization.
+  `ffm_corpus_v3_request_authority_v1` reopens the expected-request, inventory and plan artifacts,
+  rejects overlapping contract/use intervals and returns exact per-row planned-request IDs. SSL
+  independently authorizes train and validation uses and rejects parent windows crossing request
+  segments. Event-context v6 binds the authority manifest and request ID into every row, rejects
+  context/future paths crossing request segments and reverifies decision plus label endpoints on
+  reload. This is mechanism closure only: current production artifacts select zero requests and
+  neither materialization nor training is admitted.
 - [x] Define and version nonpositive-price-safe path/probe/structural targets using raw price
   changes normalized by decision/context-only causal scale. Log-price preprocessing now rejects
   nonpositive inputs instead of clipping them. Family forecast-score parity for negative prices
@@ -286,54 +394,121 @@ technical evidence, but its registry-bound reports do not authorize the refrozen
   units, Stage-3 future-gap segmentation, economics capability forgery, and probe-result semantic
   versioning. These repairs require a new full-suite count before checkpointing.
 - [x] Reverify the P0 repairs with `1250 passed, 98 skipped, 8 warnings`.
-- [ ] Replace the self-hashed tournament cache with a typed source manifest/receipt that enumerates
-  exact transformed inputs and externally binds the cache manifest. Current v2 is integrity
-  bookkeeping only and is not training authority.
-- [ ] Add a strict current-schema event-shard validator at save and load boundaries; generic
-  self-consistent arrays must not be upgradable into a canonical v4 shard.
+- [x] Replace the self-hashed tournament cache with cache schema v3 and a typed, externally
+  SHA-bound source authority. Construction and every load revalidate the pinned corpus manifest,
+  each source CSV, interval, bar size, transformation/code bytes, array bytes/content, contract set
+  and full contract-ID sequence. The cache remains explicitly `training_admitted=false`; a real
+  production source authority has not been published.
+- [x] Add a strict current-schema event-shard validator at save and load boundaries. Generic arrays,
+  repaired-hash semantic tampering, invalid split/label endpoints, malformed tag/policy geometry and
+  unverifiable economics cannot be upgraded into a canonical v4 shard; loaded arrays are immutable.
 - [ ] Bind and validate gross-shard instrument geometry and the full decision-through-exit
   economics interval. The first implementation is present; adversarial coverage remains required.
-- [ ] Replace unbounded/path-following YAML reads with the shared bounded no-follow authority
-  transport. The canonical economics source is now vendored, but transport parity is not complete.
+- [x] Replace unbounded/path-following YAML reads with shared bounded no-follow authority transport.
+  Economics files are single-link regular files with stable descriptor/parent identities, bounded
+  bytes/tokens/nodes/depth, UTF-8, duplicate-key rejection and no YAML aliases/anchors. Production
+  effective-dated broker/economic evidence remains separate and pending.
+- [x] Reverify the completed end-to-end checkout with `1392 passed, 98 skipped, 8 warnings`; enable
+  the optional Torch matrix for `1479 passed, 11 skipped, 37 warnings`; run the isolated
+  Chronos/XGBoost file with both isolation gates for `17 passed`. Remaining suite skips are optional
+  dependency or process gates, not training admissions.
+
+### End-to-end native-route/downstream checkpoint — 2026-07-19
+
+- [x] Publish and reverify the real 54-stream cache-v3 receipt over
+  `[2019-07-01,2025-07-01)`: `41281860ff1ef3474e226d22a2df504e97f8d348839fce8d2438689d160b9e0a`.
+  It remains `training_admitted=false`; authentic production session/request/lifecycle/roll/label
+  authority is still absent.
+- [x] Complete 15 one-minute native-objective pilots on identical non-OOS cache authority. Nine
+  survive: Chronos Bolt `+2.51%`, Chronos V1 `+1.13%`, MOMENT reconstruction `+40.02%`, Kronos Mini
+  tokenizer `+3.18%`, Mini predictor `+1.20%`, Mantis V1 contrastive `+97.32%`, Mantis V2
+  contrastive `+66.83%`, MOMENT forecast full `+22.95%` and forecast head-only `+22.87%`.
+  TTM full/head, TimesFM LoRA, Chronos-2 full/LoRA and research-only Moirai are eliminated by the
+  frozen 1% gate. These are native-loss dispositions only; Kronos Small tokenizer separately fails
+  both chronology-control checks and six classification routes remain label-authority blocked.
+- [x] Materialize a fresh strict v4 one-minute development collection for all nine roots: 416,191
+  decision rows. Build a 10,800-row equal-root sample and a frozen 2,700-row representation screen
+  with exactly 300 rows per root and verified 512×5 contexts. No OOS rows were read.
+- [x] Preserve native outputs without premature reduction: Chronos Bolt `2700×5×16×9` quantiles,
+  Chronos V1 `2700×5×20×64` samples with only the admitted first 16 positions exposed to the common
+  ruler, MOMENT reconstruction `2700×512` embeddings, Kronos Mini predictor `2700×16×6` forecasts,
+  Mantis V1 `2700×5×256` and V2 `2700×5×512` per-channel representations, and MOMENT full/head
+  forecast tensors at `2700×5×16`. The 528-past-bar tokenizer route remains explicitly outside the
+  primary 512-bar common-information view.
+- [x] Freeze the maximum viable common purged contract at two folds because a third fold empties
+  sparse ZB after the required 512-minute embargo. Fold SHA-256:
+  `d460f60d442407cb207a63d907bba5b85a84a8ee362f78c959d46de4cc52cdf1`.
+- [x] Run the predeclared five-target linear incremental ruler with train-fold-only 32-component
+  PCA, causal-only/model-only/combined/residual arms, three model controls and 500 root×week
+  bootstrap repetitions at 99% confidence. All eight common-information routes fail. Results as
+  `(controls, point wins, degradations, adjusted-CI wins)` are: MOMENT reconstruction `(3,2,3,0)`,
+  Bolt `(1,1,4,0)`, Chronos V1 `(1,1,4,0)`, Kronos Mini predictor `(3,0,5,0)`, Mantis V1
+  `(4,3,2,0)`, Mantis V2 `(3,4,1,0)`, MOMENT forecast full `(0,0,5,0)` and forecast head-only
+  `(0,0,5,0)`. No route funds nonlinear sensitivity.
+- [x] Seal the verified aggregate screen collection at
+  `e74d0b5476e7dead9bfcecb2430abc8b53ee64a8bf1ee90bf020f71084e29597` and the evidence-aware
+  readiness report at `5583b6d9dc975dd62a88fe1102fbb38fc9567447c773a4497574165b3d5c126f`.
+  Current counts: 23 exact executors, 21 passing smokes, one failed smoke, one parent-blocked route,
+  15 completed native pilots, nine native survivors, eight completed downstream screens, zero
+  screen survivors, zero nonlinear sensitivities funded and zero training-admitted routes. Both
+  exact-route pilot disposition and surviving-pilot downstream disposition closures are complete.
+- [x] Stop the program at the declared gate. No full training, OOS evaluation, deployment, paper
+  trading or live trading was run. The wheel built at 37,735,883 bytes with SHA-256
+  `13540578b3fd6050b78572978fd341dd8e3d0bf605c6901ce6e7419099378672` and imported all new
+  authority/route/downstream modules from an unpacked location outside the checkout.
 
 ## Phase 4 — frozen baselines
 
-- [ ] Save native quantiles/samples without premature point reduction.
-- [ ] Score MAE, RMSE, MASE, WQL/pinball, coverage, width, crossing and CRPS where valid.
-- [ ] Extract only admitted official representations into the native table.
-- [ ] Store hidden states and forecast summaries in separate custom-transfer tables.
-- [ ] Run deterministic, shuffled and time-destroyed controls.
+- [x] Save native quantiles/samples without premature point reduction.
+- [ ] Score MAE, RMSE, MASE, WQL/pinball, coverage, width, crossing and CRPS where valid. The
+  downstream funding decision did not require a broader forecast-metric tournament after every
+  route failed incremental value.
+- [x] Extract only exact-route official representations/native forecasts into typed native tables.
+- [x] Keep official embeddings, forecast tensors and custom/native-best views separate; no custom
+  hidden-state pooling was relabeled as an official representation.
+- [x] Run deterministic, shuffled-label, random-feature and time-destroyed controls.
 
 ## Phase 5 — identical downstream ruler
 
-- [ ] Causal-only baseline.
-- [ ] Official-embedding-only baseline.
-- [ ] Native-forecast-feature-only baseline.
-- [ ] Causal + embedding.
-- [ ] Causal + forecast features.
-- [ ] Residual-over-causal primary incremental-information test.
-- [ ] Low-variance linear ruler plus capacity-controlled nonlinear sensitivity.
-- [ ] Nested chronological preprocessing, calibration and threshold selection.
-- [ ] Identical concurrency, fees, zero-tick primary and frozen one-tick sensitivity.
-- [ ] Paired calendar/root blocks, stream macro, per-timeframe and effective-sample-size reports.
+- [x] Causal-only baseline.
+- [x] Official-embedding-only baseline.
+- [x] Native-forecast-feature-only baseline.
+- [x] Causal + embedding.
+- [x] Causal + forecast features.
+- [x] Residual-over-causal primary incremental-information test.
+- [x] Low-variance linear ruler with target-independent train-fold PCA.
+- [ ] **NOT FUNDED:** capacity-controlled nonlinear sensitivity; no route passed the frozen linear
+  screen policy.
+- [ ] Nested chronological calibration and trading-threshold selection; no route reached this gate.
+- [ ] Identical concurrency, fees, zero-tick primary and frozen one-tick sensitivity; no route
+  reached the trading ruler.
+- [x] Paired root×calendar-week blocks and equal-root macro sampling for the primary one-minute
+  screen. Broader per-timeframe/effective-sample-size reports remain blocked on authentic session
+  authority.
 
 ## Phase 6 — family-native adaptation
 
-- [ ] Fail closed unless the family passed Phase 2, Phase 3 is sealed, and its Phase 4/5 frozen
-  baseline and identical downstream ruler are complete.
-- [ ] Replace flat `adaptation_routes` strings with hash-bound, route-specific training contracts;
+- [x] Fail closed unless the family passed Phase 2, the available development data authority was
+  externally receipt-bound, and its frozen common-information downstream ruler completed. No route
+  passed the final downstream gate.
+- [x] Replace flat `adaptation_routes` strings with hash-bound, route-specific training contracts;
   explicitly classify every route as upstream-native, native-derived, custom research-only or
   unsupported. A listed route is not an admission.
-- [ ] Version the training-evidence gate so prefix invariance, channel/group semantics,
+- [x] Version the training-evidence gate so prefix invariance, channel/group semantics,
   context/horizon bounds, scaling/masks, batch partitioning, corrupted/shuffled controls,
   sampler/next-batch continuity and deployment preprocessing parity cannot be bypassed by the four
   legacy training checks alone.
-- [ ] Match unique parent-window exposure and record token/patch/compute budgets.
-- [ ] Run every branch directly from pinned vanilla.
-- [ ] Use only supported native objectives and trainable surfaces.
-- [ ] Compare every adapted arm with its own frozen/native parent.
-- [ ] Do not promote from descriptive probe gains.
-- [ ] Require three seeds for any promotable result.
+- [x] Match bounded pilot parent-window exposure and record exact schedules, stream counts and
+  deployment/checkpoint bundles.
+- [x] Run every implemented branch directly from pinned vanilla; the Kronos Mini predictor alone
+  consumes the same-arm tokenizer pilot required by its catalog lineage.
+- [x] Use only supported native objectives and trainable surfaces.
+- [x] Compare every adapted arm with its own frozen/native parent at the pilot objective and common
+  downstream ruler.
+- [x] Do not promote from descriptive native-loss gains. All five pilot survivors failed the
+  incremental-information gate and were stopped.
+- [ ] Require three seeds for any promotable result. No route became promotable, so additional seeds
+  were not funded.
 
 ## Phase 7 — supervised barrier and custom SSL
 

@@ -19,11 +19,13 @@ from futures_foundation.finetune.event_contexts import (
 )
 
 
-SCHEMA_VERSION = "ffm_downstream_sample_v3"
+SCHEMA_VERSION = "ffm_downstream_sample_v4"
 FOLD_SCHEMA_VERSION = "ffm_purged_calendar_folds_v3"
 INTERVAL_FOLD_SCHEMA_VERSION = "ffm_purged_interval_folds_v3"
 SELECTION_SCHEMA_VERSION = "ffm_downstream_row_selection_v3"
-LEGACY_SAMPLE_SCHEMA_VERSIONS = {"ffm_downstream_sample_v1", "ffm_downstream_sample_v2"}
+LEGACY_SAMPLE_SCHEMA_VERSIONS = {
+    "ffm_downstream_sample_v1", "ffm_downstream_sample_v2", "ffm_downstream_sample_v3",
+}
 LEGACY_SELECTION_SCHEMA_VERSIONS = {
     "ffm_downstream_row_selection_v1", "ffm_downstream_row_selection_v2",
 }
@@ -194,6 +196,9 @@ def build_balanced_sample(
             "selected_event_tag_counts": selected_tag_counts,
             "first_shard_row": int(selected[0]),
             "last_shard_row": int(selected[-1]),
+            "session_gap_capability": manifest["metadata"].get(
+                "session_gap_capability"
+            ),
         }
 
     if not source_shards:

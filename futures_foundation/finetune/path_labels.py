@@ -29,9 +29,14 @@ import numpy as np
 import pandas as pd
 
 from futures_foundation.pipeline._primitives import compute_atr
+from futures_foundation.session_gap import (
+    VerifiedSessionGapCapability,
+    require_session_gap_capability,
+    verified_session_edge_mask,
+)
 
 
-SCHEMA_VERSION = "ffm_dense_path_labels_v3"
+SCHEMA_VERSION = "ffm_dense_path_labels_v4"
 
 BARRIER_NEITHER = np.int8(0)
 BARRIER_FAVORABLE_FIRST = np.int8(1)
@@ -210,6 +215,7 @@ def build_dense_path_labels(
     config: PathLabelConfig | None = None,
     causal_scale: np.ndarray | None = None,
     context_direction: np.ndarray | None = None,
+    session_gap_capability: VerifiedSessionGapCapability | None = None,
 ) -> dict[str, object]:
     """Materialize dense path targets for one sorted, roll-identified OHLC stream.
 
@@ -257,7 +263,20 @@ def build_dense_path_labels(
     time_to_adverse_minutes = np.full_like(barrier_state, -1, dtype=np.int32)
     policy_r_gross = np.full(barrier_state.shape, np.nan, dtype=np.float32)
 
-    bad_cadence = np.diff(ts) != expected_ns
+    if session_gap_capability is None:
+        edge_valid = np.diff(ts) == expected_ns
+        session_manifest = None
+        horizon_basis = "elapsed_utc_minutes_exact_cadence_v1"
+    else:
+        session_gap_capability = require_session_gap_capability(session_gap_capability)
+        edge_valid = verified_session_edge_mask(
+            pd.to_datetime(ts, utc=True),
+            expected_delta=pd.Timedelta(expected_ns, unit="ns"),
+            capability=session_gap_capability,
+        )
+        session_manifest = session_gap_capability.manifest()
+        horizon_basis = "admitted_bar_minutes_across_verified_sessions_v1"
+    bad_cadence = ~edge_valid
     bad_cadence_prefix = np.r_[0, np.cumsum(bad_cadence, dtype=np.int64)]
     bar_ok = np.isfinite(o) & np.isfinite(h) & np.isfinite(l) & np.isfinite(c)
     bad_bar_prefix = np.r_[0, np.cumsum(~bar_ok, dtype=np.int64)]
@@ -334,8 +353,11 @@ def build_dense_path_labels(
         low_windows = np.lib.stride_tricks.sliding_window_view(l[1:], steps)
         max_high = np.max(high_windows, axis=1)
         min_low = np.min(low_windows, axis=1)
-        up_mfe = (max_high - c[rows]) / scale[rows]
-        down_mae = (c[rows] - min_low) / scale[rows]
+        # Excursion is measured from the decision price with zero as an admitted
+        # baseline.  A full future window may gap below (or above) the decision
+        # price, but maximum favorable/adverse excursion cannot be negative.
+        up_mfe = np.maximum(max_high - c[rows], 0.0) / scale[rows]
+        down_mae = np.maximum(c[rows] - min_low, 0.0) / scale[rows]
 
         values = {
             "terminal_move_r": terminal_r,
@@ -372,8 +394,11 @@ def build_dense_path_labels(
             "price_change_basis": "raw_price_increment_over_decision_time_causal_atr_v1",
             "forward_realized_vol": "std_future_raw_price_increments_over_decision_time_causal_atr_v1",
             "forward_trend_eff": "absolute_terminal_price_change_over_path_absolute_price_change_v1",
+            "horizon_basis": horizon_basis,
+            "barrier_time_basis": "admitted_bar_minutes_v1",
             "negative_prices_supported": True,
         },
+        "session_gap_capability": session_manifest,
         "config": asdict(config),
         "timeframe_minutes": int(timeframe_minutes),
         "horizons_minutes": horizons,
@@ -402,6 +427,7 @@ def path_label_fingerprint(labels: dict[str, object]) -> str:
         "config": labels["config"],
         "timeframe_minutes": labels["timeframe_minutes"],
         "target_semantics": labels["target_semantics"],
+        "session_gap_capability": labels.get("session_gap_capability"),
     }
     digest.update(json.dumps(scalar, sort_keys=True, separators=(",", ":")).encode())
     for key in sorted(labels):

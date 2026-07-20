@@ -15,6 +15,31 @@ from futures_foundation.finetune.native_contracts import NativeContractError
 
 BLOCKED = "optimizer entrypoint"
 
+GATED_OPTIMIZER_MODULES = {
+    "futures_foundation/extractors/chronos/finetune.py",
+    "futures_foundation/extractors/chronos/shape_adapter.py",
+    "futures_foundation/finetune/classifiers/mantis/_torch.py",
+    "futures_foundation/finetune/pretext/_torch/common.py",
+}
+EXACT_ROUTE_OPTIMIZER_MODULES = {
+    "futures_foundation/finetune/routes/chronos_bolt.py",
+    "futures_foundation/finetune/routes/chronos_v1.py",
+    "futures_foundation/finetune/routes/moment_reconstruction.py",
+    "futures_foundation/finetune/routes/kronos_tokenizer.py",
+    "futures_foundation/finetune/routes/kronos_predictor.py",
+    "futures_foundation/finetune/routes/chronos2_native.py",
+    "futures_foundation/finetune/routes/mantis_native.py",
+    "futures_foundation/finetune/routes/moirai2_research.py",
+    "futures_foundation/finetune/routes/moment_tasks.py",
+    "futures_foundation/finetune/routes/timesfm_lora.py",
+    "futures_foundation/finetune/routes/ttm_native.py",
+}
+PRE_ADMISSION_SMOKE_SCRIPTS = {
+    "smoke_kronos_predictor_route.py",
+    "smoke_kronos_tokenizer_route.py",
+    "smoke_moment_reconstruction_route.py",
+}
+
 
 def test_ssl_orchestrator_fails_before_configuration_or_data(monkeypatch):
     from futures_foundation.finetune import ssl
@@ -91,12 +116,7 @@ def test_all_legacy_mantis_ssl_scripts_reach_the_gated_orchestrator():
 def test_optimizer_call_sites_remain_covered_by_gated_entrypoints():
     """Force conscious review when a new direct backward/step surface is added."""
     repo = Path(__file__).resolve().parents[1]
-    expected = {
-        "futures_foundation/extractors/chronos/finetune.py",
-        "futures_foundation/extractors/chronos/shape_adapter.py",
-        "futures_foundation/finetune/classifiers/mantis/_torch.py",
-        "futures_foundation/finetune/pretext/_torch/common.py",
-    }
+    expected = GATED_OPTIMIZER_MODULES | EXACT_ROUTE_OPTIMIZER_MODULES
     found = {
         path.relative_to(repo).as_posix()
         for path in (repo / "futures_foundation").rglob("*.py")
@@ -104,10 +124,16 @@ def test_optimizer_call_sites_remain_covered_by_gated_entrypoints():
         or ".step(" in path.read_text(encoding="utf-8")
     }
     assert found == expected
-    for relative in expected:
+    for relative in GATED_OPTIMIZER_MODULES:
         assert "block_unadmitted_optimizer(" in (repo / relative).read_text(
             encoding="utf-8"
         )
+    for relative in EXACT_ROUTE_OPTIMIZER_MODULES:
+        source = (repo / relative).read_text(encoding="utf-8")
+        assert "capture_training_state" in source
+        assert "load_export_bundle" in source
+        assert "training_admitted" not in source
+        assert "block_unadmitted_optimizer(" not in source
 
 
 def test_optimizer_bearing_scripts_fail_at_train_entry_before_work():
@@ -126,6 +152,12 @@ def test_optimizer_bearing_scripts_fail_at_train_entry_before_work():
             scripts.append((path, source))
     assert scripts, "optimizer-bearing script scan unexpectedly found no handlers"
     for path, source in scripts:
+        if path.name in PRE_ADMISSION_SMOKE_SCRIPTS:
+            assert "synthetic" in source.lower()
+            assert "market_data_read" in source and "False" in source
+            assert "build_route_smoke_evidence" in source
+            assert "load_adaptation_data" not in source
+            continue
         tree = ast.parse(source, filename=str(path))
         train = next(
             (node for node in tree.body if isinstance(node, ast.FunctionDef)

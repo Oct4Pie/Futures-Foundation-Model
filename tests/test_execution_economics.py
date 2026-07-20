@@ -105,6 +105,60 @@ def test_schedule_rejects_values_that_disagree_with_pinned_source(tmp_path):
         )
 
 
+def test_schedule_and_source_reject_symlink_and_hardlink_transport(tmp_path):
+    path = _temporary_schedule(tmp_path)
+    schedule_link = tmp_path / "economics-link.yaml"
+    schedule_link.symlink_to(path)
+    with pytest.raises(ValueError, match="symlink"):
+        load_execution_economics(
+            schedule_link,
+            evaluation_start="2024-01-01T00:00:00Z",
+            evaluation_end="2024-12-31T00:00:00Z",
+        )
+
+    schedule_hardlink = tmp_path / "economics-hardlink.yaml"
+    schedule_hardlink.hardlink_to(path)
+    with pytest.raises(ValueError, match="bounded regular file"):
+        load_execution_economics(
+            path,
+            evaluation_start="2024-01-01T00:00:00Z",
+            evaluation_end="2024-12-31T00:00:00Z",
+        )
+
+    fresh = _temporary_schedule(tmp_path / "source-link")
+    source = tmp_path / "source-link/repo/source/instruments.yaml"
+    target = source.with_name("instruments-real.yaml")
+    source.rename(target)
+    source.symlink_to(target)
+    with pytest.raises(ValueError, match="symlink"):
+        load_execution_economics(
+            fresh,
+            evaluation_start="2024-01-01T00:00:00Z",
+            evaluation_end="2024-12-31T00:00:00Z",
+        )
+
+
+def test_schedule_rejects_yaml_aliases_and_oversized_inputs(tmp_path):
+    path = _temporary_schedule(tmp_path)
+    path.write_text(path.read_text() + "alias_probe: &probe [1]\nalias_copy: *probe\n")
+    with pytest.raises(ValueError, match="anchors or aliases"):
+        load_execution_economics(
+            path,
+            evaluation_start="2024-01-01T00:00:00Z",
+            evaluation_end="2024-12-31T00:00:00Z",
+        )
+
+    oversized = _temporary_schedule(tmp_path / "oversized")
+    with oversized.open("a") as stream:
+        stream.write("#" + "x" * (4 * 1024 * 1024) + "\n")
+    with pytest.raises(ValueError, match="bounded regular file"):
+        load_execution_economics(
+            oversized,
+            evaluation_start="2024-01-01T00:00:00Z",
+            evaluation_end="2024-12-31T00:00:00Z",
+        )
+
+
 def test_schedule_rejects_source_hash_drift_and_undeclared_slippage(tmp_path):
     path = _temporary_schedule(tmp_path)
     source_path = tmp_path / "repo/source/instruments.yaml"

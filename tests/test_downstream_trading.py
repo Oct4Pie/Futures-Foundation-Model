@@ -1,6 +1,7 @@
 import hashlib
 import json
 import numpy as np
+import pandas as pd
 import pytest
 import subprocess
 import sys
@@ -10,7 +11,13 @@ from futures_foundation.execution_economics import load_execution_economics
 from futures_foundation.finetune.downstream_trading import (
     build_policy_events, load_policy_events, save_policy_events,
 )
-from futures_foundation.finetune.event_contexts import save_context_shard
+from futures_foundation.finetune.event_contexts import (
+    TAG_NAMES,
+    EventContextConfig,
+    materialize_context_stream,
+    save_context_shard,
+)
+from futures_foundation.finetune.path_labels import PathLabelConfig
 from futures_foundation.finetune.calibration import (
     apply_isotonic_expected_value,
     fit_isotonic_expected_value,
@@ -32,30 +39,65 @@ from scripts.benchmark_downstream_trading import (
 from scripts.analyze_downstream_trading import slippage_r_per_round_trip_tick
 
 
-DECISION_NS = 1_704_067_200_000_000_000
-EXIT_NS = DECISION_NS + 100
-
-
 def _policy_source(tmp_path, *, gross_r=2.0):
     shard = tmp_path / "ES_1min.npz"
-    arrays = dict(
-        tag_names=np.asarray(["supertrend_flip"]), horizons_minutes=np.asarray([60]),
-        targets_r=np.asarray([2.0], np.float32), policy_mode_names=np.asarray(["atr"]),
-        policy_event_context_row=np.asarray([4]), policy_event_tag_index=np.asarray([0], np.int8),
-        policy_event_direction=np.asarray([1], np.int8),
-        policy_valid=np.asarray([[True]]), policy_risk_price=np.asarray([[1.0]], np.float32),
-        policy_risk_ticks=np.asarray([[4.0]], np.float32),
-        policy_barrier_state=np.asarray([[[[1]]]], np.int8),
-        policy_gross_r=np.asarray([[[[gross_r]]]], np.float32),
-        policy_reached=np.asarray([[[[True]]]]),
-        policy_exit_time_ns=np.asarray([[[[EXIT_NS]]]], np.int64),
+    rows = 900
+    rng = np.random.default_rng(12)
+    close = 100.0 + np.cumsum(rng.normal(0.0, 0.25, rows))
+    open_ = np.r_[close[0], close[:-1]]
+    width = rng.uniform(0.05, 0.25, rows)
+    frame = pd.DataFrame({
+        "datetime": pd.date_range("2024-01-01", periods=rows, freq="1min", tz="UTC"),
+        "open": open_, "high": np.maximum(open_, close) + width,
+        "low": np.minimum(open_, close) - width, "close": close,
+        "volume": rng.integers(1, 1000, rows),
+        "contract_id": "ESH4", "source_row_idx": np.arange(rows),
+    })
+    config = EventContextConfig(
+        eval_start=str(frame["datetime"].iloc[0]),
+        eval_end=str(frame["datetime"].iloc[-1] + pd.Timedelta(minutes=1)),
+        context_bars=256,
+        path=PathLabelConfig(
+            horizons_minutes=(60,), targets_r=(2.0,),
+            atr_period=20, context_minutes=10, barrier_chunk_rows=64,
+        ),
     )
-    manifest = save_context_shard(
-        shard, arrays, {
-            "config": {"context_bars": 256},
-            "execution_economics": _execution_costs().manifest(),
-        },
+    arrays, metadata = materialize_context_stream(
+        frame, ticker="ES", timeframe="1min",
+        config=config, execution_economics=_execution_costs(),
     )
+    context_row = 4
+    tag_index = TAG_NAMES.index("supertrend_flip")
+    arrays["tags"][:] = False
+    arrays["tag_direction"][:] = 0
+    arrays["tag_origin_source_idx"][:] = -1
+    arrays["tag_htf_agreement"][:] = False
+    arrays["tags"][context_row, tag_index] = True
+    arrays["tag_direction"][context_row, tag_index] = 1
+    arrays["tag_origin_source_idx"][context_row, tag_index] = arrays["decision_source_idx"][context_row]
+    arrays["htf_direction"][context_row] = 1
+    arrays["tag_htf_agreement"][context_row, tag_index] = True
+
+    decision_ns = int(arrays["decision_time_ns"][context_row])
+    exit_ns = decision_ns + 100
+    arrays["policy_mode_names"] = np.asarray(("atr_stop", "structural_stop"))
+    arrays["policy_event_context_row"] = np.asarray([context_row], np.int64)
+    arrays["policy_event_tag_index"] = np.asarray([tag_index], np.int8)
+    arrays["policy_event_direction"] = np.asarray([1], np.int8)
+    arrays["policy_valid"] = np.asarray([[True, False]])
+    arrays["policy_risk_price"] = np.asarray([[1.0, np.nan]], np.float32)
+    arrays["policy_risk_ticks"] = np.asarray([[4.0, np.nan]], np.float32)
+    arrays["policy_barrier_state"] = np.asarray([[[[1]], [[-1]]]], np.int8)
+    arrays["policy_gross_r"] = np.asarray([[[[gross_r]], [[np.nan]]]], np.float32)
+    arrays["policy_reached"] = np.asarray([[[[True]], [[False]]]])
+    arrays["policy_exit_time_ns"] = np.asarray([[[[exit_ns]], [[-1]]]], np.int64)
+    metadata["event_rows"] = 1
+    metadata["policy_events"] = 1
+    metadata["tag_counts"] = {
+        name: int(arrays["tags"][:, index].sum())
+        for index, name in enumerate(TAG_NAMES)
+    }
+    manifest = save_context_shard(shard, arrays, metadata)
     manifest_path = tmp_path / "ES_1min.npz.manifest.json"
     source_info = {
         "path": str(shard),
@@ -64,15 +106,15 @@ def _policy_source(tmp_path, *, gross_r=2.0):
         "manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
         "content_fingerprint": manifest["content_fingerprint"],
     }
-    return shard, manifest_path, source_info
-
-
-def _policy_sample():
-    return {
-        "stream_id": np.asarray(["ES@1min"]), "shard_row": np.asarray([4]),
-        "decision_time_ns": np.asarray([DECISION_NS]), "ticker": np.asarray(["ES"]),
-        "timeframe": np.asarray(["1min"]), "tag_names": np.asarray(["supertrend_flip"]),
+    sample = {
+        "stream_id": np.asarray(["ES@1min"]),
+        "shard_row": np.asarray([context_row]),
+        "decision_time_ns": np.asarray([decision_ns]),
+        "ticker": np.asarray(["ES"]),
+        "timeframe": np.asarray(["1min"]),
+        "tag_names": np.asarray(TAG_NAMES),
     }
+    return shard, manifest_path, source_info, sample, exit_ns
 
 
 def _execution_costs():
@@ -85,8 +127,7 @@ def _execution_costs():
 
 
 def test_build_policy_events_applies_capability_costs_to_gross_outcomes(tmp_path):
-    _, _, source_info = _policy_source(tmp_path)
-    sample = _policy_sample()
+    _, _, source_info, sample, exit_ns = _policy_source(tmp_path)
 
     arrays, metadata = build_policy_events(
         sample, np.asarray([0]), {"ES@1min": source_info}, _execution_costs(),
@@ -94,45 +135,45 @@ def test_build_policy_events_applies_capability_costs_to_gross_outcomes(tmp_path
     )
 
     assert metadata["rows"] == 1
-    assert arrays["policy_key"].item() == "supertrend_flip__atr__60m__2R"
+    assert arrays["policy_key"].item() == "supertrend_flip__atr_stop__60m__2R"
     assert arrays["gross_r"].item() == 2.0
     assert arrays["barrier_state"].item() == 1
     assert arrays["slippage_r"].item() == 0.25
     assert arrays["fee_r"].item() == pytest.approx(4.36 / 50.0)
     assert arrays["realized_r"].item() == pytest.approx(2.0 - 0.25 - 4.36 / 50.0)
-    assert arrays["exit_time_ns"].item() == EXIT_NS
+    assert arrays["exit_time_ns"].item() == exit_ns
 
 
 def test_build_policy_events_rejects_manifest_tampering_even_if_caller_rehashes_it(tmp_path):
-    _, manifest_path, source_info = _policy_source(tmp_path)
+    _, manifest_path, source_info, sample, _ = _policy_source(tmp_path)
     document = json.loads(manifest_path.read_text())
     document["metadata"]["config"]["context_bars"] = 128
     manifest_path.write_text(json.dumps(document))
     source_info["manifest_sha256"] = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
     with pytest.raises(ValueError, match="content fingerprint mismatch"):
         build_policy_events(
-            _policy_sample(), np.asarray([0]), {"ES@1min": source_info}, _execution_costs(),
+            sample, np.asarray([0]), {"ES@1min": source_info}, _execution_costs(),
             slippage_ticks=0.0,
         )
 
 
 def test_build_policy_events_rejects_missing_gross_outcome_array(tmp_path):
-    shard, _, source_info = _policy_source(tmp_path)
+    shard, _, source_info, sample, _ = _policy_source(tmp_path)
     with np.load(shard, allow_pickle=False) as saved:
         arrays = {key: saved[key] for key in saved.files if key != "policy_gross_r"}
     np.savez_compressed(shard, **arrays)
     source_info["sha256"] = hashlib.sha256(shard.read_bytes()).hexdigest()
     with pytest.raises(ValueError, match="artifact hash mismatch"):
         build_policy_events(
-            _policy_sample(), np.asarray([0]), {"ES@1min": source_info}, _execution_costs(),
+            sample, np.asarray([0]), {"ES@1min": source_info}, _execution_costs(),
             slippage_ticks=0.0,
         )
 
 
 def test_policy_artifact_binds_cost_and_lineage_metadata_and_legacy_is_explicit(tmp_path):
-    _, _, source_info = _policy_source(tmp_path)
+    _, _, source_info, sample, _ = _policy_source(tmp_path)
     arrays, metadata = build_policy_events(
-        _policy_sample(), np.asarray([0]), {"ES@1min": source_info}, _execution_costs(),
+        sample, np.asarray([0]), {"ES@1min": source_info}, _execution_costs(),
         slippage_ticks=0.0,
     )
     path = tmp_path / "policy.npz"

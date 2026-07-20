@@ -18,6 +18,7 @@ import pandas as pd
 import pytest
 
 from futures_foundation.extractors.chronos import finetune as ft  # torch is lazy inside it
+from futures_foundation.finetune.native_contracts import NativeContractError
 from futures_foundation.pipeline import evaluate, strategy
 from futures_foundation.pipeline.head_xgb import XGBHead, XGBRiskHead
 
@@ -110,11 +111,8 @@ def test_finetune_deterministic_and_bounded():
     C = [rng.standard_normal(48).astype('float32') for _ in range(16)]
     Y = rng.integers(0, 3, 16)
     cfg = ft.FTConfig(steps=2, batch=4)
-    m1, h1 = ft.train(C, Y, cfg, seed=0)
-    m2, h2 = ft.train(C, Y, cfg, seed=0)
-    p1, p2 = ft.predict(m1, h1, C), ft.predict(m2, h2, C)
-    assert np.array_equal(p1, p2)                 # same seed -> identical
-    assert len(p1) == 16 and set(np.unique(p1)) <= {0, 1, 2}
+    with pytest.raises(NativeContractError, match='training admission is disabled'):
+        ft.train(C, Y, cfg, seed=0)
 
 
 class _DummyLabeler:

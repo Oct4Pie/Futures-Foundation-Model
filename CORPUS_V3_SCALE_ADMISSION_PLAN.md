@@ -91,6 +91,34 @@ reopens/reverifies a denominator at the materialization boundary rather than ret
 parsed capability state. This is mechanism evidence only because no production 43-root rules,
 scope or denominator artifact exists.
 
+FFM also now has the downstream sessionized coverage/yield consumer required after denominator and
+export production. `ffm_corpus_v3_sessionized_coverage_audit_v1` reopens the denominator capability,
+reopens an exact canonical export index, reruns independent raw-leaf contract-day verification for
+every indexed bundle and rejects any event outside exact denominator segments. It records missing
+open sessions explicitly and is structurally unable to select roots or admit materialization or
+training. The current checked-in index is deliberately empty (physical SHA-256
+`07d95cc48ead4d8a6f45b9f7824ea2ca386fb7bdabbb729c30da7214129e461d`; semantic SHA-256
+`a4b8181fe0a54db5d99000b535f8f9ef2ebfea4cf1d0a97c2885f4078ee72d72`). The complete joined
+consumer, request-binding and materialization compatibility sweep passes 190 tests. This closes
+FFM mechanism wiring only; production scale parents and a nonempty plan-bound index remain absent.
+
+FFM now implements each pre-export authority seam in the fixed dependency order. Producer/split
+artifacts require exact physical hashes and mandatory reopen; provider pagination is metadata-only
+and joined to those semantic identities; lifecycle requires an exact normalized candidate-universe
+artifact and claim-scoped official evidence; expected requests are pure session-segment/lifecycle
+intersections; and inventory/plan artifacts require exact request closure plus canonical source
+path/hash metadata. `ffm_corpus_v3_request_authority_v1` then binds exact selected request
+membership into SSL and event materialization: train/validation uses are checked independently,
+parent windows cannot cross request segments, and event shard v6 reverifies decision plus label
+endpoints against the same plan. The resulting plan remains deliberately non-executable until
+source bytes are reopened under immutable storage and an independent materialization approval is
+supplied.
+
+Operational entrypoints are `scripts/build_corpus_v3_expected_requests.py` and
+`scripts/build_corpus_v3_materialization_plan.py`. They are production-facing wiring, not production
+admission: the only current producer/provider/lifecycle evidence is synthetic fixture evidence and
+the checked-in export index has zero entries.
+
 Official effective-dated rules are authoritative for normal geometry. The pinned calendar library
 is only an independent open/closed and early/late-exception diagnostic because it backfills modern
 hours into older years and still reports the removed US-equity maintenance pause after 2021.

@@ -3,6 +3,7 @@ import os
 import numpy as np
 import pytest
 
+from futures_foundation.finetune.native_contracts import NativeContractError
 
 torch_test = pytest.mark.skipif(
     os.environ.get('CHRONOS_TORCH_TESTS') != '1',
@@ -107,19 +108,9 @@ def test_revised_trainers_smoke_and_emit_encoder_states():
                            rng.integers(100, 1000, len(close)))).astype(np.float32)
     starts = np.arange(0, 1500, dtype=np.int64)
     bounds = np.array([[0, 750], [750, 1500]], np.int64)
-    structure, structure_history = ssl_torch.train_ssl_structure_mask(
-        big, starts, starts, seq=32, mask_ratio=.25, span_mean=4, span_max=8,
-        epochs=1, steps_per_epoch=1, batch=4, device='cpu', verbose=False,
-        train_group_bounds=bounds, val_group_bounds=bounds, val_batches=1,
-    )
-    path, path_history = ssl_torch.train_ssl_path(
-        big, starts, starts, seq=32, path_horizons_minutes=(3, 6),
-        path_context_minutes=3, path_max_future_bars=6, epochs=1, steps_per_epoch=1,
-        batch=4, device='cpu', verbose=False, train_group_bounds=bounds,
-        val_group_bounds=bounds, stream_bar_ns=np.array([60, 3 * 60]) * 1_000_000_000,
-        objective_row_bounds=np.array([[0, len(big)]], np.int64), val_batches=1,
-    )
-    assert set(structure) == set(path)
-    assert np.isfinite(structure_history[-1]['val_loss'])
-    assert np.isfinite(path_history[-1]['val_loss'])
-    assert 'class_acc' in path_history[-1]
+    with pytest.raises(NativeContractError, match='training admission is disabled'):
+        ssl_torch.train_ssl_structure_mask(
+            big, starts, starts, seq=32, mask_ratio=.25, span_mean=4, span_max=8,
+            epochs=1, steps_per_epoch=1, batch=4, device='cpu', verbose=False,
+            train_group_bounds=bounds, val_group_bounds=bounds, val_batches=1,
+        )

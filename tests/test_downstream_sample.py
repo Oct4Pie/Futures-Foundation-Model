@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from futures_foundation.finetune.downstream_sample import (
@@ -15,52 +16,100 @@ from futures_foundation.finetune.downstream_sample import (
     save_row_selection,
     temporally_distributed_rows,
 )
+from futures_foundation.execution_economics import load_execution_economics
 from futures_foundation.finetune.event_contexts import (
-    COLLECTION_SCHEMA_VERSION, SCHEMA_VERSION as CONTEXT_SCHEMA,
+    COLLECTION_SCHEMA_VERSION,
+    POLICY_TAG_NAMES,
+    TAG_NAMES,
+    EventContextConfig,
+    materialize_context_stream,
+    save_context_shard,
 )
-from futures_foundation.finetune.event_contexts import save_context_shard
+from futures_foundation.finetune.path_labels import PathLabelConfig
+
+
+def _event_frame(ticker: str, rows: int = 900) -> pd.DataFrame:
+    seed = sum(ord(character) for character in ticker)
+    rng = np.random.default_rng(seed)
+    close = 100.0 + np.cumsum(rng.normal(0.0, 0.25, rows))
+    open_ = np.r_[close[0], close[:-1]]
+    width = rng.uniform(0.05, 0.25, rows)
+    return pd.DataFrame({
+        "datetime": pd.date_range("2024-01-01", periods=rows, freq="1min", tz="UTC"),
+        "open": open_, "high": np.maximum(open_, close) + width,
+        "low": np.minimum(open_, close) - width, "close": close,
+        "volume": rng.integers(1, 1000, rows),
+        "contract_id": f"{ticker}H4", "source_row_idx": np.arange(rows),
+    })
 
 
 def _shard(path: Path, ticker: str, timeframe: str, n: int = 20, event_rows=()):
-    horizons = np.array([60, 180, 360], np.int32)
-    decision = np.arange(n, dtype=np.int64) * 1_000 + 10_000
-    tags = np.zeros((n, 1), bool)
-    tags[np.asarray(event_rows, np.int64), 0] = True
+    frame = _event_frame(ticker)
+    config = EventContextConfig(
+        eval_start=str(frame["datetime"].iloc[0]),
+        eval_end=str(frame["datetime"].iloc[-1] + pd.Timedelta(minutes=1)),
+        context_bars=256,
+        path=PathLabelConfig(
+            horizons_minutes=(10, 20), targets_r=(1.0, 2.0),
+            atr_period=20, context_minutes=10, barrier_chunk_rows=64,
+        ),
+    )
+    economics = load_execution_economics(
+        Path(__file__).resolve().parents[1] / "config/execution_costs.yaml",
+        evaluation_start="2024-01-01T00:00:00Z",
+        evaluation_end="2025-01-01T00:00:00Z",
+        required_roots=(ticker,),
+    )
+    arrays, metadata = materialize_context_stream(
+        frame, ticker=ticker, timeframe=timeframe,
+        config=config, execution_economics=economics,
+    )
+    source_rows = int(metadata["rows"])
+    assert source_rows >= n
     arrays = {
-        "ticker": np.full(n, ticker), "timeframe": np.full(n, timeframe),
-        "contract_id": np.full(n, f"{ticker}Z4"),
-        "context_start_source_idx": np.arange(n),
-        "decision_source_idx": np.arange(n) + 255,
-        "decision_time_ns": decision, "block_id": np.arange(n) // 4,
-        "sample_weight": np.ones(n, np.float32), "features": np.ones((n, 2), np.float32),
-        "feature_names": np.array(["a", "b"]), "tag_names": np.array(["tag"]),
-        "horizons_minutes": horizons, "targets_r": np.array([1, 2], np.float32),
-        "directions": np.array([1, -1], np.int8), "causal_scale": np.ones(n, np.float32),
-        "context_direction": np.ones(n, np.int8),
-        "contract_segment_id": np.zeros(n, np.int64),
-        "bars_since_contract_start": np.arange(n),
-        "terminal_move_r": np.ones((n, 3), np.float32),
-        "forward_abs_move_r": np.ones((n, 3), np.float32),
-        "forward_realized_vol": np.ones((n, 3), np.float32),
-        "upside_mfe_r": np.ones((n, 3), np.float32),
-        "downside_mae_r": np.ones((n, 3), np.float32),
-        "forward_trend_eff": np.ones((n, 3), np.float32),
-        "label_end_time_ns": decision[:, None] + np.array([100, 200, 300]),
-        "trend_path_class": np.ones((n, 3), np.int8),
-        "barrier_state": np.zeros((n, 3, 2, 2), np.int8),
-        "time_to_favorable_minutes": np.zeros((n, 3, 2, 2), np.int32),
-        "time_to_adverse_minutes": np.zeros((n, 3, 2, 2), np.int32),
-        "policy_r_gross": np.zeros((n, 3, 2, 2), np.float32),
-        "tags": tags, "tag_direction": np.zeros((n, 1), np.int8),
-        "tag_origin_source_idx": np.full((n, 1), -1, np.int64),
-        "tag_htf_agreement": np.zeros((n, 1), bool), "htf_direction": np.zeros(n, np.int8),
+        name: (value[:n].copy() if value.ndim and value.shape[0] == source_rows else value.copy())
+        for name, value in arrays.items()
     }
-    metadata = {
-        "schema_version": CONTEXT_SCHEMA, "ticker": ticker, "timeframe": timeframe,
-        "rows": n, "source_rows": n, "event_rows": int(tags.any(1).sum()),
-        "policy_events": 0, "config": {}, "split": {"oos_read": False},
-        "tag_counts": {"tag": int(tags.sum())},
+
+    tag_index = TAG_NAMES.index("fractal_zigzag")
+    tags = np.zeros((n, len(TAG_NAMES)), dtype=bool)
+    selected = np.asarray(event_rows, np.int64)
+    tags[selected, tag_index] = True
+    _, inverse, counts = np.unique(
+        arrays["block_id"], return_inverse=True, return_counts=True,
+    )
+    block_weight = 1.0 / counts[inverse].astype(np.float64)
+    arrays["sample_weight"] = (block_weight / block_weight.mean()).astype(np.float32)
+    arrays["tags"] = tags
+    arrays["tag_direction"] = np.zeros(tags.shape, np.int8)
+    arrays["tag_direction"][selected, tag_index] = 1
+    arrays["tag_origin_source_idx"] = np.full(tags.shape, -1, np.int64)
+    arrays["tag_origin_source_idx"][selected, tag_index] = arrays["decision_source_idx"][selected]
+    arrays["htf_direction"] = np.ones(n, np.int8)
+    arrays["tag_htf_agreement"] = tags.copy()
+
+    horizon_count = len(arrays["horizons_minutes"])
+    target_count = len(arrays["targets_r"])
+    arrays["policy_mode_names"] = np.asarray(("atr_stop", "structural_stop"))
+    arrays["policy_event_context_row"] = np.empty(0, np.int64)
+    arrays["policy_event_tag_index"] = np.empty(0, np.int8)
+    arrays["policy_event_direction"] = np.empty(0, np.int8)
+    arrays["policy_valid"] = np.empty((0, 2), bool)
+    arrays["policy_risk_price"] = np.empty((0, 2), np.float32)
+    arrays["policy_risk_ticks"] = np.empty((0, 2), np.float32)
+    policy_shape = (0, 2, horizon_count, target_count)
+    arrays["policy_barrier_state"] = np.empty(policy_shape, np.int8)
+    arrays["policy_gross_r"] = np.empty(policy_shape, np.float32)
+    arrays["policy_reached"] = np.empty(policy_shape, bool)
+    arrays["policy_exit_time_ns"] = np.empty(policy_shape, np.int64)
+
+    metadata["rows"] = n
+    metadata["event_rows"] = int(tags.any(axis=1).sum())
+    metadata["policy_events"] = 0
+    metadata["tag_counts"] = {
+        name: int(tags[:, index].sum()) for index, name in enumerate(TAG_NAMES)
     }
+    assert "fractal_zigzag" not in POLICY_TAG_NAMES
     return save_context_shard(path, arrays, metadata)
 
 
@@ -135,7 +184,7 @@ def test_event_sample_retains_rare_events_and_caps_common_events_per_stream(tmp_
     }))
 
     arrays, metadata = build_balanced_sample(
-        collection, rows_per_stream=4, event_tags=("tag",),
+        collection, rows_per_stream=4, event_tags=("fractal_zigzag",),
     )
 
     selected = {
@@ -144,7 +193,8 @@ def test_event_sample_retains_rare_events_and_caps_common_events_per_stream(tmp_
     }
     assert selected["ES@1min"] == [1, 7]
     assert len(selected["NQ@1min"]) == 4
-    assert arrays["tags"].all()
+    tag_index = np.flatnonzero(arrays["tag_names"] == "fractal_zigzag").item()
+    assert arrays["tags"][:, tag_index].all()
     assert metadata["selection"]["method"] == "event_tag_stratified_midpoint_quantiles"
     total_weight = {
         stream: float(arrays["sample_weight"][arrays["stream_id"] == stream].sum())

@@ -228,19 +228,26 @@ verification item is also checked.
 - [x] Gate every currently discovered direct Torch optimizer/backward entrypoint, including all
   optimizer-bearing scripts, before model/data/checkpoint/output access. The scan is derived from
   code call sites rather than a duplicated route list.
-- [ ] Add raw route-evidence bundles keyed by arm, track, route, template hash and route-instance
-  hash. Require route-specific FP32 smokes, controls, exact next-batch/loss resume and deployment
-  parity before any optimizer can be authorized.
+- [x] Add raw route-evidence bundles keyed by arm, track, route and route-profile hash. Require
+  route-specific FP32 smokes, controls, exact interruption/resume and deployment parity before a
+  bounded pilot may run. Five exact routes passed; Kronos Small tokenizer failed both chronology
+  controls. No optimizer was authorized for full training.
 - [ ] Admit or explicitly exclude each arm through its architecture-specific training contract;
   do not force forecast-only families through the Mantis Stage 1→2→3 lineage.
 
-- [ ] **BLOCKED:** Kronos-mini.
-- [ ] **BLOCKED:** Kronos-small.
-- [ ] **BLOCKED:** MOMENT-small.
+- [ ] **NOT FUNDED:** Kronos Mini tokenizer and predictor passed native smoke/pilot gates but the
+  predictor failed the frozen common-information incremental ruler. The tokenizer is a 528-past-bar
+  parent route and was not misrepresented as a 512-bar primary feature arm.
+- [ ] **BLOCKED:** Kronos Small tokenizer has an exact executor but failed both shuffled/time-
+  destroyed chronology controls; its predictor parent chain was not opened.
+- [ ] **NOT FUNDED:** MOMENT-small reconstruction passed native smoke/pilot gates but failed the
+  frozen incremental ruler with three primary-target degradations and no positive adjusted CI.
 - [ ] **BLOCKED:** MantisV1.
 - [ ] **BLOCKED:** MantisV2.
-- [ ] **BLOCKED:** Chronos V1.
-- [ ] **BLOCKED:** Chronos Bolt.
+- [ ] **NOT FUNDED:** Chronos V1 passed native smoke/pilot gates but failed the frozen incremental
+  ruler with four primary-target degradations and no positive adjusted CI.
+- [ ] **NOT FUNDED:** Chronos Bolt passed native smoke/pilot gates but failed the frozen incremental
+  ruler with four primary-target degradations and no positive adjusted CI.
 - [ ] **BLOCKED:** Chronos V2.
 - [ ] **BLOCKED:** TimesFM 2.5.
 - [ ] **BLOCKED:** TTM-R2.
@@ -267,6 +274,23 @@ verification item is also checked.
   1,250 passed,
   98 skipped and 8 warnings; the extracted wheel imported the new typed modules outside the
   checkout. Skipped native routes remain blocked rather than inferred ready.
+- [x] Close the local training-data integrity mechanisms without granting training authority:
+  strict current event-shard semantics, externally SHA-bound cache schema v3 receipts, bounded
+  no-follow economics transport and an independently reverified session-gap capability for SSL
+  window/objective construction. Event-context v4 still rejects session-spanning materialization,
+  and no production source/session authority has been published.
+- [x] Add a non-authorizing native-training readiness audit. It now measures 42 catalog routes,
+  23 exact executors, 17 fully closed unsupported routes, two externally blocked in-context routes,
+  zero candidate mismatches and zero unspecified implementations. Twenty-one exact routes pass all
+  20 smoke checks; Kronos Small tokenizer has current failed-control evidence and its predictor is
+  parent-blocked. All 23 exact routes have terminal pilot and downstream dispositions: 15 bounded
+  pilots completed, nine survived their native objective, eight common-information screens completed,
+  and zero survived or became training-admitted. Six classification routes are explicitly blocked on
+  governed label authority rather than left unfinished.
+- [x] Reverify the completed checkout: default suite `1392 passed, 98 skipped, 8 warnings`; optional
+  Torch suite `1479 passed, 11 skipped, 37 warnings`; isolated Chronos/XGBoost suite
+  `17 passed`. Retired production optimizers remain kill-switched; only named synthetic
+  smoke tools and exact route mechanics may execute pre-admission evidence.
 - [x] Bind v2 templates to exact catalog routes; self-supplied family/governance maps cannot
   attest a template.
 - [x] Resolve every route-instance data/session/lifecycle/roll/label reference through its typed
@@ -274,8 +298,74 @@ verification item is also checked.
   current authority is deliberately blocked until its six governed inputs exist.
 - [x] Require full parent route keys, template hashes, exact slot/cardinality and arm-compatible
   lineage on every DAG edge.
-- [ ] Produce route-specific synthetic/non-OOS smoke evidence and obtain two independent approvals
-  before changing any route from blocked.
+- [x] Produce exact route-specific synthetic/non-OOS smoke evidence for every internally supported
+  executor and bounded pilot evidence for every unlabeled native objective. Fifteen pilots completed:
+  nine survived and six were eliminated. The six classification routes are terminally blocked on
+  governed labels; the common downstream gate rejected every surviving route with a compatible
+  information view, so no route changed to training-admitted.
+
+### Gate 6 end-to-end native route decision — 2026-07-19
+
+- [x] Rebuild the authority-bound 54-stream cache under current transformation bytes. Receipt:
+  `41281860ff1ef3474e226d22a2df504e97f8d348839fce8d2438689d160b9e0a`; interval
+  `[2019-07-01,2025-07-01)`; `contains_oos=false`; `training_admitted=false`.
+- [x] Complete 15 native-objective pilots. Nine survive: Bolt `+2.51%`, Chronos V1 `+1.13%`,
+  MOMENT reconstruction `+40.02%`, Kronos Mini tokenizer `+3.18%`, Mini predictor `+1.20%`,
+  Mantis V1 contrastive `+97.32%`, Mantis V2 contrastive `+66.83%`, MOMENT forecast full
+  `+22.95%`, and MOMENT forecast head-only `+22.87%`. TTM full/head, TimesFM LoRA,
+  Chronos-2 full/LoRA and research-only Moirai are eliminated by the frozen 1% pilot gate.
+- [x] Build the strict one-minute downstream development ruler from nine v4 shards, 416,191
+  decision rows, a 10,800-row equal-root sample and a frozen 2,700-row/300-per-root screen. The
+  maximum common purged contract is two folds because a third empties ZB after the 512-minute
+  embargo; fold hash `d460f60d442407cb207a63d907bba5b85a84a8ee362f78c959d46de4cc52cdf1`.
+- [x] Preserve full native outputs for MOMENT embeddings/forecasts, Bolt quantiles, Chronos V1
+  samples, Kronos Mini joint forecasts and Mantis per-channel representations. Run the frozen
+  five-target causal/model/combined/residual linear ruler with 32 train-fold PCA components,
+  model controls and 500 root×week bootstrap repetitions.
+- [x] Reject all eight evaluated routes. Legacy results remain MOMENT `(3,2,3,0)`, Bolt `(1,1,4,0)`,
+  Chronos V1 `(1,1,4,0)` and Kronos Mini predictor `(3,0,5,0)`, expressed as
+  `(control wins, point wins, degradations, adjusted-CI wins)`. New results are Mantis V1
+  `(4,3,2,0)`, Mantis V2 `(3,4,1,0)`, MOMENT forecast full `(0,0,5,0)` and MOMENT forecast
+  head-only `(0,0,5,0)`. No nonlinear sensitivity or full training was funded.
+- [x] Seal aggregate downstream-screen hash
+  `e74d0b5476e7dead9bfcecb2430abc8b53ee64a8bf1ee90bf020f71084e29597` and readiness hash
+  `5583b6d9dc975dd62a88fe1102fbb38fc9567447c773a4497574165b3d5c126f`.
+- [x] Build and externally import wheel SHA-256
+  `13540578b3fd6050b78572978fd341dd8e3d0bf605c6901ce6e7419099378672` (37,735,883 bytes).
+  No OOS evaluation, deployment, paper trading or live trading was performed.
+
+### Gate 6 configuration verification — 2026-07-19
+
+- [x] Replace the broad assumption that every model setting was already current with a
+  cross-layer configuration audit. The audit covers all 15 model identities, 42 routes and 29
+  profiles, and compares all 23 exact executors to their effective Python optimizer, scheduler,
+  preprocessing, timezone, horizon, channel, parent, target and export settings.
+- [x] Correct the discovered material mismatches: Kronos calendar features are now consistently
+  CME-local (`America/Chicago`) over the UTC source timeline; unsupported gradient accumulation
+  and warmup ranges were removed; tokenizer-only routes no longer claim timestamp inputs; Chronos
+  forecast routes no longer claim hidden states/tokens absent from their deployment bundles; and
+  Kronos OneCycle beta1 cycling is explicit.
+- [x] Regenerate a clean-wheel, current-registry native parity matrix for all 16 technically
+  admitted F/R tracks. Aggregate SHA-256:
+  `c9fe0cd39fed22297ca52fab2cf42074d3e6f7034608326674c88db6734f015d`.
+  The cross-layer configuration report has zero discrepancies and SHA-256
+  `a32d731ed5b7e521ee003e18aaf982b954f856f8a8595dc230138108fca7b374`.
+- [x] Regenerate all exact smoke, pilot, native-feature and downstream-screen evidence after the
+  corrected catalog and executor hashes. Twenty-one routes pass all 20 smoke checks; Kronos Small
+  tokenizer again fails both chronology controls and its predictor remains parent-blocked.
+  Fifteen pilots complete, nine survive, and all eight compatible common-information routes fail
+  incremental funding. Screen collection SHA-256:
+  `e74d0b5476e7dead9bfcecb2430abc8b53ee64a8bf1ee90bf020f71084e29597`;
+  readiness SHA-256:
+  `5583b6d9dc975dd62a88fe1102fbb38fc9567447c773a4497574165b3d5c126f`.
+- [x] Preserve the distinction between consistency and readiness. Thirteen identities have a
+  technically admitted current native track; the two TabPFN identities remain externally blocked.
+  All 23 internally supported training routes have exact executors, 21 have passing smoke, one has
+  failed smoke and one is parent-blocked. Every exact route has a terminal pilot/downstream
+  disposition: 15 measured pilots, six label-authority blocks, one smoke-control block and one
+  parent block; nine native survivors, eight measured downstream failures and one predeclared
+  528-vs-512 information-view exclusion. No full training, OOS, deployment, paper trading or live
+  trading is admitted.
 
 ## Gate 7 — confirmation and deployment
 

@@ -25,6 +25,11 @@ def main() -> None:
         default="output/foundation_tournament/data_cache/TOURNAMENT_CACHE.json",
     )
     parser.add_argument(
+        "--cache-manifest-sha256",
+        required=True,
+        help="externally recorded SHA-256 of the canonical cache manifest",
+    )
+    parser.add_argument(
         "--output",
         default="output/foundation_tournament/downstream_gate_v1/contexts.npz",
     )
@@ -43,7 +48,11 @@ def main() -> None:
         }, indent=2))
         return
     arrays, metadata = build_downstream_contexts(
-        sample, sample_manifest, args.cache_manifest, context_bars=args.context_bars,
+        sample,
+        sample_manifest,
+        args.cache_manifest,
+        cache_manifest_sha256=args.cache_manifest_sha256,
+        context_bars=args.context_bars,
     )
     manifest = save_downstream_contexts(output, arrays, metadata)
     print(json.dumps({

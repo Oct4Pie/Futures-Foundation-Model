@@ -14,7 +14,14 @@ MODEL_EXECUTION_MARKERS = (
     "from_pretrained", "embed_windows", "MOMENTPipeline", "Toto2Model",
     "AutoModel", "predict_quantiles", ".fit(", "train(",
 )
-UNGATED_PARITY_TOOLS = {"check_mantis_stage0_parity.py"}
+UNGATED_PRE_ADMISSION_EVIDENCE_TOOLS = {
+    "check_mantis_stage0_parity.py",
+    "smoke_chronos_bolt_route.py",
+    "smoke_chronos_v1_route.py",
+    "smoke_moment_reconstruction_route.py",
+    "smoke_kronos_tokenizer_route.py",
+    "smoke_kronos_predictor_route.py",
+}
 
 
 TRAINING_ENTRY_POINTS = (
@@ -36,13 +43,19 @@ TRAINING_ENTRY_POINTS = (
 )
 
 
-def test_only_pre_admission_parity_tool_may_load_models_without_admission():
+def test_only_declared_pre_admission_evidence_tools_may_load_models_without_admission():
     ungated = set()
     for path in Path("scripts").glob("*.py"):
         source = path.read_text(encoding="utf-8")
         if any(marker in source for marker in MODEL_EXECUTION_MARKERS) and "admission" not in source:
             ungated.add(path.name)
-    assert ungated == UNGATED_PARITY_TOOLS
+    assert ungated <= UNGATED_PRE_ADMISSION_EVIDENCE_TOOLS
+    for name in UNGATED_PRE_ADMISSION_EVIDENCE_TOOLS - {"check_mantis_stage0_parity.py"}:
+        source = (Path("scripts") / name).read_text(encoding="utf-8")
+        assert "synthetic" in source.lower(), f"{name} is not a synthetic evidence tool"
+        assert "market_data_read" in source and "False" in source
+        assert "build_route_smoke_evidence" in source
+        assert "load_adaptation_data" not in source
 
 
 @pytest.mark.parametrize("path", TRAINING_ENTRY_POINTS)

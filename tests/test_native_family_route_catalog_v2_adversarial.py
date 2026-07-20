@@ -167,10 +167,13 @@ def test_rejects_plausible_but_false_method_or_pathway(
 
 def test_rejects_arbitrary_unresolved_field_name() -> None:
     catalog = deepcopy(CATALOG)
-    unresolved = catalog["constraint_profiles"]["mantis_v2_contrastive"]["objective"][
-        "value"
-    ]["unresolved_fields"]
-    unresolved.append("trust_me_later")
+    catalog["constraint_profiles"]["mantis_v2_contrastive"]["objective"] = {
+        "state": "partial",
+        "value": {
+            "known": {"loss_tag": "mantis_v2_info_nce"},
+            "unresolved_fields": ["trust_me_later"],
+        },
+    }
     _must_reject(catalog)
 
 

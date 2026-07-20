@@ -254,6 +254,79 @@ def read_canonical_json_file(
         os.close(parent_fd)
 
 
+def read_regular_file(
+    path: str | Path,
+    *,
+    label: str,
+    max_bytes: int,
+) -> tuple[Path, bytes, str]:
+    """Read one bounded identity-stable, single-link regular file.
+
+    Unlike :func:`read_canonical_json_file`, this primitive deliberately owns no
+    serialization semantics.  It is the transport boundary for authority inputs
+    such as YAML whose owning module must validate the returned bytes.
+    """
+    if type(max_bytes) is not int or max_bytes <= 0:
+        raise AuthorityBundleIOError("max_bytes must be a positive integer")
+    source = canonical_absolute_path(path, label)
+    parent_fd = _open_directory_from_root(source.parent, f"{label} parent")
+    parent_identity = _identity(os.fstat(parent_fd))
+    descriptor = -1
+    try:
+        named_before = os.stat(source.name, dir_fd=parent_fd, follow_symlinks=False)
+        if stat.S_ISLNK(named_before.st_mode):
+            raise AuthorityBundleIOError(f"{label} is a symlink")
+        if (
+            not stat.S_ISREG(named_before.st_mode)
+            or named_before.st_nlink != 1
+            or named_before.st_size <= 0
+            or named_before.st_size > max_bytes
+        ):
+            raise AuthorityBundleIOError(f"{label} is not a bounded regular file")
+        descriptor = os.open(
+            source.name,
+            os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC,
+            dir_fd=parent_fd,
+        )
+        opened = os.fstat(descriptor)
+        if _identity(named_before) != _identity(opened):
+            raise AuthorityBundleIOError(f"{label} changed while being opened")
+        chunks: list[bytes] = []
+        remaining = max_bytes + 1
+        while remaining:
+            block = os.read(descriptor, min(1 << 20, remaining))
+            if not block:
+                break
+            chunks.append(block)
+            remaining -= len(block)
+        raw = b"".join(chunks)
+        after = os.fstat(descriptor)
+        named_after = os.stat(source.name, dir_fd=parent_fd, follow_symlinks=False)
+        if (
+            len(raw) > max_bytes
+            or _identity(opened) != _identity(after)
+            or _identity(after) != _identity(named_after)
+        ):
+            raise AuthorityBundleIOError(f"{label} changed while being read")
+        reopened_parent_fd = _open_directory_from_root(
+            source.parent, f"{label} parent"
+        )
+        try:
+            if _identity(os.fstat(reopened_parent_fd)) != parent_identity:
+                raise AuthorityBundleIOError(f"{label} parent path changed")
+        finally:
+            os.close(reopened_parent_fd)
+        return source, raw, hashlib.sha256(raw).hexdigest()
+    except AuthorityBundleIOError:
+        raise
+    except OSError as exc:
+        raise AuthorityBundleIOError(f"cannot safely read {label}") from exc
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        os.close(parent_fd)
+
+
 def sha256_regular_file(
     path: str | Path, *, label: str, expected_size: int,
 ) -> tuple[Path, str]:
@@ -409,6 +482,7 @@ __all__ = [
     "canonical_json_bytes",
     "content_sha256",
     "read_canonical_json_file",
+    "read_regular_file",
     "require_sha256",
     "sha256_regular_file",
 ]

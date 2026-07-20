@@ -49,6 +49,7 @@ BLOCKERS = frozenset({
     "preprocessing_contract_unresolved", "target_contract_unresolved",
     "objective_contract_unresolved", "optimization_surface_unresolved",
     "lineage_contract_unresolved", "export_contract_unresolved",
+    "unsupported_project_extension",
 })
 CONSTRAINT_FIELDS = frozenset({
     "input", "time", "preprocessing", "target", "objective",
@@ -96,7 +97,7 @@ _CONSTRAINT_ALLOWED_FIELDS = {
     "time": {"horizon_unit", "timestamp_tag", "timezone_tag"},
     "preprocessing": {"scaler_tag", "statistics_interval_tag", "mask_tag",
                       "frequency_prefix_tag", "three_minute_prefix_id",
-                      "padding_side_tag", "input_mask_tag",
+                      "padding_side_tag", "input_mask_tag", "amount_source_tag",
                       "frequency_tokens_by_timeframe", "selector_id"},
     "target": {"target_tag", "interval"},
     "objective": {"loss_tag", "temperature", "direction_tag", "resize_length",
@@ -106,10 +107,21 @@ _CONSTRAINT_ALLOWED_FIELDS = {
                   "negative_eligibility_tag", "sibling_parent_policy_tag",
                   "encoder_embedding_tag", "quantile_crossing_tag",
                   "output_patch_audit_tag", "force_flip_invariance",
-                  "truncate_negative", "fix_quantile_crossing"},
+                  "truncate_negative", "fix_quantile_crossing",
+                  "crop_sampling_scope_tag"},
     "optimization_surface": {"trainable_tag", "frozen_tag", "precision",
                              "adapter_target_tag"},
-    "optimization_hyperparameters": {"status"},
+    "optimization_hyperparameters": {
+        "status", "optimizer_tag", "scheduler_tag", "precision_tag",
+        "learning_rate_default", "learning_rate_min", "learning_rate_max",
+        "weight_decay_default", "weight_decay_min", "weight_decay_max",
+        "batch_size_default", "batch_size_min", "batch_size_max",
+        "gradient_accumulation_default", "gradient_accumulation_max",
+        "max_gradient_norm_default", "max_gradient_norm_min", "max_gradient_norm_max",
+        "warmup_fraction_default", "warmup_fraction_min", "warmup_fraction_max",
+        "smoke_steps", "pilot_steps_min", "pilot_steps_max",
+        "full_steps_min", "full_steps_max", "tuning_scale_tag", "seed_policy_tag",
+    },
     "lineage": {"initialization_tag", "parent_artifacts"},
     "export": {"bundle_tag", "output_tag", "deployment_filter_tag"},
 }
@@ -142,6 +154,53 @@ def _validate_known_constraint(value: Any, constraint_name: str, field: str) -> 
         }:
             if not isinstance(item, str) or not item or " " in item:
                 raise NativeContractError(f"{field}.{name} must be a structured tag")
+    if constraint_name == "optimization_hyperparameters":
+        if value["status"] == "not_applicable":
+            if set(value) != {"status"}:
+                raise NativeContractError(f"{field} not-applicable policy has extra fields")
+            return
+        if value["status"] != "project_bounded_native_route_v1":
+            raise NativeContractError(f"{field}.status is unsupported")
+        if set(value) != _CONSTRAINT_ALLOWED_FIELDS[constraint_name]:
+            raise NativeContractError(f"{field} bounded optimizer policy is incomplete")
+        integer_fields = {
+            "batch_size_default", "batch_size_min", "batch_size_max",
+            "gradient_accumulation_default", "gradient_accumulation_max",
+            "smoke_steps", "pilot_steps_min", "pilot_steps_max",
+            "full_steps_min", "full_steps_max",
+        }
+        numeric_fields = set(value) - {
+            "status", "optimizer_tag", "scheduler_tag", "precision_tag",
+            "tuning_scale_tag", "seed_policy_tag", *integer_fields,
+        }
+        if any(type(value[name]) is not int or value[name] < 1 for name in integer_fields):
+            raise NativeContractError(f"{field} integer bounds must be positive integers")
+        if any(
+            isinstance(value[name], bool)
+            or not isinstance(value[name], (int, float))
+            or not float(value[name]) >= 0.0
+            for name in numeric_fields
+        ):
+            raise NativeContractError(f"{field} numeric bounds must be nonnegative finite numbers")
+        bounded = (
+            ("learning_rate_min", "learning_rate_default", "learning_rate_max"),
+            ("weight_decay_min", "weight_decay_default", "weight_decay_max"),
+            ("batch_size_min", "batch_size_default", "batch_size_max"),
+            ("max_gradient_norm_min", "max_gradient_norm_default", "max_gradient_norm_max"),
+            ("warmup_fraction_min", "warmup_fraction_default", "warmup_fraction_max"),
+        )
+        for lower, middle, upper in bounded:
+            if not value[lower] <= value[middle] <= value[upper]:
+                raise NativeContractError(
+                    f"{field} bounds must satisfy {lower} <= {middle} <= {upper}"
+                )
+        if not (
+            value["smoke_steps"] <= value["pilot_steps_min"] <= value["pilot_steps_max"]
+            <= value["full_steps_min"] <= value["full_steps_max"]
+        ):
+            raise NativeContractError(f"{field} smoke/pilot/full step bounds are invalid")
+        if value["gradient_accumulation_default"] > value["gradient_accumulation_max"]:
+            raise NativeContractError(f"{field} gradient accumulation bounds are invalid")
 
 
 def _validate_constraint(value: Any, constraint_name: str, field: str) -> str:
@@ -261,9 +320,9 @@ def _validate_catalog(value: Any, registry: Mapping[str, Any]) -> dict[str, Any]
         if route["task_kind"] not in TASK_KINDS:
             raise NativeContractError(f"route {key} task kind is invalid")
         allowed_tasks_by_track = {
-            "B": {"path_supervision"},
-            "C": {"classification"},
-            "D": {"support_query_downstream"},
+            "B": {"path_supervision", "unsupported"},
+            "C": {"classification", "unsupported"},
+            "D": {"support_query_downstream", "unsupported"},
             "R": {
                 "contrastive_representation", "masked_reconstruction", "unsupported",
             },
