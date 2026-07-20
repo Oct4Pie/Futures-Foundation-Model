@@ -1,7 +1,10 @@
 name: Python Unit Tests
 
 # This tells GitHub to run the script every time you push code
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
 
 jobs:
   build:
